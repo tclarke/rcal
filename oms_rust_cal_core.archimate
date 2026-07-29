@@ -1,0 +1,702 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<archimate:model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:archimate="http://www.archimatetool.com/archimate" name="OMS Rust CAL Core Interfaces" id="m-oms-rust-cal-001" version="5.0.0">
+  <folder name="Strategy" id="id-fb479a9b615e4ac8bd2e55cbf723ef92" type="strategy"/>
+  <folder name="Business" id="id-60eb801611b14da89d6346eb18c91146" type="business"/>
+  <folder name="Application" id="f-app" type="application">
+    <folder name="Error Handling" id="f-err">
+      <element xsi:type="archimate:ApplicationComponent" name="CalError" id="e-calerror">
+        <documentation>Rust equivalent of UCIException. Primary error carrier for all fallible CAL operations. Implements std::error::Error plus Send plus Sync. Fields: kind (CalErrorKind), message (String), source (Option of boxed Error). CERTs: CAL-005204, CAL-005369, CAL-016043. Ref: Section 5.1.2.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationComponent" name="CalErrorKind" id="e-calerror-kind">
+        <documentation>Non-exhaustive enum classifying CAL error conditions. Variants: InitializationFailure (CAL-005204), TopicUnavailable (CAL-005369), ResourcesUnavailable (CAL-016043), InvalidState (Table 5.9-2), UuidConformanceError (CAL-016477), OperationNotPermitted (CAL-016050), AsbFailed, InvalidServiceIdentifier, SerializationError, AbstractInstantiation (CAL-016035), ImplementationError.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="CalResult(T)" id="e-calresult">
+        <documentation>Type alias: type CalResult(T) = Result(T, CalError). Return type for all fallible CAL operations. Replaces C++ and Java exception propagation. Every operation that can signal a UCIException in C++ returns CalResult(T) in the Rust CAL. Ref: Section 5.1.2.</documentation>
+      </element>
+    </folder>
+    <folder name="UUID" id="f-uuid">
+      <element xsi:type="archimate:ApplicationComponent" name="CalUuid" id="e-caluuid">
+        <documentation>RFC 4122 conformant UUID enforced by construction. Newtype wrapper over uuid::Uuid. Validation applied at every construction path. Invariants: Variant = RFC 4122 Leach-Salz (CAL-016479), Version in {1, 3, 4} (CAL-005181). CERTs: CAL-016477, CAL-016479, CAL-005181.</documentation>
+      </element>
+      <element xsi:type="archimate:DataObject" name="ServiceUuids" id="e-serviceuuids">
+        <documentation>Aggregates UUIDs identifying a CAL Client service context. Fields: system (CalUuid), service (CalUuid), subsystem (Option of CalUuid), components (Vec of CalUuid), capabilities (Vec of CalUuid). Retrieved via AbstractServiceBus::uuids() after initialisation. CERT: CAL-005203.</documentation>
+      </element>
+    </folder>
+    <folder name="Accessors" id="f-acc">
+      <element xsi:type="archimate:ApplicationInterface" name="RequiredField(T)" id="e-reqfield">
+        <documentation>Trait providing read/write access to a field that is always present (xs:element minOccurs=1 maxOccurs=1). Methods: get() returning reference to T, get_mut() returning mutable reference to T, set(value: T). Ref: Section 5.5.1.2, 5.5.4.2.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="OptionalField(T)" id="e-optfield">
+        <documentation>Trait for optionally-populated fields. Created in DISABLED state (CAL-005254). Methods: is_enabled(), get() returning Option, set(value) which enables, disable(). CERTs: CAL-005254, CAL-005290, CAL-005293, CAL-005294, CAL-005296.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="BoundedListField(T)" id="e-bndfield">
+        <documentation>Trait for bounded list of homogeneous elements. Created EMPTY (CAL-005264). Methods: len(), is_empty(), max_bound(), min_bound(), reserve(n), push(elem), pop(), clear(), get(i). CERT: CAL-005264.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="ChoiceField(V)" id="e-choicefield">
+        <documentation>Trait for discriminated union field. Created UNINITIALIZED (CAL-005267). V is a generated enum with one variant per schema choice alternative. Methods: get(), get_mut(), set(value: V), clear(), is_set(). CERT: CAL-005267.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="CalMessage" id="e-calmessage">
+        <documentation>Marker trait for top-level publishable OMS message types. Only CalMessage types may be associated with a topic. Non-abstract messages implement this trait. Abstract message types must not be instantiated (CAL-016035). CERTs: CAL-016033, CAL-016035.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="CalSubMessage" id="e-calsubmessage">
+        <documentation>Marker trait for nested sub-message types used as fields within CalMessage types. CalSubMessage instances cannot be sent or received outside the context of an encapsulating CalMessage. Ref: Section 5.5.</documentation>
+      </element>
+    </folder>
+    <folder name="Abstract Service Bus" id="f-asb">
+      <element xsi:type="archimate:DataObject" name="CalInstanceConfig" id="e-calinstanceconfig">
+        <documentation>Configuration parameters for initialising a CAL instance. Fields: service_identifier (String, CAL-005201), asb_identifier (String, CAL-005202), network_config_path (PathBuf, Section 4.7). CERTs: CAL-005201, CAL-005202.</documentation>
+      </element>
+      <element xsi:type="archimate:DataObject" name="AsbConnectionState" id="e-asbstate">
+        <documentation>Enum of ASB connection states per Table 5.9-1: Initializing (optional), Normal (required), Degraded (optional), Inoperable (optional), Failed (required). Provides validate_transition() enforcing the Figure 5.9-2 state machine rules.</documentation>
+      </element>
+      <element xsi:type="archimate:DataObject" name="AsbStatus" id="e-asbstatus">
+        <documentation>Snapshot of current ASB connection status delivered to registered listeners and returned by polling calls. Fields: state (AsbConnectionState), description (String). Ref: Section 5.9.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="AsbStatusListener" id="e-asblistener">
+        <documentation>Trait implemented by CAL Clients to receive ASB connection status change notifications via callback. Method: on_status_change(status: AsbStatus). Called immediately upon registration (CAL-016366), then on every subsequent state change.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="AbstractServiceBus" id="e-asb">
+        <documentation>Primary CAL instance interface. Methods: service_id(), uuids() (CAL-005203), connection_status(), register_status_listener() (CAL-016366), unregister_status_listener(), create_writer(), create_reader(). CERTs: CAL-005201, CAL-005202, CAL-005203, CAL-016366.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationFunction" name="CalInstanceFactory" id="e-calfactory">
+        <documentation>Platform entry-point function for obtaining a fully initialised CAL instance. Signature: fn(config: CalInstanceConfig) returning CalResult of boxed AbstractServiceBus. CERTs: CAL-005201, CAL-005202.</documentation>
+      </element>
+    </folder>
+  </folder>
+  <folder name="Technology" id="f-tech" type="technology">
+    <element xsi:type="archimate:TechnologyService" name="ASB Network Service" id="e-asbtech">
+      <documentation>Technology layer representation of the Abstract Service Bus network service. Realizes the messaging infrastructure used by AbstractServiceBus implementations. Ref: Section 4.12.</documentation>
+    </element>
+    <element xsi:type="archimate:Artifact" name="Network Configuration" id="e-netconfig">
+      <documentation>Configuration artifact specifying valid CAL Topics, network connections, and transport layer mappings for a CAL instance. Ref: Section 4.7.</documentation>
+    </element>
+  </folder>
+  <folder name="Relations" id="f-rel" type="relations">
+    <element xsi:type="archimate:CompositionRelationship" id="r-err-comp" source="e-calerror" target="e-calerror-kind"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-err-assoc" source="e-calresult" target="e-calerror"/>
+    <element xsi:type="archimate:CompositionRelationship" id="r-uuid-comp" source="e-serviceuuids" target="e-caluuid"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-req-assoc" source="e-reqfield" target="e-calmessage"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-opt-assoc" source="e-optfield" target="e-calmessage"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-bnd-assoc" source="e-bndfield" target="e-calmessage"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-cho-assoc" source="e-choicefield" target="e-calmessage"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-msg-assoc" source="e-calmessage" target="e-calsubmessage"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-asb-cfg" source="e-asb" target="e-calinstanceconfig"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-asb-state" source="e-asb" target="e-asbstate"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-asb-status" source="e-asb" target="e-asbstatus"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-asb-listener" source="e-asb" target="e-asblistener"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-factory-asb" source="e-calfactory" target="e-asb"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-asb-tech" source="e-asb" target="e-asbtech"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-tech-net" source="e-asbtech" target="e-netconfig"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-e6e8c0bba8f24f15a5ab3d1452327d95" source="e-caluuid" target="req-cal-016479"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-f8a721ee800147dc9308000b881e39a7" source="e-caluuid" target="req-cal-005181"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-f4602e8986454ffdba5296843d793897" source="e-caluuid" target="req-cal-016477"/>
+  </folder>
+  <folder name="Implementation &amp; Migration" id="id-b6f83f987781477691736beef80d8c6b" type="implementation_migration"/>
+  <folder name="Other" id="id-e6d7a0e6ec524c8e83390084497a54c7" type="other"/>
+  <folder name="Views" id="f-views" type="diagrams">
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Core Interfaces Overview" id="v1">
+      <child xsi:type="archimate:DiagramObject" id="do-v1-calerror" targetConnections="con-v1-err-assoc" archimateElement="e-calerror" type="1">
+        <bounds x="20" y="20" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-err-comp" source="do-v1-calerror" target="do-v1-calerror-kind" archimateRelationship="r-err-comp"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-calerror-kind" targetConnections="con-v1-err-comp" archimateElement="e-calerror-kind" type="1">
+        <bounds x="200" y="20" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-calresult" archimateElement="e-calresult">
+        <bounds x="380" y="20" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-err-assoc" source="do-v1-calresult" target="do-v1-calerror" archimateRelationship="r-err-assoc"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-caluuid" targetConnections="con-v1-uuid-comp" archimateElement="e-caluuid" type="1">
+        <bounds x="20" y="120" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-serviceuuids" archimateElement="e-serviceuuids" type="1">
+        <bounds x="200" y="120" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-uuid-comp" source="do-v1-serviceuuids" target="do-v1-caluuid" archimateRelationship="r-uuid-comp"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-reqfield" archimateElement="e-reqfield">
+        <bounds x="20" y="220" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-req-assoc" source="do-v1-reqfield" target="do-v1-calmessage" archimateRelationship="r-req-assoc"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-optfield" archimateElement="e-optfield">
+        <bounds x="200" y="220" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-opt-assoc" source="do-v1-optfield" target="do-v1-calmessage" archimateRelationship="r-opt-assoc"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-bndfield" archimateElement="e-bndfield">
+        <bounds x="380" y="220" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-bnd-assoc" source="do-v1-bndfield" target="do-v1-calmessage" archimateRelationship="r-bnd-assoc"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-choicefield" archimateElement="e-choicefield">
+        <bounds x="560" y="220" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-cho-assoc" source="do-v1-choicefield" target="do-v1-calmessage" archimateRelationship="r-cho-assoc"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-calmessage" targetConnections="con-v1-req-assoc con-v1-opt-assoc con-v1-bnd-assoc con-v1-cho-assoc" archimateElement="e-calmessage">
+        <bounds x="200" y="320" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-msg-assoc" source="do-v1-calmessage" target="do-v1-calsubmessage" archimateRelationship="r-msg-assoc"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-calsubmessage" targetConnections="con-v1-msg-assoc" archimateElement="e-calsubmessage">
+        <bounds x="380" y="320" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-calinstanceconfig" targetConnections="con-v1-asb-cfg" archimateElement="e-calinstanceconfig" type="1">
+        <bounds x="20" y="420" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-asbstate" targetConnections="con-v1-asb-state" archimateElement="e-asbstate" type="1">
+        <bounds x="200" y="420" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-asbstatus" targetConnections="con-v1-asb-status" archimateElement="e-asbstatus" type="1">
+        <bounds x="380" y="420" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-asblistener" targetConnections="con-v1-asb-listener" archimateElement="e-asblistener">
+        <bounds x="560" y="420" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-asb" targetConnections="con-v1-factory-asb" archimateElement="e-asb">
+        <bounds x="200" y="520" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-asb-cfg" source="do-v1-asb" target="do-v1-calinstanceconfig" archimateRelationship="r-asb-cfg"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-asb-state" source="do-v1-asb" target="do-v1-asbstate" archimateRelationship="r-asb-state"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-asb-status" source="do-v1-asb" target="do-v1-asbstatus" archimateRelationship="r-asb-status"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-asb-listener" source="do-v1-asb" target="do-v1-asblistener" archimateRelationship="r-asb-listener"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-asb-tech" source="do-v1-asb" target="do-v1-asbtech" archimateRelationship="r-asb-tech"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-calfactory" archimateElement="e-calfactory">
+        <bounds x="380" y="520" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-factory-asb" source="do-v1-calfactory" target="do-v1-asb" archimateRelationship="r-factory-asb"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-asbtech" targetConnections="con-v1-asb-tech" archimateElement="e-asbtech">
+        <bounds x="200" y="620" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-tech-net" source="do-v1-asbtech" target="do-v1-netconfig" archimateRelationship="r-tech-net"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v1-netconfig" targetConnections="con-v1-tech-net" archimateElement="e-netconfig" type="1">
+        <bounds x="380" y="620" width="140" height="55"/>
+      </child>
+    </element>
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Detail - Error Handling" id="v2">
+      <child xsi:type="archimate:DiagramObject" id="do-v2-calerror" targetConnections="con-v2-assoc" archimateElement="e-calerror" type="1">
+        <bounds x="200" y="100" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v2-comp" source="do-v2-calerror" target="do-v2-calerror-kind" archimateRelationship="r-err-comp"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v2-calerror-kind" targetConnections="con-v2-comp" archimateElement="e-calerror-kind" type="1">
+        <bounds x="400" y="100" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v2-calresult" archimateElement="e-calresult">
+        <bounds x="200" y="220" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v2-assoc" source="do-v2-calresult" target="do-v2-calerror" archimateRelationship="r-err-assoc"/>
+      </child>
+    </element>
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Detail - UUID" id="v3">
+      <child xsi:type="archimate:DiagramObject" id="do-v3-caluuid" targetConnections="con-v3-comp" archimateElement="e-caluuid" type="1">
+        <bounds x="200" y="100" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v3-serviceuuids" archimateElement="e-serviceuuids" type="1">
+        <bounds x="400" y="100" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v3-comp" source="do-v3-serviceuuids" target="do-v3-caluuid" archimateRelationship="r-uuid-comp"/>
+      </child>
+    </element>
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Detail - Accessors" id="v4">
+      <child xsi:type="archimate:DiagramObject" id="do-v4-reqfield" archimateElement="e-reqfield">
+        <bounds x="20" y="80" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v4-req" source="do-v4-reqfield" target="do-v4-calmessage" archimateRelationship="r-req-assoc"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v4-optfield" archimateElement="e-optfield">
+        <bounds x="200" y="80" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v4-opt" source="do-v4-optfield" target="do-v4-calmessage" archimateRelationship="r-opt-assoc"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v4-bndfield" archimateElement="e-bndfield">
+        <bounds x="380" y="80" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v4-bnd" source="do-v4-bndfield" target="do-v4-calmessage" archimateRelationship="r-bnd-assoc"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v4-choicefield" archimateElement="e-choicefield">
+        <bounds x="560" y="80" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v4-cho" source="do-v4-choicefield" target="do-v4-calmessage" archimateRelationship="r-cho-assoc"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v4-calmessage" targetConnections="con-v4-req con-v4-opt con-v4-bnd con-v4-cho" archimateElement="e-calmessage">
+        <bounds x="200" y="220" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v4-spec" source="do-v4-calmessage" target="do-v4-calsubmessage" archimateRelationship="r-msg-assoc"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v4-calsubmessage" targetConnections="con-v4-spec" archimateElement="e-calsubmessage">
+        <bounds x="380" y="220" width="140" height="55"/>
+      </child>
+    </element>
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Detail - Abstract Service Bus" id="v5">
+      <child xsi:type="archimate:DiagramObject" id="do-v5-calfactory" archimateElement="e-calfactory">
+        <bounds x="20" y="80" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v5-factory" source="do-v5-calfactory" target="do-v5-asb" archimateRelationship="r-factory-asb"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v5-asb" targetConnections="con-v5-factory" archimateElement="e-asb">
+        <bounds x="200" y="80" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v5-cfg" source="do-v5-asb" target="do-v5-calinstanceconfig" archimateRelationship="r-asb-cfg"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v5-state" source="do-v5-asb" target="do-v5-asbstate" archimateRelationship="r-asb-state"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v5-status" source="do-v5-asb" target="do-v5-asbstatus" archimateRelationship="r-asb-status"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v5-listener" source="do-v5-asb" target="do-v5-asblistener" archimateRelationship="r-asb-listener"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v5-tech" source="do-v5-asb" target="do-v5-asbtech" archimateRelationship="r-asb-tech"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v5-calinstanceconfig" targetConnections="con-v5-cfg" archimateElement="e-calinstanceconfig" type="1">
+        <bounds x="20" y="220" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v5-asbstate" targetConnections="con-v5-state" archimateElement="e-asbstate" type="1">
+        <bounds x="200" y="220" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v5-asbstatus" targetConnections="con-v5-status" archimateElement="e-asbstatus" type="1">
+        <bounds x="380" y="220" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v5-asblistener" targetConnections="con-v5-listener" archimateElement="e-asblistener">
+        <bounds x="560" y="220" width="140" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v5-asbtech" targetConnections="con-v5-tech" archimateElement="e-asbtech">
+        <bounds x="200" y="360" width="140" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v5-net" source="do-v5-asbtech" target="do-v5-netconfig" archimateRelationship="r-tech-net"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v5-netconfig" targetConnections="con-v5-net" archimateElement="e-netconfig" type="1">
+        <bounds x="380" y="360" width="140" height="55"/>
+      </child>
+    </element>
+    <element xsi:type="archimate:ArchimateDiagramModel" name="General Requirements" id="id-ba0abe59e1534934bb7d4a663c68595a" viewpoint="requirements_realization">
+      <child xsi:type="archimate:DiagramObject" id="id-68dc9426a41f49288b66f07af307719c" archimateElement="req-cal-005179">
+        <bounds x="20" y="20" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-fca81726cc90452cb5e25b92a88c3350" archimateElement="req-cal-005180">
+        <bounds x="20" y="120" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-3ea86e5dd11643c4871bee218b017814" targetConnections="id-6fa906bdc53141b5835cc025ac3f7285" archimateElement="req-cal-005181">
+        <bounds x="20" y="220" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-3e3fd98e955c403aad925ac9e9013d84" archimateElement="req-cal-005201">
+        <bounds x="20" y="320" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-fdd482715e4949b492961b79d9739ad6" archimateElement="req-cal-005202">
+        <bounds x="20" y="420" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-e0621b7a3fab48f8922e85b299e6c83a" archimateElement="req-cal-005203">
+        <bounds x="20" y="520" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-bb9c30d6fd414543b93b4205805de413" archimateElement="req-cal-005204">
+        <bounds x="20" y="620" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-68313e8faae14c00b4457d95c2b40ffa" archimateElement="req-cal-005208">
+        <bounds x="20" y="720" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-cc447bd999cd4a629730155a28be635a" archimateElement="req-cal-005209">
+        <bounds x="20" y="820" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-1adde75c2a30481b820b58317771fcb2" archimateElement="req-cal-005210">
+        <bounds x="20" y="920" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-aa897846572f4348858c7f30266c00a7" archimateElement="req-cal-005254">
+        <bounds x="20" y="1020" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-8ddabbe1118f4e31b86d7741f3158e5b" archimateElement="req-cal-005264">
+        <bounds x="20" y="1120" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-525aa6699ccb41838b8d4ef5024a6e92" archimateElement="req-cal-005267">
+        <bounds x="20" y="1220" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-fb87d096462a4d19b98b6497606dc177" archimateElement="req-cal-005275">
+        <bounds x="20" y="1320" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-850954ac292f4a5fb9ada977cccd017f" archimateElement="req-cal-005290">
+        <bounds x="20" y="1420" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-1f24eb2db8944fa0b8922cf2cb55b3c1" archimateElement="req-cal-005293">
+        <bounds x="20" y="1520" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-adec5544cd1c4d21b6514ccf63362405" archimateElement="req-cal-005294">
+        <bounds x="20" y="1620" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-73afb749d9064d838089c3a354b2a519" archimateElement="req-cal-005296">
+        <bounds x="20" y="1720" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-9d0c3a47dbe24fd284b41cfd26514018" archimateElement="req-cal-005364">
+        <bounds x="20" y="1820" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-b07cd028444f485aacd7c457d8673007" archimateElement="req-cal-005368">
+        <bounds x="20" y="1920" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-4a24817f9e6c44ad8c280641ffb52a11" archimateElement="req-cal-005369">
+        <bounds x="20" y="2020" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-cde81113ff104e838a9ef79a5c99937c" archimateElement="req-cal-005374">
+        <bounds x="20" y="2120" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-724dc48f052247348ccbea279a3472bd" archimateElement="req-cal-005378">
+        <bounds x="20" y="2220" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-34b4446071f14832bfda03c0e4cccea4" archimateElement="req-cal-005379">
+        <bounds x="20" y="2320" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-17c007c6c4044e01b6739e75467f2669" archimateElement="req-cal-005380">
+        <bounds x="20" y="2420" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-1459c5b631b149b98f6c945e61322d7b" archimateElement="req-cal-005391">
+        <bounds x="20" y="2520" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-1a6df1392a9443c0bfcafa585fcea813" archimateElement="req-cal-005392">
+        <bounds x="20" y="2620" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-a562b37e9a8040bdae8b9be58a1fe899" archimateElement="req-cal-005394">
+        <bounds x="20" y="2720" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-d57b60764b854bd79f07bb51065c23f2" archimateElement="req-cal-005396">
+        <bounds x="20" y="2820" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-66486ddec0be467aa9282f860a0ca797" archimateElement="req-cal-005431">
+        <bounds x="20" y="2920" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-37badd528084476a81bc91432f23d7b6" archimateElement="req-cal-005434">
+        <bounds x="20" y="3020" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-3fbdd28122ab46bd9fb92d613592bed3" archimateElement="req-cal-005437">
+        <bounds x="20" y="3120" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-1703925fadea4c4abdcaf7cfe04c43ac" archimateElement="req-cal-005444">
+        <bounds x="20" y="3220" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-1e08ad6d3dff42919f021988cf7292f3" archimateElement="req-cal-005445">
+        <bounds x="20" y="3320" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-d2442bfbf6c2446f95adfbee07293a79" archimateElement="req-cal-015746">
+        <bounds x="20" y="3420" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-b616eeba39e24965b6229b962540584a" archimateElement="req-cal-016015">
+        <bounds x="20" y="3520" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-877c086723d0417d8678010d06a2f955" archimateElement="req-cal-016024">
+        <bounds x="20" y="3620" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-0ff4b8db75e1471e8e15e48cf50c726e" archimateElement="req-cal-016027">
+        <bounds x="20" y="3720" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-0bd97ccf23b44bfe8b9659692a827a94" archimateElement="req-cal-016028">
+        <bounds x="20" y="3820" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-65a27705baed4e028614b072f14f78db" archimateElement="req-cal-016029">
+        <bounds x="20" y="3920" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-13a4b3b2762b435d9fb393e62972e468" archimateElement="req-cal-016033">
+        <bounds x="20" y="4020" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-b4557e9cad404cdf88103d16b63b782c" archimateElement="req-cal-016035">
+        <bounds x="20" y="4120" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-05d93e02c8f140f1bab1db7627abf75a" archimateElement="req-cal-016038">
+        <bounds x="20" y="4220" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-c47164fdc04e4782b4bd8dde6cdf7224" archimateElement="req-cal-016043">
+        <bounds x="20" y="4320" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-05376170a80c48dd9c09ee7f4007e463" archimateElement="req-cal-016044">
+        <bounds x="20" y="4420" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-cb5f803c6ba448f39fca82ea0fefeef3" archimateElement="req-cal-016045">
+        <bounds x="20" y="4520" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-c71e217acfcd41b39a82b7cd05464135" archimateElement="req-cal-016046">
+        <bounds x="20" y="4620" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-59efb5288aeb42d48919533bf53d1a17" archimateElement="req-cal-016049">
+        <bounds x="20" y="4720" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-d71d70fe7d544058b0b13a7047827f27" archimateElement="req-cal-016050">
+        <bounds x="20" y="4820" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-0e47f4f0202342d39598fe7d84839c1c" archimateElement="req-cal-016052">
+        <bounds x="20" y="4920" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-087ba571381a40a2b4abbd049d68ed9b" archimateElement="req-cal-016076">
+        <bounds x="20" y="5020" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-1a4a3c93fc974a258cccffbfa0b3eac8" archimateElement="req-cal-016079">
+        <bounds x="20" y="5120" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-eda4c9031fd544489b9442acd9b89723" archimateElement="req-cal-016366">
+        <bounds x="20" y="5220" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-d8e512d1293e4241990c3ebbdd982386" targetConnections="id-f9c0caa6d80e4a74b15f8f63563835ce" archimateElement="req-cal-016477">
+        <bounds x="20" y="5320" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-fdc32874fc254ca092f5950f9fd97f2a" targetConnections="id-d24ee99494184b7ca5c6a7069625fd33" archimateElement="req-cal-016479">
+        <bounds x="20" y="5420" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-c787b8bd263e43b5b52197c80e4460d1" archimateElement="e-caluuid">
+        <bounds x="411" y="5353" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-d24ee99494184b7ca5c6a7069625fd33" source="id-c787b8bd263e43b5b52197c80e4460d1" target="id-fdc32874fc254ca092f5950f9fd97f2a" archimateRelationship="id-e6e8c0bba8f24f15a5ab3d1452327d95"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-6fa906bdc53141b5835cc025ac3f7285" source="id-c787b8bd263e43b5b52197c80e4460d1" target="id-3ea86e5dd11643c4871bee218b017814" archimateRelationship="id-f8a721ee800147dc9308000b881e39a7"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-f9c0caa6d80e4a74b15f8f63563835ce" source="id-c787b8bd263e43b5b52197c80e4460d1" target="id-d8e512d1293e4241990c3ebbdd982386" archimateRelationship="id-f4602e8986454ffdba5296843d793897"/>
+      </child>
+    </element>
+  </folder>
+  <folder name="Motivation" id="f-motivation" type="motivation">
+    <element xsi:type="archimate:Requirement" name="CAL-005179" id="req-cal-005179">
+      <documentation>A C++ CAL Implementation shall implement the methods defined by the C++ CAL Interface Generation Specification (document OMSC-SPC-008).</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="10"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005180" id="req-cal-005180">
+      <documentation>A Java CAL Implementation shall implement the methods defined by the Java CAL Interface Generation Specification (document OMSC-SPC-007).</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="10"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005181" id="req-cal-005181">
+      <documentation>A CAL Implementation shall generate UUIDs in accordance with the RFC 4122, UUID version 1, 3, and 4.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="14"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005201" id="req-cal-005201">
+      <documentation>A CAL Implementation shall have a mechanism for the CAL Client to obtain a fully initialized instance of the CAL associated with a Service Identifier.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="14"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005202" id="req-cal-005202">
+      <documentation>A CAL Implementation shall associate a single CAL instance with each unique combination of Service Identifier and ASB Identifier.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="15"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005203" id="req-cal-005203">
+      <documentation>A CAL Implementation shall have a mechanism for retrieving the UUIDs that identify the System, Service, Subsystem, Components, and Capabilities associated with the initializing Service.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="15"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005204" id="req-cal-005204">
+      <documentation>A CAL Implementation shall report an error to the CAL Client in the event the initialization of the CAL instance fails.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="15"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005208" id="req-cal-005208">
+      <documentation>A CAL Implementation shall associate a topic with one and only one CAL Message type.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="15"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005209" id="req-cal-005209">
+      <documentation>A CAL Implementation shall map Client Topics to the applicable CAL Topics.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="15"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005210" id="req-cal-005210">
+      <documentation>A CAL Implementation shall support the configuration of independent Quality of Service settings for each Client Topic.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="16"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005254" id="req-cal-005254">
+      <documentation>A CAL Implementation shall create optional fields in a disabled state.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="18"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005264" id="req-cal-005264">
+      <documentation>CAL Implementation shall create bounded lists in an empty state.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="19"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005267" id="req-cal-005267">
+      <documentation>A CAL Implementation shall create choice fields in an uninitialized state.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="19"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005275" id="req-cal-005275">
+      <documentation>A CAL Implementation shall have a mechanism for destroying CAL Messages and Sub-messages.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="19"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005290" id="req-cal-005290">
+      <documentation>A CAL Implementation shall have a mechanism to enable or disable optional fields.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="20"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005293" id="req-cal-005293">
+      <documentation>A CAL Implementation shall have a mechanism to determine the enabled or disabled state of an optional field.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="20"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005294" id="req-cal-005294">
+      <documentation>A CAL Implementation shall indicate to the CAL Client that a field is disabled when a disabled optional field is accessed.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="20"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005296" id="req-cal-005296">
+      <documentation>A CAL Implementation shall provide the value of the field when the value of an enabled optional field is accessed.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="20"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005364" id="req-cal-005364">
+      <documentation>A CAL Implementation shall have a mechanism to create Writers associated with a Client Topic.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="22"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005368" id="req-cal-005368">
+      <documentation>A CAL Writer Instance shall be associated with one and only one Client Topic.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="22"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005369" id="req-cal-005369">
+      <documentation>A CAL Writer Instance shall report an error upon invocation of the write operation when the associated Client Topic is unavailable.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="22"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005374" id="req-cal-005374">
+      <documentation>A CAL Implementation shall have a mechanism to create Readers associated with a Client Topic.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="23"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005378" id="req-cal-005378">
+      <documentation>A CAL Reader Instance shall be associated with one and only one Client Topic.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="23"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005379" id="req-cal-005379">
+      <documentation>A CAL Reader Implementation shall provide a callback interface for receiving CAL Messages.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="23"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005380" id="req-cal-005380">
+      <documentation>A CAL Reader Implementation shall provide a polling interface for receiving CAL Messages.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="23"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005391" id="req-cal-005391">
+      <documentation>A CAL Reader Implementation shall allow a CAL Client to register zero or more listener instances for receiving incoming CAL Messages.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="24"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005392" id="req-cal-005392">
+      <documentation>A CAL Reader Implementation shall provide a CAL Client with a single, shared CAL Message reference by invoking the message handler operation of each registered listener instance one time for each received CAL Message instance.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="24"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005394" id="req-cal-005394">
+      <documentation>A CAL Reader Implementation shall establish the topic connection when the Reader is created.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="24"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005396" id="req-cal-005396">
+      <documentation>A CAL Implementation shall provide the ability to unregister a listener instance.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="25"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005431" id="req-cal-005431">
+      <documentation>A CAL Reader Instance shall provide Time Based Filter Quality of Service such that the CAL Reader drops CAL Messages received on a Client Topic within a specified time period since the last CAL Message was accepted on the Client Topic.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="26"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005434" id="req-cal-005434">
+      <documentation>A CAL Implementation shall provide the Reliability Quality of Service such that the CAL Implementation resends CAL Messages on connections to CAL Readers that have not received the CAL Message while the CAL Message remains available for retransmit.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="26"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005437" id="req-cal-005437">
+      <documentation>A CAL Implementation shall provide the Expiration Quality of Service such that the CAL Implementation removes expired CAL Messages from the CAL Reader's buffer.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="27"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005444" id="req-cal-005444">
+      <documentation>A CAL Implementation shall provide the Message Buffer Quality of Service such that the CAL Implementation will buffer a configurable, maximum number of CAL Messages that the CAL Implementation has received from the CAL Client but not yet delivered to the network connection.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="28"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-005445" id="req-cal-005445">
+      <documentation>A CAL Implementation shall remove the oldest message in the CAL Writer's buffer of CAL Messages when the number of CAL Messages exceeds the value configured by the Message Buffer Quality of Service.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="28"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-015746" id="req-cal-015746">
+      <documentation>A CAL Implementation shall provide the Message Buffer Quality of Service such that the CAL Implementation will buffer a configurable, maximum number of CAL Messages that the CAL Implementation has received but not yet delivered to the CAL Client.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="28"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016015" id="req-cal-016015">
+      <documentation>A CAL Implementation shall provide multiple CAL Clients operating in a single address space with the same behavior as if each CAL Client were executing in separate address spaces.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="10"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016024" id="req-cal-016024">
+      <documentation>A CAL Implementation shall represent the xs:integer built-in datatype as a signed 64-bit integer.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="12"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016027" id="req-cal-016027">
+      <documentation>A CAL Implementation shall represent the xs:duration built-in datatype as a signed 64-bit integer.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="13"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016028" id="req-cal-016028">
+      <documentation>A CAL Implementation shall represent the xs:dateTime built-in datatype as a signed 64-bit integer.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="13"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016029" id="req-cal-016029">
+      <documentation>A CAL Implementation shall represent the xs:time built-in datatype as a signed 64-bit integer.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="13"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016033" id="req-cal-016033">
+      <documentation>A CAL Implementation shall support the creation of non-abstract CAL Messages and Sub-messages.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="18"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016035" id="req-cal-016035">
+      <documentation>A CAL Implementation shall prevent the creation of abstract CAL Messages and Sub-messages.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="18"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016038" id="req-cal-016038">
+      <documentation>A CAL Implementation shall create enumerations in an uninitialized state.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="19"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016043" id="req-cal-016043">
+      <documentation>A CAL Writer Instance shall report an error upon invocation of the write operation when the required resources to complete the operation are not available.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="22"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016044" id="req-cal-016044">
+      <documentation>A CAL Reader Implementation shall begin buffering received CAL Messages based on the topic QoS Settings when the topic connection is established.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="24"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016045" id="req-cal-016045">
+      <documentation>A CAL Reader Implementation shall remove the CAL Message instance from the receive buffer once the message handler operation of each registered listener instance has been completed.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="24"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016046" id="req-cal-016046">
+      <documentation>A CAL Implementation shall make available without modification the CAL Message accessed by the registered listener for the duration of an invoked registered listeners' message handler operation.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="24"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016049" id="req-cal-016049">
+      <documentation>A CAL Reader Instance shall block within the read operation until the specified timeout value has expired, a new CAL Message arrives, or the Reader Instance is closed.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="25"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016050" id="req-cal-016050">
+      <documentation>A CAL Reader Implementation shall report an error when the read operation is invoked on a Reader Instance with one or more registered listeners.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="25"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016052" id="req-cal-016052">
+      <documentation>A CAL Reader Implementation shall remove the CAL Message instance from the receive buffer when the CAL Message is provided to the CAL Client.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="25"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016076" id="req-cal-016076">
+      <documentation>A CAL Implementation shall provide the Reliability Quality of Service such that the CAL Implementation preserves the order of CAL Messages on a connection.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="27"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016079" id="req-cal-016079">
+      <documentation>A CAL Implementation shall remove the oldest message in the CAL Reader's buffer of CAL Messages when number of CAL Messages exceeds the value configured by the Message Buffer Quality of Service.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="28"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016366" id="req-cal-016366">
+      <documentation>Upon successful completion of a request to register as an Abstract Service Bus Connection Status listener, a CAL Implementation shall call the registered class' API notification method with the current state of the ASB connection.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="29"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016477" id="req-cal-016477">
+      <documentation>A CAL Implementation shall enforce UUID conformance to RFC 4122.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="13"/>
+    </element>
+    <element xsi:type="archimate:Requirement" name="CAL-016479" id="req-cal-016479">
+      <documentation>A CAL Implementation shall generate variant 1 (Leach-Salz) UUIDs in accordance with the RFC 4122.</documentation>
+      <property key="Document" value="OMSC-SPC-001 rev L"/>
+      <property key="Page" value="14"/>
+    </element>
+  </folder>
+</archimate:model>

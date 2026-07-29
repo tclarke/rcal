@@ -1,0 +1,9 @@
+[package]
+name = "rcal"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ramqp = "0.8.2"
+slog = "2.8.2"
+uuid = { version = "1.24.0", features = ["v1", "v3", "v4", "slog"] }
