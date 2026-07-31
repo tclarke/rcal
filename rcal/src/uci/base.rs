@@ -1,0 +1,498 @@
+//! # OMS Rust Critical Abstraction Layer – Abstract Service Bus Interfaces
+//!
+//! Abstract Rust trait definitions for the OMS CAL Abstract Service Bus (ASB).
+//! These types and traits constitute the contract that any platform-provided CAL
+//! Implementation must satisfy.
+//!
+//! ## Specification references
+//! - OMSC-SPC-001 rev L – CAL Specification
+//! - OMSC-SPC-008 rev K – C++ CAL Interface Generation Specification
+//!
+//! ## Design notes
+//! * [`AbstractServiceBus`] is object-safe; generic factory methods live in
+//!   the non-object-safe extension trait [`AbstractServiceBusExt`].
+//! * `Send + Sync` is required on all shared types (§5.1.1, CAL-016015).
+//! * `Box<Self>` receivers are used for consuming trait-object methods, which
+//!   is the Rust equivalent of C++ destructors and `shutdown()` calls.
+//!
+
+#![allow(dead_code)]
+#![warn(missing_docs)]
+
+use std::fmt;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use uuid::{Uuid, Variant as UuidVariant, Version as UuidVersion};
+
+/// Re-exported [`uuid::Timestamp`] so callers can build version-1 UUID
+/// timestamps without declaring a direct `uuid` crate dependency.
+///
+/// Used with [`CalUuid::generate_v1`].
+pub use uuid::Timestamp as UuidTimestamp;
+
+/// Operational states of the Abstract Service Bus connection (Table 5.9-1).
+///
+/// `Normal` and `Failed` are **required** states; `Initializing`, `Degraded`,
+/// and `Inoperable` are optional but recommended.  Allowed transitions are
+/// enforced by [`AsbConnectionState::can_transition_to`] per Figure 5.9-2.
+///
+/// # CERT coverage
+/// Table 5.9-1, Figure 5.9-2
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AsbConnectionState {
+    /// CAL is starting up; initialization begun but not complete. *(optional)*
+    ///
+    /// Blocking reads behave normally.  Writes and non-blocking reads return
+    /// an error.
+    Initializing,
+
+    /// CAL is fully operational; all configured QoS settings are satisfied.
+    /// *(required)*
+    ///
+    /// All operations behave normally.
+    Normal,
+
+    /// CAL can send/receive but not all QoS guarantees are met. *(optional)*
+    ///
+    /// Reads and writes behave normally; quality guarantees may be reduced.
+    Degraded,
+
+    /// CAL cannot send or receive; recovery is being attempted. *(optional)*
+    ///
+    /// Blocking reads behave normally.  Writes and non-blocking reads return
+    /// an error.
+    Inoperable,
+
+    /// CAL is permanently unusable; recovery is not possible.
+    /// *(required, terminal)*
+    ///
+    /// All writes and non-blocking reads return an error.  Existing blocking
+    /// reads are unblocked with a [`CalError`].  Registered listeners will
+    /// never be called again.
+    Failed,
+}
+
+impl AsbConnectionState {
+    /// Return `true` if a transition from `self` to `target` is allowed per
+    /// Figure 5.9-2.
+    ///
+    /// `Failed` is a terminal state; no outgoing transitions are permitted.
+    pub fn can_transition_to(self, target: AsbConnectionState) -> bool {
+        use AsbConnectionState::*;
+        matches!(
+            (self, target),
+            // From Initializing
+            (Initializing, Normal)
+                | (Initializing, Degraded)
+                | (Initializing, Inoperable)
+                | (Initializing, Failed)
+                // From Normal
+                | (Normal, Degraded)
+                | (Normal, Inoperable)
+                | (Normal, Failed)
+                // From Degraded
+                | (Degraded, Normal)
+                | (Degraded, Inoperable)
+                | (Degraded, Failed)
+                // From Inoperable (may re-enter Initializing for recovery)
+                | (Inoperable, Initializing)
+                | (Inoperable, Normal)
+                | (Inoperable, Degraded)
+                | (Inoperable, Failed)
+            // Failed is terminal; no outgoing transitions
+        )
+    }
+
+    /// Return `true` if `write()` and `read_no_wait()` are permitted
+    /// (Table 5.9-2).
+    pub fn permits_write_and_read_no_wait(self) -> bool {
+        matches!(self, Self::Normal | Self::Degraded)
+    }
+
+    /// Return `true` if a blocking `read()` call is permitted (Table 5.9-2).
+    pub fn permits_blocking_read(self) -> bool {
+        !matches!(self, Self::Failed)
+    }
+
+    /// Return `true` if `add_listener()` is permitted (Table 5.9-2).
+    pub fn permits_add_listener(self) -> bool {
+        !matches!(self, Self::Failed)
+    }
+}
+
+impl fmt::Display for AsbConnectionState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Initializing => "INITIALIZING",
+            Self::Normal      => "NORMAL",
+            Self::Degraded    => "DEGRADED",
+            Self::Inoperable  => "INOPERABLE",
+            Self::Failed      => "FAILED",
+        })
+    }
+}
+
+/// RFC 4122–conformant Universally Unique Identifier backed by
+/// [`uuid::Uuid`].
+///
+/// Wraps the `uuid` crate (features `v1`, `v3`, `v4`, `slog`) and enforces
+/// OMS invariants at **every construction site**:
+///
+/// * **Variant** must be [`UuidVariant::RFC4122`] (CAL-016479).
+///   The nil UUID (all-zero bytes) is exempt – it carries no meaningful
+///   variant or version bits.
+/// * **Version** must be one of:
+///   - `v1` / [`UuidVersion::Mac`] – time-based
+///   - `v3` / [`UuidVersion::Md5`] – MD5 name-based
+///   - `v4` / [`UuidVersion::Random`] – randomly generated
+///   (CAL-005181)
+///
+/// Constructors that accept external data ([`parse_str`][CalUuid::parse_str],
+/// [`from_octets`][CalUuid::from_octets], [`try_from_raw`][CalUuid::try_from_raw])
+/// return [`CalResult`].  Generation methods
+/// ([`generate_v4`][CalUuid::generate_v4], [`generate_v1`][CalUuid::generate_v1],
+/// [`generate_v3`][CalUuid::generate_v3]) are infallible because the `uuid`
+/// crate always produces conformant output.
+///
+/// ## `slog` support
+/// When the crate feature `slog` is enabled, `CalUuid` implements
+/// [`slog::Value`] by delegating to [`uuid::Uuid`]'s own implementation
+/// (also enabled by the `slog` feature of the `uuid` dependency).  The UUID
+/// is serialised as its canonical lowercase-hyphenated string.
+///
+/// # CERT coverage
+/// CAL-016477, CAL-016479, CAL-005181
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CalUuid(Uuid);
+
+impl CalUuid {
+    // ── Private validation ────────────────────────────────────────────────
+
+    /// Validate that `uuid` satisfies OMS invariants and wrap it.
+    ///
+    /// The nil UUID (all-zero bytes) is unconditionally accepted – its bytes
+    /// contain no meaningful variant or version fields.  All other UUIDs must
+    /// carry RFC 4122 variant bits and a version number of 1, 3, or 4.
+    fn validate(uuid: Uuid) -> CalResult<Self> {
+        if uuid.is_nil() {
+            return Ok(Self(uuid));
+        }
+
+        // ── Variant check (CAL-016479) ────────────────────────────────────
+        if uuid.get_variant() != UuidVariant::RFC4122 {
+            return Err(CalError::new(
+                CalErrorKind::UuidConformanceError,
+                format!(
+                    "UUID variant `{:?}` does not satisfy RFC 4122 \
+                     (expected Variant::RFC4122)",
+                    uuid.get_variant()
+                ),
+            ));
+        }
+
+        // ── Version check (CAL-005181) ────────────────────────────────────
+        // Only v1 (time-based), v3 (MD5 name-based), and v4 (random) are
+        // permitted by the OMS CAL specification.
+        match uuid.get_version() {
+            Some(UuidVersion::Mac)      // v1 – time-based
+            | Some(UuidVersion::Md5)    // v3 – MD5 name-based
+            | Some(UuidVersion::Random) // v4 – randomly generated
+            => Ok(Self(uuid)),
+
+            other => Err(CalError::new(
+                CalErrorKind::UuidConformanceError,
+                format!(
+                    "UUID version `{:?}` is not permitted; \
+                     OMS allows only v1 (Mac), v3 (Md5), and v4 (Random)",
+                    other
+                ),
+            )),
+        }
+    }
+
+    // ── Parsing / conversion ──────────────────────────────────────────────
+
+    /// Parse a hyphenated RFC 4122 UUID string, e.g.
+    /// `"550e8400-e29b-41d4-a716-446655440000"`.
+    ///
+    /// Delegates to [`uuid::Uuid::parse_str`].
+    ///
+    /// Returns [`CalErrorKind::UuidConformanceError`] if the string is
+    /// syntactically malformed or the resulting UUID violates OMS invariants.
+    ///
+    /// Mirrors `uci::base::UUID::fromString()` (OMSC-SPC-008 §9.8.1.2.1).
+    ///
+    /// # CERT coverage
+    /// CAL-016477
+    pub fn parse_str(s: &str) -> CalResult<Self> {
+        let uuid = Uuid::parse_str(s).map_err(|e| {
+            CalError::new(
+                CalErrorKind::UuidConformanceError,
+                format!("UUID parse error: {e}"),
+            )
+        })?;
+        Self::validate(uuid)
+    }
+
+    /// Construct from 16 big-endian (network-order) octets.
+    ///
+    /// Delegates to [`uuid::Uuid::from_bytes`].
+    ///
+    /// Returns [`CalErrorKind::UuidConformanceError`] if the bytes represent
+    /// a UUID that violates OMS invariants.
+    ///
+    /// Mirrors `uci::base::UUID::fromOctets()` (OMSC-SPC-008 §9.8.1.2.2).
+    ///
+    /// # CERT coverage
+    /// CAL-016477
+    pub fn from_octets(bytes: [u8; 16]) -> CalResult<Self> {
+        Self::validate(Uuid::from_bytes(bytes))
+    }
+
+    /// Wrap a raw [`uuid::Uuid`] after validating OMS invariants.
+    ///
+    /// Returns [`CalErrorKind::UuidConformanceError`] if `uuid` violates OMS
+    /// constraints.
+    ///
+    /// # CERT coverage
+    /// CAL-016477
+    pub fn try_from_raw(uuid: Uuid) -> CalResult<Self> {
+        Self::validate(uuid)
+    }
+
+    // ── Generation ────────────────────────────────────────────────────────
+
+    /// Return the nil UUID (all-zero bytes).  Always valid.
+    ///
+    /// Delegates to [`uuid::Uuid::nil`].
+    ///
+    /// Mirrors the default-constructed `uci::base::UUID`
+    /// (OMSC-SPC-008 §9.8.1.2.23.1).
+    pub const fn nil() -> Self {
+        Self(Uuid::nil())
+    }
+
+    /// Generate a random (version 4) UUID using a cryptographically secure
+    /// pseudo-random number generator.
+    ///
+    /// Delegates to [`uuid::Uuid::new_v4`].  Infallible – the `uuid` crate
+    /// always produces a valid RFC 4122 v4 UUID.
+    ///
+    /// Mirrors `uci::base::UUID::generateUUID()` (OMSC-SPC-008 §9.8.1.2.3).
+    ///
+    /// # CERT coverage
+    /// CAL-005181, CAL-016477, CAL-016479
+    pub fn generate_v4() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    /// Generate a time-based (version 1) UUID.
+    ///
+    /// Delegates to [`uuid::Uuid::new_v1`].  Infallible – the `uuid` crate
+    /// always produces a valid RFC 4122 v1 UUID.
+    ///
+    /// `timestamp` is a [`UuidTimestamp`] (re-exported [`uuid::Timestamp`]);
+    /// `node_id` is the 6-byte IEEE 802 MAC address or a randomly generated
+    /// substitute.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use oms_cal_asb::{CalUuid, UuidTimestamp};
+    /// use uuid::timestamp::context::Context;
+    ///
+    /// let ctx = Context::new(42);
+    /// let ts  = UuidTimestamp::now(&ctx);
+    /// let id  = CalUuid::generate_v1(ts, &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+    /// assert!(id.is_valid());
+    /// ```
+    ///
+    /// Mirrors `uci::base::UUID::generateUUID()` (OMSC-SPC-008 §9.8.1.2.3).
+    ///
+    /// # CERT coverage
+    /// CAL-005181, CAL-016477, CAL-016479
+    pub fn generate_v1(timestamp: UuidTimestamp, node_id: &[u8; 6]) -> Self {
+        Self(Uuid::new_v1(timestamp, node_id))
+    }
+
+    /// Generate a deterministic name-based (version 3) UUID.
+    ///
+    /// Delegates to [`uuid::Uuid::new_v3`]; computes the MD5 hash of the
+    /// concatenation of `namespace` and `name`.  The same `(namespace, name)`
+    /// pair always produces the same UUID, making this suitable for
+    /// deterministic (*a priori*) identifiers.
+    ///
+    /// Infallible – the `uuid` crate always produces a valid RFC 4122 v3 UUID.
+    ///
+    /// Mirrors
+    /// `uci::base::UUID::createVersion3UUID(const UUID&, const string&)`
+    /// (OMSC-SPC-008 §9.8.1.2.5.1).
+    ///
+    /// # CERT coverage
+    /// CAL-005181, CAL-016477, CAL-016479
+    pub fn generate_v3(namespace: &CalUuid, name: &[u8]) -> Self {
+        Self(Uuid::new_v3(&namespace.0, name))
+    }
+
+    // ── Inspection ────────────────────────────────────────────────────────
+
+    /// Return `true` if this is the nil UUID (all bytes zero).
+    ///
+    /// Delegates to [`uuid::Uuid::is_nil`].
+    ///
+    /// Mirrors `uci::base::UUID::isNil()` (OMSC-SPC-008 §9.8.1.2.20).
+    pub fn is_nil(&self) -> bool {
+        self.0.is_nil()
+    }
+
+    /// Return `true` if this UUID satisfies OMS invariants:
+    /// nil **or** (RFC 4122 variant **and** version ∈ {1, 3, 4}).
+    ///
+    /// For [`CalUuid`] values obtained via the public constructors this is
+    /// always `true`; the method is provided for defensive cross-checking.
+    ///
+    /// Mirrors `uci::base::UUID::isValid()` (OMSC-SPC-008 §9.8.1.2.21).
+    ///
+    /// # CERT coverage
+    /// CAL-016477
+    pub fn is_valid(&self) -> bool {
+        if self.0.is_nil() {
+            return true;
+        }
+        if self.0.get_variant() != UuidVariant::RFC4122 {
+            return false;
+        }
+        matches!(
+            self.0.get_version(),
+            Some(UuidVersion::Mac) | Some(UuidVersion::Md5) | Some(UuidVersion::Random)
+        )
+    }
+
+    /// Return the UUID variant.
+    ///
+    /// Delegates to [`uuid::Uuid::get_variant`].
+    ///
+    /// Mirrors `uci::base::UUID::getVariant()` (OMSC-SPC-008 §9.8.1.2.9).
+    pub fn get_variant(&self) -> UuidVariant {
+        self.0.get_variant()
+    }
+
+    /// Return the UUID version, if recognised.
+    ///
+    /// Delegates to [`uuid::Uuid::get_version`].
+    ///
+    /// Mirrors `uci::base::UUID::getVersion()` (OMSC-SPC-008 §9.8.1.2.10).
+    pub fn get_version(&self) -> Option<UuidVersion> {
+        self.0.get_version()
+    }
+
+    /// Return the raw 16-byte big-endian representation.
+    ///
+    /// Delegates to [`uuid::Uuid::as_bytes`].
+    ///
+    /// Mirrors `uci::base::UUID::getOctets()` (OMSC-SPC-008 §9.8.1.2.6).
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        self.0.as_bytes()
+    }
+
+    /// Borrow the underlying [`uuid::Uuid`].
+    pub fn as_raw(&self) -> &Uuid {
+        &self.0
+    }
+
+    /// Consume `self` and return the underlying [`uuid::Uuid`].
+    pub fn into_raw(self) -> Uuid {
+        self.0
+    }
+}
+
+// ── std trait implementations ─────────────────────────────────────────────
+
+impl fmt::Display for CalUuid {
+    /// Formats as the lowercase hyphenated RFC 4122 string, e.g.
+    /// `550e8400-e29b-41d4-a716-446655440000`.
+    ///
+    /// Delegates to [`uuid::Uuid`]'s [`Display`][fmt::Display] impl.
+    ///
+    /// Mirrors `uci::base::UUID::toString()` (OMSC-SPC-008 §9.8.1.2.8).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Debug for CalUuid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CalUuid({})", self.0)
+    }
+}
+
+impl std::str::FromStr for CalUuid {
+    type Err = CalError;
+
+    /// Parse a hyphenated RFC 4122 UUID string.
+    ///
+    /// Equivalent to [`CalUuid::parse_str`]; provided so that the idiomatic
+    /// Rust expression `"…".parse::<CalUuid>()` works.
+    fn from_str(s: &str) -> CalResult<Self> {
+        CalUuid::parse_str(s)
+    }
+}
+
+/// [`slog`] structured-logging support – delegates to [`uuid::Uuid`]'s own
+/// `slog::Value` implementation (enabled by the `slog` feature of the `uuid`
+/// crate).  The UUID is serialised as its canonical lowercase-hyphenated
+/// string.
+///
+/// # Cargo setup
+/// Enable the `slog` feature of this crate **and** declare `slog` as a direct
+/// dependency.  Because `uuid` already pulls `slog` in as a transitive
+/// dependency when its own `slog` feature is active, adding
+/// `slog = "2"` to `[dependencies]` is sufficient.
+///
+/// ```toml
+/// [features]
+/// slog = ["dep:slog"]
+///
+/// [dependencies]
+/// slog = { version = "2", optional = true }
+/// uuid = { version = "1", features = ["v1", "v3", "v4", "slog"] }
+/// ```
+#[cfg(feature = "slog")]
+impl slog::Value for CalUuid {
+    fn serialize(
+        &self,
+        record: &slog::Record<'_>,
+        key: slog::Key,
+        serializer: &mut dyn slog::Serializer,
+    ) -> slog::Result {
+        // Forward to uuid::Uuid's slog::Value impl, which the `slog` feature
+        // of the uuid crate provides.
+        slog::Value::serialize(&self.0, record, key, serializer)
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// §4  Service UUID aggregate  (CAL-005203)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Aggregated UUIDs that identify a CAL Client's service context.
+///
+/// Obtained after successful initialisation via
+/// [`AbstractServiceBus::service_uuids`].
+///
+/// # CERT coverage
+/// CAL-005203
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceUuids {
+    /// UUID of the OMS Platform System.
+    pub system: CalUuid,
+    /// UUID of this Service instance.
+    pub service: CalUuid,
+    /// UUID of the Subsystem, if applicable.
+    pub subsystem: Option<CalUuid>,
+    /// UUIDs of named components within this Service.
+    pub components: Vec<CalUuid>,
+    /// UUIDs of named capabilities within this Service.
+    pub capabilities: Vec<CalUuid>,
+}
