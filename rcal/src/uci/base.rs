@@ -24,113 +24,16 @@ use std::fmt;
 pub use uuid::timestamp::context::ContextV1;
 use uuid::{Uuid, Variant as UuidVariant, Version as UuidVersion};
 
+/// Re-exports for uci::asb
+///
+pub use crate::asb::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener, CalInstanceConfig, };
+
 /// Re-exported [`uuid::Timestamp`] so callers can build version-1 UUID
 /// timestamps without declaring a direct `uuid` crate dependency.
 ///
 /// Used with [`UUID::generate_v1`].
 pub use uuid::Timestamp as UuidTimestamp;
 
-/// Operational states of the Abstract Service Bus connection (Table 5.9-1).
-///
-/// `Normal` and `Failed` are **required** states; `Initializing`, `Degraded`,
-/// and `Inoperable` are optional but recommended.  Allowed transitions are
-/// enforced by [`AsbConnectionState::can_transition_to`] per Figure 5.9-2.
-///
-/// # CERT coverage
-/// Table 5.9-1, Figure 5.9-2
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum AsbConnectionState {
-    /// CAL is starting up; initialization begun but not complete. *(optional)*
-    ///
-    /// Blocking reads behave normally.  Writes and non-blocking reads return
-    /// an error.
-    Initializing,
-
-    /// CAL is fully operational; all configured QoS settings are satisfied.
-    /// *(required)*
-    ///
-    /// All operations behave normally.
-    Normal,
-
-    /// CAL can send/receive but not all QoS guarantees are met. *(optional)*
-    ///
-    /// Reads and writes behave normally; quality guarantees may be reduced.
-    Degraded,
-
-    /// CAL cannot send or receive; recovery is being attempted. *(optional)*
-    ///
-    /// Blocking reads behave normally.  Writes and non-blocking reads return
-    /// an error.
-    Inoperable,
-
-    /// CAL is permanently unusable; recovery is not possible.
-    /// *(required, terminal)*
-    ///
-    /// All writes and non-blocking reads return an error.  Existing blocking
-    /// reads are unblocked with a [`CalError`].  Registered listeners will
-    /// never be called again.
-    Failed,
-}
-
-impl AsbConnectionState {
-    /// Return `true` if a transition from `self` to `target` is allowed per
-    /// Figure 5.9-2.
-    ///
-    /// `Failed` is a terminal state; no outgoing transitions are permitted.
-    pub fn can_transition_to(self, target: AsbConnectionState) -> bool {
-        use AsbConnectionState::*;
-        matches!(
-            (self, target),
-            // From Initializing
-            (Initializing, Normal)
-                | (Initializing, Degraded)
-                | (Initializing, Inoperable)
-                | (Initializing, Failed)
-                // From Normal
-                | (Normal, Degraded)
-                | (Normal, Inoperable)
-                | (Normal, Failed)
-                // From Degraded
-                | (Degraded, Normal)
-                | (Degraded, Inoperable)
-                | (Degraded, Failed)
-                // From Inoperable (may re-enter Initializing for recovery)
-                | (Inoperable, Initializing)
-                | (Inoperable, Normal)
-                | (Inoperable, Degraded)
-                | (Inoperable, Failed) // Failed is terminal; no outgoing transitions
-        )
-    }
-
-    /// Return `true` if `write()` and `read_no_wait()` are permitted
-    /// (Table 5.9-2).
-    pub fn permits_write_and_read_no_wait(self) -> bool {
-        matches!(self, Self::Normal | Self::Degraded)
-    }
-
-    /// Return `true` if a blocking `read()` call is permitted (Table 5.9-2).
-    pub fn permits_blocking_read(self) -> bool {
-        !matches!(self, Self::Failed)
-    }
-
-    /// Return `true` if `add_listener()` is permitted (Table 5.9-2).
-    pub fn permits_add_listener(self) -> bool {
-        !matches!(self, Self::Failed)
-    }
-}
-
-impl fmt::Display for AsbConnectionState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Initializing => "INITIALIZING",
-            Self::Normal => "NORMAL",
-            Self::Degraded => "DEGRADED",
-            Self::Inoperable => "INOPERABLE",
-            Self::Failed => "FAILED",
-        })
-    }
-}
 
 /// RFC 4122–conformant Universally Unique Identifier backed by
 /// [`uuid::Uuid`].

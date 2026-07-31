@@ -15,7 +15,7 @@
       </element>
     </folder>
     <folder name="UUID" id="f-uuid">
-      <element xsi:type="archimate:ApplicationComponent" name="CalUuid" id="e-caluuid">
+      <element xsi:type="archimate:ApplicationComponent" name="UUID" id="e-caluuid">
         <documentation>RFC 4122 conformant UUID enforced by construction. Newtype wrapper over uuid::Uuid. Validation applied at every construction path. Invariants: Variant = RFC 4122 Leach-Salz (CAL-016479), Version in {1, 3, 4} (CAL-005181). CERTs: CAL-016477, CAL-016479, CAL-005181.</documentation>
       </element>
       <element xsi:type="archimate:DataObject" name="ServiceUuids" id="e-serviceuuids">
@@ -74,7 +74,6 @@
   <folder name="Relations" id="f-rel" type="relations">
     <element xsi:type="archimate:CompositionRelationship" id="r-err-comp" source="e-calerror" target="e-calerror-kind"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-err-assoc" source="e-calresult" target="e-calerror"/>
-    <element xsi:type="archimate:CompositionRelationship" id="r-uuid-comp" source="e-serviceuuids" target="e-caluuid"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-req-assoc" source="e-reqfield" target="e-calmessage"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-opt-assoc" source="e-optfield" target="e-calmessage"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-bnd-assoc" source="e-bndfield" target="e-calmessage"/>
@@ -118,6 +117,7 @@
     <element xsi:type="archimate:RealizationRelationship" id="id-96e18e16ed0f465c91ac5152" source="e-asb" target="req-cal-016366"/>
     <element xsi:type="archimate:RealizationRelationship" id="id-040cc6ac8bb54518bd613c20" source="e-calfactory" target="req-cal-005201"/>
     <element xsi:type="archimate:RealizationRelationship" id="id-efc0d27c03ba4717b3487dfc" source="e-calfactory" target="req-cal-005202"/>
+    <element xsi:type="archimate:AssociationRelationship" id="id-11da5b76579a4dc38e718ca402b04fdc" source="e-serviceuuids" target="e-caluuid"/>
   </folder>
   <folder name="Motivation" id="f-motivation" type="motivation">
     <element xsi:type="archimate:Requirement" name="CAL-005179" id="req-cal-005179">
@@ -424,7 +424,7 @@
       </child>
       <child xsi:type="archimate:DiagramObject" id="do-v1-serviceuuids" archimateElement="e-serviceuuids" type="1">
         <bounds x="200" y="120" width="140" height="55"/>
-        <sourceConnection xsi:type="archimate:Connection" id="con-v1-uuid-comp" source="do-v1-serviceuuids" target="do-v1-caluuid" archimateRelationship="r-uuid-comp"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-uuid-comp" source="do-v1-serviceuuids" target="do-v1-caluuid" archimateRelationship="id-11da5b76579a4dc38e718ca402b04fdc"/>
       </child>
       <child xsi:type="archimate:DiagramObject" id="do-v1-reqfield" archimateElement="e-reqfield">
         <bounds x="20" y="220" width="140" height="55"/>
@@ -500,7 +500,7 @@
       </child>
       <child xsi:type="archimate:DiagramObject" id="do-v3-serviceuuids" archimateElement="e-serviceuuids" type="1">
         <bounds x="400" y="100" width="140" height="55"/>
-        <sourceConnection xsi:type="archimate:Connection" id="con-v3-comp" source="do-v3-serviceuuids" target="do-v3-caluuid" archimateRelationship="r-uuid-comp"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v3-comp" source="do-v3-serviceuuids" target="do-v3-caluuid" archimateRelationship="id-11da5b76579a4dc38e718ca402b04fdc"/>
       </child>
     </element>
     <element xsi:type="archimate:ArchimateDiagramModel" name="Detail - Accessors" id="v4">
@@ -793,6 +793,12 @@
       </child>
       <child xsi:type="archimate:DiagramObject" id="id-fdc32874fc254ca092f5950f9fd97f2a" targetConnections="id-d24ee99494184b7ca5c6a7069625fd33" archimateElement="req-cal-016479">
         <bounds x="300" y="20" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-ce4c3f7915d04cb6bbd63f0bdd0ba130" archimateElement="id-c6f8d7688bd14a0b9ffc9123635c9663">
+        <bounds x="685" y="141" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-d3e5744e1e7142b5be42df1898af8155" archimateElement="id-c61875c97edb47dead97af08036ed0d4">
+        <bounds x="835" y="141" width="120" height="55"/>
       </child>
     </element>
   </folder>
