@@ -1,2 +1,2 @@
-pub mod xs;
 pub mod uci;
+pub mod xs;

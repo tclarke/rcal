@@ -19,16 +19,15 @@
 #![allow(dead_code)]
 #![warn(missing_docs)]
 
+use crate::uci::{CalError, CalErrorKind, CalResult};
 use std::fmt;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
+pub use uuid::timestamp::context::ContextV1;
 use uuid::{Uuid, Variant as UuidVariant, Version as UuidVersion};
 
 /// Re-exported [`uuid::Timestamp`] so callers can build version-1 UUID
 /// timestamps without declaring a direct `uuid` crate dependency.
 ///
-/// Used with [`CalUuid::generate_v1`].
+/// Used with [`UUID::generate_v1`].
 pub use uuid::Timestamp as UuidTimestamp;
 
 /// Operational states of the Abstract Service Bus connection (Table 5.9-1).
@@ -100,8 +99,7 @@ impl AsbConnectionState {
                 | (Inoperable, Initializing)
                 | (Inoperable, Normal)
                 | (Inoperable, Degraded)
-                | (Inoperable, Failed)
-            // Failed is terminal; no outgoing transitions
+                | (Inoperable, Failed) // Failed is terminal; no outgoing transitions
         )
     }
 
@@ -126,10 +124,10 @@ impl fmt::Display for AsbConnectionState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Initializing => "INITIALIZING",
-            Self::Normal      => "NORMAL",
-            Self::Degraded    => "DEGRADED",
-            Self::Inoperable  => "INOPERABLE",
-            Self::Failed      => "FAILED",
+            Self::Normal => "NORMAL",
+            Self::Degraded => "DEGRADED",
+            Self::Inoperable => "INOPERABLE",
+            Self::Failed => "FAILED",
         })
     }
 }
@@ -147,17 +145,17 @@ impl fmt::Display for AsbConnectionState {
 ///   - `v1` / [`UuidVersion::Mac`] – time-based
 ///   - `v3` / [`UuidVersion::Md5`] – MD5 name-based
 ///   - `v4` / [`UuidVersion::Random`] – randomly generated
-///   (CAL-005181)
+///     (CAL-005181)
 ///
-/// Constructors that accept external data ([`parse_str`][CalUuid::parse_str],
-/// [`from_octets`][CalUuid::from_octets], [`try_from_raw`][CalUuid::try_from_raw])
+/// Constructors that accept external data ([`parse_str`][UUID::parse_str],
+/// [`from_octets`][UUID::from_octets], [`try_from_raw`][UUID::try_from_raw])
 /// return [`CalResult`].  Generation methods
-/// ([`generate_v4`][CalUuid::generate_v4], [`generate_v1`][CalUuid::generate_v1],
-/// [`generate_v3`][CalUuid::generate_v3]) are infallible because the `uuid`
+/// ([`generate_v4`][UUID::generate_v4], [`generate_v1`][UUID::generate_v1],
+/// [`generate_v3`][UUID::generate_v3]) are infallible because the `uuid`
 /// crate always produces conformant output.
 ///
 /// ## `slog` support
-/// When the crate feature `slog` is enabled, `CalUuid` implements
+/// When the crate feature `slog` is enabled, `UUID` implements
 /// [`slog::Value`] by delegating to [`uuid::Uuid`]'s own implementation
 /// (also enabled by the `slog` feature of the `uuid` dependency).  The UUID
 /// is serialised as its canonical lowercase-hyphenated string.
@@ -165,9 +163,9 @@ impl fmt::Display for AsbConnectionState {
 /// # CERT coverage
 /// CAL-016477, CAL-016479, CAL-005181
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CalUuid(Uuid);
+pub struct UUID(Uuid);
 
-impl CalUuid {
+impl UUID {
     // ── Private validation ────────────────────────────────────────────────
 
     /// Validate that `uuid` satisfies OMS invariants and wrap it.
@@ -299,12 +297,11 @@ impl CalUuid {
     ///
     /// # Example
     /// ```rust,no_run
-    /// use oms_cal_asb::{CalUuid, UuidTimestamp};
-    /// use uuid::timestamp::context::Context;
+    /// use rcal::uci::base::{UUID, UuidTimestamp, ContextV1};
     ///
-    /// let ctx = Context::new(42);
+    /// let ctx = ContextV1::new(42);
     /// let ts  = UuidTimestamp::now(&ctx);
-    /// let id  = CalUuid::generate_v1(ts, &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+    /// let id  = UUID::generate_v1(ts, &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
     /// assert!(id.is_valid());
     /// ```
     ///
@@ -331,7 +328,7 @@ impl CalUuid {
     ///
     /// # CERT coverage
     /// CAL-005181, CAL-016477, CAL-016479
-    pub fn generate_v3(namespace: &CalUuid, name: &[u8]) -> Self {
+    pub fn generate_v3(namespace: &UUID, name: &[u8]) -> Self {
         Self(Uuid::new_v3(&namespace.0, name))
     }
 
@@ -349,7 +346,7 @@ impl CalUuid {
     /// Return `true` if this UUID satisfies OMS invariants:
     /// nil **or** (RFC 4122 variant **and** version ∈ {1, 3, 4}).
     ///
-    /// For [`CalUuid`] values obtained via the public constructors this is
+    /// For [`UUID`] values obtained via the public constructors this is
     /// always `true`; the method is provided for defensive cross-checking.
     ///
     /// Mirrors `uci::base::UUID::isValid()` (OMSC-SPC-008 §9.8.1.2.21).
@@ -409,7 +406,7 @@ impl CalUuid {
 
 // ── std trait implementations ─────────────────────────────────────────────
 
-impl fmt::Display for CalUuid {
+impl fmt::Display for UUID {
     /// Formats as the lowercase hyphenated RFC 4122 string, e.g.
     /// `550e8400-e29b-41d4-a716-446655440000`.
     ///
@@ -421,21 +418,21 @@ impl fmt::Display for CalUuid {
     }
 }
 
-impl fmt::Debug for CalUuid {
+impl fmt::Debug for UUID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "CalUuid({})", self.0)
+        write!(f, "UUID({})", self.0)
     }
 }
 
-impl std::str::FromStr for CalUuid {
+impl std::str::FromStr for UUID {
     type Err = CalError;
 
     /// Parse a hyphenated RFC 4122 UUID string.
     ///
-    /// Equivalent to [`CalUuid::parse_str`]; provided so that the idiomatic
-    /// Rust expression `"…".parse::<CalUuid>()` works.
+    /// Equivalent to [`UUID::parse_str`]; provided so that the idiomatic
+    /// Rust expression `"…".parse::<UUID>()` works.
     fn from_str(s: &str) -> CalResult<Self> {
-        CalUuid::parse_str(s)
+        UUID::parse_str(s)
     }
 }
 
@@ -458,8 +455,7 @@ impl std::str::FromStr for CalUuid {
 /// slog = { version = "2", optional = true }
 /// uuid = { version = "1", features = ["v1", "v3", "v4", "slog"] }
 /// ```
-#[cfg(feature = "slog")]
-impl slog::Value for CalUuid {
+impl slog::Value for UUID {
     fn serialize(
         &self,
         record: &slog::Record<'_>,
@@ -486,13 +482,13 @@ impl slog::Value for CalUuid {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServiceUuids {
     /// UUID of the OMS Platform System.
-    pub system: CalUuid,
+    pub system: UUID,
     /// UUID of this Service instance.
-    pub service: CalUuid,
+    pub service: UUID,
     /// UUID of the Subsystem, if applicable.
-    pub subsystem: Option<CalUuid>,
+    pub subsystem: Option<UUID>,
     /// UUIDs of named components within this Service.
-    pub components: Vec<CalUuid>,
+    pub components: Vec<UUID>,
     /// UUIDs of named capabilities within this Service.
-    pub capabilities: Vec<CalUuid>,
+    pub capabilities: Vec<UUID>,
 }
