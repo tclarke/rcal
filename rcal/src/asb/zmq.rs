@@ -9,14 +9,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use zeromq::{PubSocket, SubSocket};
 
-
 use crate::uci::{CalResult, CalError, CalErrorKind};
 use crate::uci::base::{ServiceUuids, UUID};
 use super::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
 
+pub const ZMQ_ASB_ID: &str = "zmq";
+
 pub struct ZmqAsb {
     service_id: String,
-    asb_id: String,
     uuids: ServiceUuids,
 
     out_conns: HashMap<String, PubSocket>,
@@ -24,10 +24,9 @@ pub struct ZmqAsb {
 }
 
 impl ZmqAsb {
-    pub fn new<S: Into<String>>(service_id: S, asb_id: S) -> Self {
+    pub fn new<S: Into<String>>(service_id: S) -> Self {
         Self {
             service_id: service_id.into(),
-            asb_id: asb_id.into(),
             uuids: ServiceUuids{
                 system: UUID::nil(),
                 service: UUID::nil(),
@@ -47,7 +46,7 @@ impl AbstractServiceBus for ZmqAsb {
     }
 
     fn asb_identifier(&self)  -> &str {
-        self.asb_id.as_str()
+        ZMQ_ASB_ID
     }
 
     fn service_uuids(&self) -> CalResult<&ServiceUuids> {
@@ -94,15 +93,13 @@ mod tests {
     #[test]
     fn test_check_creation() {
         // let ns = UUID::generate_v4();
-        let a = ZmqAsb::new(
-            "Test Service",
-            "Test ASB Instance");
+        let a = ZmqAsb::new("Test Service");
             /* UUID::generate_v3(&ns, b"service"),
             UUID::generate_v3(&ns, b"system"),
             Some(UUID::generate_v3(&ns, b"subsystem"))); */
         assert_eq!(a.oms_schema_version(), "2.1.0_test_schema");
         assert_eq!(a.oms_schema_compiler_version(), "0.1.0");
         assert_eq!(a.service_identifier(), "Test Service");
-        assert_eq!(a.asb_identifier(), "Test ASB Instance")
+        assert_eq!(a.asb_identifier(), ZMQ_ASB_ID)
     }
 }

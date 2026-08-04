@@ -26,6 +26,7 @@ use crate::uci::{CalError, CalErrorKind, CalResult};
 use crate::uci::base::ServiceUuids;
 
 mod zmq;
+use zmq::{ZMQ_ASB_ID, ZmqAsb};
 
 // ─── ASB Connection State ─────────────────────────────────────────────────
 
@@ -384,23 +385,27 @@ pub struct CalInstanceConfig {
     pub network_config: String,
 }
 
-type AsbFactory = HashMap<(String, String), Arc<dyn AbstractServiceBus>>;
+/// The actual factory.
+/// New types go here
+///
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct AsbKey {
+    service_identifier: String,
+    asb_identifier: String,
+}
 
-use zmq::ZmqAsb;
+type AsbFactory = HashMap<AsbKey, Arc<dyn AbstractServiceBus>>;
 
 fn get_asb<S: Into<String>>(service_identifier: S, asb_identifier: S) -> CalResult<Arc<dyn AbstractServiceBus>> {
     let mut fact = ASB_FACTORY.lock().unwrap();
-    let key = (service_identifier.into(), asb_identifier.into());
-    if fact.contains_key(&key) {
-        Ok(Arc::clone(fact.get(&key).unwrap()))
-    } else {
-        match key.1.as_str() {
-            "zmq" => fact.insert(key.clone(), Arc::new(ZmqAsb::new(key.0.clone(), key.1.clone()))).ok_or(
-                CalError::new(CalErrorKind::InitializationFailure, "Unable to create ASB")),
-            _ => Err(CalError::new(CalErrorKind::InitializationFailure, "Invalid ASB type")),
+    let key = AsbKey{service_identifier: service_identifier.into(), asb_identifier: asb_identifier.into()};
+    fact.entry(key.clone()).or_try_insert_with(|| {
+        match key.asb_identifier.as_str() {
+            ZMQ_ASB_ID => Ok(Arc::new(ZmqAsb::new(key.service_identifier.clone()))),
+            _ => Err(CalError::new(CalErrorKind::InitializationFailure, "Invalid ASB type"))
         }
-    }
+    }).cloned()
 }
 
 lazy_static! {
