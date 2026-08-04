@@ -17,10 +17,15 @@
 // References: §4.12, §5.3, §5.9, Table 5.9-1, Table 5.9-2,
 //             Figure 5.9-1, Figure 5.9-2
 // =============================================================================
-use std::sync::Arc;
+#![allow(dead_code)]
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::fmt;
+use lazy_static::lazy_static;
 use crate::uci::{CalError, CalErrorKind, CalResult};
 use crate::uci::base::ServiceUuids;
+
+mod zmq;
 
 // ─── ASB Connection State ─────────────────────────────────────────────────
 
@@ -255,7 +260,7 @@ pub trait AsbStatusListener: Send + Sync {
 ///     asb_identifier:     "primary_network".to_string(),
 ///     network_config:     "/etc/oms/network.xml".to_string(),
 /// };
-/// let mut bus: Box<dyn AbstractServiceBus> = cal_factory(config)?;
+/// let mut bus: Arc<dyn AbstractServiceBus> = cal_factory(config)?;
 ///
 /// // Retrieve identity
 /// let uuids = bus.service_uuids()?;
@@ -379,17 +384,40 @@ pub struct CalInstanceConfig {
     pub network_config: String,
 }
 
-/// Factory function type for obtaining a CAL instance.
-///
-/// Satisfies CERT CAL-005201: provides a mechanism for the CAL Client to
-/// obtain a fully initialized instance of the CAL associated with a
-/// Service Identifier.
-///
-/// Each CAL Implementation ships a concrete function of this type.
-/// Subsequent calls with the same (service_id, asb_id) return the same
-/// logical instance (CERT CAL-005202).
-///
-/// Returns `Err(InitializationFailure)` on failure (CERT CAL-005204).
-#[allow(dead_code)]
-pub type CalInstanceFactory =
-    fn(config: CalInstanceConfig) -> CalResult<Box<dyn AbstractServiceBus>>;
+type AsbFactory = HashMap<(String, String), Arc<dyn AbstractServiceBus>>;
+
+
+use zmq::ZmqAsb;
+
+fn get_asb<S: Into<String>>(service_identifier: S, asb_identifier: S) -> CalResult<Arc<dyn AbstractServiceBus>> {
+    let mut fact = ASB_FACTORY.lock().unwrap();
+    let key = (service_identifier.into(), asb_identifier.into());
+    if fact.contains_key(&key) {
+        Ok(Arc::clone(fact.get(&key).unwrap()))
+    } else {
+        match key.1.as_str() {
+            "zmq" => fact.insert(key.clone(), Arc::new(ZmqAsb::new(key.0.clone(), key.1.clone()))).ok_or(
+                CalError::new(CalErrorKind::InitializationFailure, "Unable to create ASB")),
+            _ => Err(CalError::new(CalErrorKind::InitializationFailure, "Invalid ASB type")),
+        }
+    }
+}
+
+lazy_static! {
+    static ref ASB_FACTORY: Mutex<AsbFactory> = Mutex::new(AsbFactory::new());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_asb_factory() {
+        let a = get_asb("test", "zmq").unwrap();
+        let b = get_asb("test", "zmq").unwrap();
+        let c = get_asb("test2", "zmq").unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+        assert!(!Arc::ptr_eq(&a, &c));
+        assert!(get_asb("test2", "dummy").is_err());
+    }
+}
