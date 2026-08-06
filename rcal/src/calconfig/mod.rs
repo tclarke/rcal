@@ -9,25 +9,25 @@ struct CalConfig {
     label: Option<String>,
     uuid: UUID,
     default_transport: Option<String>,
-    transport = Transport,
-    service = Service,
+    transport: Transport,
+    service: Service,
 }
 
-#[derive(Deserialize, Copy)]
+#[derive(Deserialize, Clone)]
 struct Transport {
     id: String,
     type: String,
     uri: String,
 }
 
-#[derive(Deserialize, Copy)]
+#[derive(Deserialize, Clone)]
 struct Service {
     id: String,
     transport: Option<String>
     topic: Topic,
 }
 
-#[derive(Deserialize, Copy)]
+#[derive(Deserialize, Clone)]
 struct Topic {
     id: String,
     type: Option<String>,
