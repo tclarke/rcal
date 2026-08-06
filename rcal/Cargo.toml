@@ -6,7 +6,8 @@ edition = "2024"
 [dependencies]
 lazy_static = "1.5.0"
 ramqp = "0.8.2"
+serde = { version = "1.0.229", features = ["derive"] }
 slog = "2.8.2"
 toml = "1.1.4"
-uuid = { version = "1.24.0", features = ["v1", "v3", "v4", "slog"] }
+uuid = { version = "1.24.0", features = ["v1", "v3", "v4", "slog", "serde"] }
 zeromq = "0.6.0"

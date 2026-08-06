@@ -53,7 +53,17 @@ pub enum CalErrorKind {
     /// (CAL-016035).
     AbstractInstantiation,
     /// An internal error within the CAL Implementation.
-    ImplementationError,
+    ImplementationError{
+        /// The optional implementation error type
+        kind: Option<CalImplementationErrorKind>},
+}
+
+/// More detail on a specific implementation error.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CalImplementationErrorKind {
+    /// An error parsing or interpreting the CAL configuration file.
+    ConfigError,
 }
 
 impl Display for CalErrorKind {
@@ -73,7 +83,9 @@ impl Display for CalErrorKind {
             Self::AbstractInstantiation => {
                 write!(f, "Cannot instantiate abstract CAL Message type")
             }
-            Self::ImplementationError => write!(f, "Internal CAL implementation error"),
+            // Implementation errors
+            Self::ImplementationError { kind: None } => write!(f, "Internal CAL implementation error"),
+            Self::ImplementationError { kind: Some(CalImplementationErrorKind::ConfigError)} => write!(f, "Unable to parse or interpret CAL configuration."),
         }
     }
 }
@@ -118,11 +130,36 @@ impl CalError {
             source: Some(Box::new(source)),
         }
     }
+
+    /// Constructs a new [`CalError`] with kind [`CalErrorKind::ImplementationError`]
+    pub fn new_impl(kind: CalImplementationErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind: CalErrorKind::ImplementationError { kind: Some(kind) },
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// Constructs a new [`CalError`] with kind [`CalErrorKind::ImplementationError`] wrapping an existing error as its cause.
+    pub fn with_impl_source(
+        kind: CalImplementationErrorKind,
+        message: impl Into<String>,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            kind: CalErrorKind::ImplementationError { kind: Some(kind) },
+            message: message.into(),
+            source: Some(Box::new(source)),
+        }
+    }
 }
 
 impl Display for CalError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.kind, self.message)
+        match self.source {
+            Some(ref src) => write!(f, "{}: {}\nFrom: {}", self.kind, self.message, src),
+            None => write!(f, "{}: {}", self.kind, self.message),
+        }
     }
 }
 

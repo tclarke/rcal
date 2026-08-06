@@ -65,7 +65,7 @@ pub use uuid::Timestamp as UuidTimestamp;
 ///
 /// # CERT coverage
 /// CAL-016477, CAL-016479, CAL-005181
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UUID(Uuid);
 
 impl UUID {

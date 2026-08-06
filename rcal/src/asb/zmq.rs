@@ -71,14 +71,14 @@ impl AbstractServiceBus for ZmqAsb {
         &mut self,
         _listener: Arc<dyn AsbStatusListener>,
     ) -> CalResult<()> {
-        Err(CalError::new(CalErrorKind::ImplementationError, String::from("Not implemented")))
+        Err(CalError::new(CalErrorKind::ImplementationError{kind: None}, String::from("Not implemented")))
     }
 
     fn unregister_status_listener(
         &mut self,
         _listener: &Arc<dyn AsbStatusListener>,
     ) -> CalResult<()> {
-        Err(CalError::new(CalErrorKind::ImplementationError, String::from("Not implemented")))
+        Err(CalError::new(CalErrorKind::ImplementationError{kind: None}, String::from("Not implemented")))
     }
 
     fn close(&mut self) -> CalResult<()> {
