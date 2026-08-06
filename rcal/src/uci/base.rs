@@ -175,6 +175,9 @@ impl UUID {
         Self(Uuid::nil())
     }
 
+    /// Generate a new UUID using the configured type.
+    /// This is configured via the configuration section "UUIDFactoryType"
+
     /// Generate a random (version 4) UUID using a cryptographically secure
     /// pseudo-random number generator.
     ///
