@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use zeromq::{PubSocket, SubSocket};
+use slog::{Logger, trace, error};
 
 use crate::uci::{CalResult, CalError, CalErrorKind};
 use crate::uci::base::{ServiceUuids, UUID};
@@ -21,10 +22,12 @@ pub struct ZmqAsb {
 
     out_conns: HashMap<String, PubSocket>,
     in_conns: HashMap<String, SubSocket>,
+
+    logger: slog::Logger,
 }
 
 impl ZmqAsb {
-    pub fn new<S: Into<String>>(service_id: S) -> Self {
+    pub fn new<S: Into<String>>(service_id: S, logger: Logger) -> Self {
         Self {
             service_id: service_id.into(),
             uuids: ServiceUuids{
@@ -36,11 +39,16 @@ impl ZmqAsb {
             },
             out_conns: HashMap::new(),
             in_conns: HashMap::new(),
+
+            logger,
         }
     }
 }
 
 impl AbstractServiceBus for ZmqAsb {
+    fn get_logger(&self) -> &slog::Logger {
+        &self.logger
+    }
     fn service_identifier(&self) -> &str {
         self.service_id.as_str()
     }
@@ -71,6 +79,8 @@ impl AbstractServiceBus for ZmqAsb {
         &mut self,
         _listener: Arc<dyn AsbStatusListener>,
     ) -> CalResult<()> {
+        trace!(self.logger, "ZmqAsb::register_status_listener()");
+        error!(self.logger, "Not implemented!");
         Err(CalError::new(CalErrorKind::ImplementationError{kind: None}, String::from("Not implemented")))
     }
 
@@ -78,10 +88,13 @@ impl AbstractServiceBus for ZmqAsb {
         &mut self,
         _listener: &Arc<dyn AsbStatusListener>,
     ) -> CalResult<()> {
+        trace!(self.logger, "ZmqAsb::unregister_status_listener()");
+        error!(self.logger, "Not implemented!");
         Err(CalError::new(CalErrorKind::ImplementationError{kind: None}, String::from("Not implemented")))
     }
 
     fn close(&mut self) -> CalResult<()> {
+        trace!(self.logger, "ZmqAsb::close()");
         Ok(())
     }
 }
@@ -92,8 +105,9 @@ mod tests {
 
     #[test]
     fn test_check_creation() {
+        let logger = procedural_macros::init_test_logger!();
         // let ns = UUID::generate_v4();
-        let a = ZmqAsb::new("Test Service");
+        let a = ZmqAsb::new("Test Service", logger);
             /* UUID::generate_v3(&ns, b"service"),
             UUID::generate_v3(&ns, b"system"),
             Some(UUID::generate_v3(&ns, b"subsystem"))); */

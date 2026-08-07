@@ -1,90 +1,99 @@
 #![allow(dead_code)]
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use slog::{info, error};
+use std::fmt;
 use std::fs;
-use slog_scope::{info, error};
+use std::sync::Mutex;
 use crate::uci::{CalError, CalImplementationErrorKind, CalResult};
 use crate::uci::base::UUID;
 
+
+lazy_static! {
+    pub static ref CAL_CONFIG: Mutex<CalConfig> = Mutex::new(CalConfig::default());
+}
+
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
-struct CalConfig {
-    system: System,
+pub struct CalConfig {
+    pub system: System,
     #[serde(rename="uuid-factory")]
-    uuidfactory: UUIDFactory,
-    transport: Vec<Transport>,
-    service: Vec<Service>,
+    pub uuidfactory: UUIDFactory,
+    pub transport: Vec<Transport>,
+    pub service: Vec<Service>,
+}
+
+impl fmt::Display for CalConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", toml::to_string(self).unwrap())
+    }
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
-struct System {
-    id: String,
-    label: Option<String>,
-    uuid: UUID,
-    default_transport: Option<String>,
+pub struct System {
+    pub id: String,
+    pub label: Option<String>,
+    pub uuid: UUID,
+    pub default_transport: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
-enum UUIDFactoryType {
+pub enum UUIDFactoryType {
     #[default]
     Random,
     TimeBased,
-    Namespace,
-
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
-struct UUIDFactory {
+pub struct UUIDFactory {
     #[serde(rename="type")]
     /// The factory type
-    type_: UUIDFactoryType,
-
-    /// Namespace for "namespace' generators."
-    namespace: Option<UUID>,
+    pub type_: UUIDFactoryType,
 
     /// MAC address to timebased. If not specified, the
     /// default interface's mac address will be used.
-    node: Option<mac_address::MacAddress>,
+    pub node: Option<mac_address::MacAddress>,
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
-struct Transport {
-    id: String,
+pub struct Transport {
+    pub id: String,
     #[serde(rename="type")]
-    type_: String,
-    uri: String,
+    pub type_: String,
+    pub uri: String,
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
-struct Service {
-    id: String,
-    transport: Option<String>,
-    topic: Vec<Topic>,
+pub struct Service {
+    pub id: String,
+    pub transport: Option<String>,
+    pub topic: Vec<Topic>,
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
-struct Topic {
-    id: String,
+pub struct Topic {
+    pub id: String,
     #[serde(rename="type")]
-    type_: Option<String>,
-    topic: Option<String>,
+    pub type_: Option<String>,
+    pub topic: Option<String>,
 }
 
-fn parse_config_from_file(filename: &str) -> CalResult<CalConfig> {
-    info!("Parsing config file {}", filename);
+fn parse_config_from_file(filename: &str, logger: slog::Logger) -> CalResult<CalConfig> {
+    info!(logger, "Parsing config file {}", filename);
     let config_str = fs::read_to_string(filename).map_err(|err| {
             CalError::with_impl_source(CalImplementationErrorKind::ConfigError, format!("Can't read config file: {}", filename), err)
         })?;
-    parse_config(config_str.as_str())
+    parse_config(config_str.as_str(), logger)
 }
 
-fn parse_config(config_str: &str) -> CalResult<CalConfig> {
-    let config = toml::from_str(&config_str).map_err(|err| {
-            error!("{}", err);
+fn parse_config(config_str: &str, logger: slog::Logger) -> CalResult<CalConfig> {
+    let config = toml::from_str(config_str).map_err(|err| {
+            error!(logger, "{}", err);
             CalError::with_impl_source(CalImplementationErrorKind::ConfigError, "Can't parse configuration", err)
     })?;
     Ok(config)
@@ -109,35 +118,19 @@ pub fn get_test_config_path(filename: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use slog::{Drain, Logger, o};
-    use slog_term::{FullFormat, TermDecorator};
-    use std::sync::Mutex;
-
-    fn create_test_logger() -> Logger {
-        // Decorator that targets stdout for Cargo's test capture framework
-        let decorator = TermDecorator::new().stdout().build();
-
-        // Mutex makes the drain safe to share across concurrent test threads
-        let drain = FullFormat::new(decorator).build().fuse();
-        let drain = Mutex::new(drain).fuse();
-
-        Logger::root(drain, o!("test_context" => "unit_tests"))
-    }
+    use procedural_macros::init_test_logger;
 
     #[test]
     fn test_parse_file() {
-        parse_config_from_file(get_test_config_path("calconfig_sample.toml").as_str()).unwrap();
+        let logger = init_test_logger!();
+        parse_config_from_file(get_test_config_path("calconfig_sample.toml").as_str(), logger).unwrap();
     }
 
     #[test]
     fn test_uuid_factory() {
-        let log = create_test_logger();
-        let _guard = slog_scope::set_global_logger(log);
-
-        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"Random\"\n").unwrap();
-        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"Namespace\"\n").unwrap();
-        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"Namespace\"\nnamespace=\"5a8595ba-29fa-4e04-8276-ef6e5c768bdb\"\n").unwrap();
-        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\n").unwrap();
-        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\nnode=\"00:11:22:33:44:55\"\n").unwrap();
+        let logger = init_test_logger!();
+        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"Random\"\n", logger.clone()).unwrap();
+        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\n", logger.clone()).unwrap();
+        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\nnode=\"00:11:22:33:44:55\"\n", logger.clone()).unwrap();
     }
 }

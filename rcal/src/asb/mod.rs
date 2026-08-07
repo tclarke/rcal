@@ -281,6 +281,9 @@ pub trait AsbStatusListener: Send + Sync {
 /// bus.close()?;
 /// ```
 pub trait AbstractServiceBus: Send + Sync {
+    /// Get the stored logger
+    fn get_logger(&self) -> &slog::Logger;
+
     // ─── Identity ─────────────────────────────────────────────────────────
 
     /// Returns the Service Identifier string used to initialize this CAL
@@ -397,12 +400,12 @@ struct AsbKey {
 
 type AsbFactory = HashMap<AsbKey, Arc<dyn AbstractServiceBus>>;
 
-fn get_asb<S: Into<String>>(service_identifier: S, asb_identifier: S) -> CalResult<Arc<dyn AbstractServiceBus>> {
+fn get_asb<S: Into<String>>(service_identifier: S, asb_identifier: S, logger: slog::Logger) -> CalResult<Arc<dyn AbstractServiceBus>> {
     let mut fact = ASB_FACTORY.lock().unwrap();
     let key = AsbKey{service_identifier: service_identifier.into(), asb_identifier: asb_identifier.into()};
     fact.entry(key.clone()).or_try_insert_with(|| {
         match key.asb_identifier.as_str() {
-            ZMQ_ASB_ID => Ok(Arc::new(ZmqAsb::new(key.service_identifier.clone()))),
+            ZMQ_ASB_ID => Ok(Arc::new(ZmqAsb::new(key.service_identifier.clone(), logger))),
             _ => Err(CalError::new(CalErrorKind::InitializationFailure, "Invalid ASB type"))
         }
     }).cloned()
@@ -418,11 +421,12 @@ mod tests {
 
     #[test]
     fn test_asb_factory() {
-        let a = get_asb("test", "zmq").unwrap();
-        let b = get_asb("test", "zmq").unwrap();
-        let c = get_asb("test2", "zmq").unwrap();
+        let logger = procedural_macros::init_test_logger!();
+        let a = get_asb("test", "zmq", logger.clone()).unwrap();
+        let b = get_asb("test", "zmq", logger.clone()).unwrap();
+        let c = get_asb("test2", "zmq", logger.clone()).unwrap();
         assert!(Arc::ptr_eq(&a, &b));
         assert!(!Arc::ptr_eq(&a, &c));
-        assert!(get_asb("test2", "dummy").is_err());
+        assert!(get_asb("test2", "dummy", logger).is_err());
     }
 }
