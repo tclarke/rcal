@@ -17,6 +17,7 @@ use crate::uci::{CalError, CalImplementationErrorKind, CalResult};
 pub const ZMQ_ASB_ID: &str = "zmq";
 
 pub struct ZmqAsb {
+    asb_id: String,
     service_id: String,
     uuids: ServiceUuids,
 
@@ -31,8 +32,9 @@ pub struct ZmqAsb {
 }
 
 impl ZmqAsb {
-    pub fn new<S: Into<String>>(service_id: S, logger: Logger) -> Self {
+    pub fn new<S: Into<String>>(service_id: S, asb_id: S, logger: Logger) -> Self {
         Self {
+            asb_id: asb_id.into(),
             service_id: service_id.into(),
             uuids: ServiceUuids {
                 system: UUID::nil(),
@@ -103,10 +105,11 @@ impl AbstractServiceBus for ZmqAsb {
         listener: Arc<Mutex<dyn AsbStatusListener>>,
     ) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::register_status_listener()");
-        if let Some(_) = self
+        if self
             .listeners
             .iter()
             .position(|l| Arc::ptr_eq(l, &listener))
+            .is_some()
         {
             Err(CalError::new_impl(
                 CalImplementationErrorKind::ListenerError,
@@ -152,7 +155,7 @@ mod tests {
     fn test_check_creation() {
         let logger = rcal_macros::init_test_logger!();
         // let ns = UUID::generate_v4();
-        let a = ZmqAsb::new("Test Service", logger);
+        let a = ZmqAsb::new("Test Service", "Test Asb", logger);
         /* UUID::generate_v3(&ns, b"service"),
         UUID::generate_v3(&ns, b"system"),
         Some(UUID::generate_v3(&ns, b"subsystem"))); */
@@ -177,7 +180,7 @@ mod tests {
     #[test]
     fn test_status_listeners() {
         let logger = init_test_logger!();
-        let mut a = ZmqAsb::new("Test Service", logger);
+        let mut a = ZmqAsb::new("Test Service", "Test Asb", logger);
         let l1 = Arc::new(Mutex::new(TestStatusListener {
             count: 0,
             state: AsbConnectionState::Inoperable,

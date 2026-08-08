@@ -22,6 +22,22 @@ pub struct CalConfig {
     pub service: Vec<Service>,
 }
 
+impl CalConfig {
+    pub fn get_service(&self, name: &String) -> Option<&Service> {
+        self.service.iter().find(|item| { item.id == *name })
+    }
+
+    pub fn get_transport(&self, name: &String) -> Option<&Transport> {
+        self.transport.iter().find(|item| { item.id == *name })
+    }
+
+    pub fn get_transport_for_service(&self, name: &String) -> Option<&Transport> {
+        let service_conf = self.get_service(name)?;
+        let transport_name = service_conf.transport.as_ref().or(self.system.default_transport.as_ref())?;
+        self.get_transport(transport_name)
+    }
+}
+
 impl fmt::Display for CalConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", toml::to_string(self).unwrap())

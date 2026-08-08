@@ -29,7 +29,7 @@ use uuid::{Uuid, Variant as UuidVariant, Version as UuidVersion};
 /// Re-exports for uci::asb
 ///
 pub use crate::asb::{
-    AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener, CalInstanceConfig,
+    AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener,
 };
 
 /// Re-exported [`uuid::Timestamp`] so callers can build version-1 UUID

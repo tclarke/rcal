@@ -361,6 +361,7 @@ fn get_asb<S: Into<String>>(
         .or_try_insert_with(|| match key.asb_identifier.as_str() {
             ZMQ_ASB_ID => Ok(Arc::new(Mutex::new(ZmqAsb::new(
                 key.service_identifier.clone(),
+                key.asb_identifier.clone(),
                 logger,
             )))),
             _ => Err(CalError::new(
