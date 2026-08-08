@@ -272,7 +272,7 @@ pub trait AsbStatusListener: Send + Sync {
 /// assert_eq!(status.state, AsbConnectionState::Normal);
 ///
 /// // Register callback listener
-/// let listener = Arc::new(MyStatusListener::new());
+/// let listener = Mutex::new(MyStatusListener::new());
 /// bus.register_status_listener(listener)?;
 ///
 /// // ... use writers and readers ...
@@ -333,7 +333,7 @@ pub trait AbstractServiceBus: Send + Sync {
     /// (Table 5.9-2: `addListener()` in `Failed` → E).
     fn register_status_listener(
         &mut self,
-        listener: Arc<dyn AsbStatusListener>,
+        listener: Arc<Mutex<dyn AsbStatusListener>>,
     ) -> CalResult<()>;
 
     /// Unregisters a previously registered ASB status listener.
@@ -344,7 +344,7 @@ pub trait AbstractServiceBus: Send + Sync {
     /// Has no effect if the listener was not registered.
     fn unregister_status_listener(
         &mut self,
-        listener: &Arc<dyn AsbStatusListener>,
+        listener: Arc<Mutex<dyn AsbStatusListener>>,
     ) -> CalResult<()>;
 
     // ─── Lifecycle ────────────────────────────────────────────────────────
@@ -398,14 +398,16 @@ struct AsbKey {
     asb_identifier: String,
 }
 
-type AsbFactory = HashMap<AsbKey, Arc<dyn AbstractServiceBus>>;
+type AsbFactory = HashMap<AsbKey, Arc<Mutex<dyn AbstractServiceBus>>>;
 
-fn get_asb<S: Into<String>>(service_identifier: S, asb_identifier: S, logger: slog::Logger) -> CalResult<Arc<dyn AbstractServiceBus>> {
+fn get_asb<S: Into<String>>(service_identifier: S, asb_identifier: S, logger: slog::Logger)
+-> CalResult<Arc<Mutex<dyn AbstractServiceBus>>> {
+
     let mut fact = ASB_FACTORY.lock().unwrap();
     let key = AsbKey{service_identifier: service_identifier.into(), asb_identifier: asb_identifier.into()};
     fact.entry(key.clone()).or_try_insert_with(|| {
         match key.asb_identifier.as_str() {
-            ZMQ_ASB_ID => Ok(Arc::new(ZmqAsb::new(key.service_identifier.clone(), logger))),
+            ZMQ_ASB_ID => Ok(Arc::new(Mutex::new(ZmqAsb::new(key.service_identifier.clone(), logger)))),
             _ => Err(CalError::new(CalErrorKind::InitializationFailure, "Invalid ASB type"))
         }
     }).cloned()
@@ -421,7 +423,7 @@ mod tests {
 
     #[test]
     fn test_asb_factory() {
-        let logger = procedural_macros::init_test_logger!();
+        let logger = rcal_macros::init_test_logger!();
         let a = get_asb("test", "zmq", logger.clone()).unwrap();
         let b = get_asb("test", "zmq", logger.clone()).unwrap();
         let c = get_asb("test2", "zmq", logger.clone()).unwrap();

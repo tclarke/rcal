@@ -1,5 +1,4 @@
 #[macro_export]
-
 macro_rules! init_test_logger {
     () => ({
         use slog::{Drain, Logger, o};

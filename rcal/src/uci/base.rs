@@ -420,7 +420,7 @@ pub struct ServiceUuids {
 mod tests {
     use super::*;
     use slog::debug;
-    use procedural_macros::init_test_logger;
+    use rcal_macros::init_test_logger;
     use crate::calconfig::UUIDFactoryType;
 
     #[test]

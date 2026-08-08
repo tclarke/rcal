@@ -121,7 +121,7 @@ pub fn get_test_config_path(filename: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use procedural_macros::init_test_logger;
+    use rcal_macros::init_test_logger;
 
     #[test]
     fn test_parse_file() {

@@ -64,6 +64,7 @@ pub enum CalErrorKind {
 pub enum CalImplementationErrorKind {
     /// An error parsing or interpreting the CAL configuration file.
     ConfigError,
+    /// An error occured registering or unregistering a status listener
     ListenerError,
 }
 
@@ -86,7 +87,10 @@ impl Display for CalErrorKind {
             }
             // Implementation errors
             Self::ImplementationError { kind: None } => write!(f, "Internal CAL implementation error"),
-            Self::ImplementationError { kind: Some(CalImplementationErrorKind::ConfigError)} => write!(f, "Unable to parse or interpret CAL configuration."),
+            Self::ImplementationError { kind: Some(CalImplementationErrorKind::ConfigError) } =>
+                write!(f, "Unable to parse or interpret CAL configuration."),
+            Self::ImplementationError { kind: Some(CalImplementationErrorKind::ListenerError) } =>
+                write!(f, "Status listener error."),
         }
     }
 }
