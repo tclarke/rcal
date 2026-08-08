@@ -20,13 +20,32 @@
 #![allow(dead_code)]
 use crate::uci::base::ServiceUuids;
 use crate::uci::{CalError, CalErrorKind, CalResult};
+use crate::calconfig::parse_config_from_file;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::fmt;
+use std::path::Path;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::env;
 
 mod zmq;
 use zmq::{ZMQ_ASB_ID, ZmqAsb};
+
+pub fn get_asb_config_location(path: Option<String>) -> CalResult<String> {
+    let config_file =
+        if let Some(s) = path {
+            s
+        } else {
+            env::var("RCAL_CONFIG").unwrap_or(String::from_str("./CALConfig.toml").unwrap())
+        };
+
+    if Path::new(&config_file).exists() {
+        Ok(config_file)
+    } else {
+        Err(CalError::new(CalErrorKind::InitializationFailure, format!("Config file {} does not exist.", config_file)))
+    }
+}
 
 // ─── ASB Connection State ─────────────────────────────────────────────────
 
@@ -358,17 +377,23 @@ fn get_asb<S: Into<String>>(
         asb_identifier: asb_identifier.into(),
     };
     fact.entry(key.clone())
-        .or_try_insert_with(|| match key.asb_identifier.as_str() {
-            ZMQ_ASB_ID => Ok(Arc::new(Mutex::new(ZmqAsb::new(
-                key.service_identifier.clone(),
-                key.asb_identifier.clone(),
-                logger,
-            )))),
-            _ => Err(CalError::new(
-                CalErrorKind::InitializationFailure,
-                "Invalid ASB type",
-            )),
-        })
+        .or_try_insert_with(|| {
+            let config_path = get_asb_config_location(None)?;
+            let config = parse_config_from_file(&config_path, logger.clone())?;
+            let transport = (&config).get_transport(&key.asb_identifier).unwrap_or(&config.get_transport(&config.system.default_transport.unwrap()).unwrap());
+            let ttype = transport.type_;
+
+            match transport.type_.as_str() {
+                ZMQ_ASB_ID => Ok(Arc::new(Mutex::new(ZmqAsb::new(
+                    key.service_identifier.clone(),
+                    key.asb_identifier.clone(),
+                    logger,
+                ).unwrap()))),
+                _ => Err(CalError::new(
+                    CalErrorKind::InitializationFailure,
+                    "Invalid ASB type",
+                )),
+        }})
         .cloned()
 }
 

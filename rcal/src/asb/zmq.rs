@@ -32,8 +32,8 @@ pub struct ZmqAsb {
 }
 
 impl ZmqAsb {
-    pub fn new<S: Into<String>>(service_id: S, asb_id: S, logger: Logger) -> Self {
-        Self {
+    pub fn new<S: Into<String>>(service_id: S, asb_id: S, logger: Logger) -> CalResult<Self> {
+        Ok(Self {
             asb_id: asb_id.into(),
             service_id: service_id.into(),
             uuids: ServiceUuids {
@@ -51,7 +51,7 @@ impl ZmqAsb {
             status: AsbStatus::new(AsbConnectionState::Initializing, "Ømq ASB initializing"),
 
             logger,
-        }
+        })
     }
 
     pub fn update_status<S: Into<String>>(
@@ -155,10 +155,7 @@ mod tests {
     fn test_check_creation() {
         let logger = rcal_macros::init_test_logger!();
         // let ns = UUID::generate_v4();
-        let a = ZmqAsb::new("Test Service", "Test Asb", logger);
-        /* UUID::generate_v3(&ns, b"service"),
-        UUID::generate_v3(&ns, b"system"),
-        Some(UUID::generate_v3(&ns, b"subsystem"))); */
+        let a = ZmqAsb::new("Test Service", "Test Asb", logger).unwrap();
         assert_eq!(a.oms_schema_version(), "2.1.0_test_schema");
         assert_eq!(a.oms_schema_compiler_version(), "0.1.0");
         assert_eq!(a.service_identifier(), "Test Service");
@@ -180,7 +177,7 @@ mod tests {
     #[test]
     fn test_status_listeners() {
         let logger = init_test_logger!();
-        let mut a = ZmqAsb::new("Test Service", "Test Asb", logger);
+        let mut a = ZmqAsb::new("Test Service", "Test Asb", logger).unwrap();
         let l1 = Arc::new(Mutex::new(TestStatusListener {
             count: 0,
             state: AsbConnectionState::Inoperable,

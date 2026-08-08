@@ -101,7 +101,7 @@ pub struct Topic {
     pub topic: Option<String>,
 }
 
-fn parse_config_from_file(filename: &str, logger: slog::Logger) -> CalResult<CalConfig> {
+pub fn parse_config_from_file(filename: &str, logger: slog::Logger) -> CalResult<CalConfig> {
     info!(logger, "Parsing config file {}", filename);
     let config_str = fs::read_to_string(filename).map_err(|err| {
         CalError::with_impl_source(
@@ -113,7 +113,7 @@ fn parse_config_from_file(filename: &str, logger: slog::Logger) -> CalResult<Cal
     parse_config(config_str.as_str(), logger)
 }
 
-fn parse_config(config_str: &str, logger: slog::Logger) -> CalResult<CalConfig> {
+pub fn parse_config(config_str: &str, logger: slog::Logger) -> CalResult<CalConfig> {
     let config = toml::from_str(config_str).map_err(|err| {
         error!(logger, "{}", err);
         CalError::with_impl_source(
