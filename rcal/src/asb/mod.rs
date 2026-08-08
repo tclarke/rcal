@@ -18,12 +18,12 @@
 //             Figure 5.9-1, Figure 5.9-2
 // =============================================================================
 #![allow(dead_code)]
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::fmt;
-use lazy_static::lazy_static;
-use crate::uci::{CalError, CalErrorKind, CalResult};
 use crate::uci::base::ServiceUuids;
+use crate::uci::{CalError, CalErrorKind, CalResult};
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::{Arc, Mutex};
 
 mod zmq;
 use zmq::{ZMQ_ASB_ID, ZmqAsb};
@@ -132,33 +132,33 @@ impl AsbConnectionState {
     pub fn validate_transition(&self, next: AsbConnectionState) -> CalResult<()> {
         let allowed = match (self, next) {
             // From INITIALIZING
-            (Self::Initializing, Self::Normal)      => true,
-            (Self::Initializing, Self::Degraded)    => true,
-            (Self::Initializing, Self::Inoperable)  => true,
-            (Self::Initializing, Self::Failed)      => true,
+            (Self::Initializing, Self::Normal) => true,
+            (Self::Initializing, Self::Degraded) => true,
+            (Self::Initializing, Self::Inoperable) => true,
+            (Self::Initializing, Self::Failed) => true,
             // From NORMAL
-            (Self::Normal, Self::Degraded)          => true,
-            (Self::Normal, Self::Inoperable)        => true,
-            (Self::Normal, Self::Failed)            => true,
+            (Self::Normal, Self::Degraded) => true,
+            (Self::Normal, Self::Inoperable) => true,
+            (Self::Normal, Self::Failed) => true,
             // From DEGRADED
-            (Self::Degraded, Self::Normal)          => true,
-            (Self::Degraded, Self::Inoperable)      => true,
-            (Self::Degraded, Self::Failed)          => true,
+            (Self::Degraded, Self::Normal) => true,
+            (Self::Degraded, Self::Inoperable) => true,
+            (Self::Degraded, Self::Failed) => true,
             // From INOPERABLE
-            (Self::Inoperable, Self::Initializing)  => true,
-            (Self::Inoperable, Self::Normal)        => true,
-            (Self::Inoperable, Self::Degraded)      => true,
-            (Self::Inoperable, Self::Failed)        => true,
+            (Self::Inoperable, Self::Initializing) => true,
+            (Self::Inoperable, Self::Normal) => true,
+            (Self::Inoperable, Self::Degraded) => true,
+            (Self::Inoperable, Self::Failed) => true,
             // From FAILED — terminal, no transitions out
-            (Self::Failed, _)                       => false,
+            (Self::Failed, _) => false,
             // Self-transitions are no-ops; caller should not call this
-            _                                       => false,
+            _ => false,
         };
         if allowed {
             Ok(())
         } else {
             Err(CalError::new(
-                CalErrorKind::InvalidState{current: *self},
+                CalErrorKind::InvalidState { current: *self },
                 format!(
                     "ASB state transition {:?} → {:?} is not permitted \
                      (Figure 5.9-2, OMSC-SPC-001 Rev L)",
@@ -175,7 +175,6 @@ impl fmt::Display for AsbConnectionState {
         fmt::Display::fmt(&self, f)
     }
 }
-
 
 // ─── AsbStatus ───────────────────────────────────────────────────────────
 
@@ -199,7 +198,10 @@ pub struct AsbStatus {
 
 impl AsbStatus {
     pub fn new(state: AsbConnectionState, description: impl Into<String>) -> Self {
-        Self { state, description: description.into() }
+        Self {
+            state,
+            description: description.into(),
+        }
     }
 }
 
@@ -240,7 +242,7 @@ pub trait AsbStatusListener: Send + Sync {
 /// Each `AbstractServiceBus` instance represents a single CAL instance
 /// (§4.6) bound to a unique (Service Identifier, ASB Identifier) pair
 /// (CERT CAL-005202). A CAL Client obtains a fully initialized instance
-/// via the [`CalInstanceFactory`] function (CERT CAL-005201).
+/// via the [`AsbFActory`] function (CERT CAL-005201).
 ///
 /// # Responsibilities
 ///
@@ -251,35 +253,6 @@ pub trait AsbStatusListener: Send + Sync {
 ///    (§5.6, §5.7). *(Writer/Reader traits defined in separate modules.)*
 /// 4. **Lifecycle** — Manage initialization and graceful shutdown.
 ///
-/// # Usage Pattern
-///
-/// ```ignore
-///
-/// // Obtain via factory (CERT CAL-005201)
-/// let config = CalInstanceConfig {
-///     service_identifier: "SensorFusion".to_string(),
-///     asb_identifier:     "primary_network".to_string(),
-///     network_config:     "/etc/oms/network.xml".to_string(),
-/// };
-/// let mut bus: Arc<dyn AbstractServiceBus> = cal_factory(config)?;
-///
-/// // Retrieve identity
-/// let uuids = bus.service_uuids()?;
-/// println!("Service UUID: {}", uuids.service);
-///
-/// // Poll connection status
-/// let status = bus.connection_status();
-/// assert_eq!(status.state, AsbConnectionState::Normal);
-///
-/// // Register callback listener
-/// let listener = Mutex::new(MyStatusListener::new());
-/// bus.register_status_listener(listener)?;
-///
-/// // ... use writers and readers ...
-///
-/// // Shutdown
-/// bus.close()?;
-/// ```
 pub trait AbstractServiceBus: Send + Sync {
     /// Get the stored logger
     fn get_logger(&self) -> &slog::Logger;
@@ -362,32 +335,6 @@ pub trait AbstractServiceBus: Send + Sync {
     fn close(&mut self) -> CalResult<()>;
 }
 
-// ─── CalInstanceConfig ────────────────────────────────────────────────────
-
-/// Configuration required to obtain a CAL instance.
-///
-/// Provided to a [`CalInstanceFactory`] function to initialize and
-/// return a fully operational [`AbstractServiceBus`] instance
-/// (CERT CAL-005201).
-///
-/// The (service_identifier, asb_identifier) pair uniquely identifies a
-/// CAL instance within a process (CERT CAL-005202).
-#[derive(Debug, Clone)]
-pub struct CalInstanceConfig {
-    /// Human-readable Service Identifier coordinated between the OMS
-    /// Service provider and the CAL provider (§4.10, §5.3).
-    pub service_identifier: String,
-
-    /// Identifies the Abstract Service Bus this instance connects to.
-    /// Multiple service identifiers may share an ASB, but each
-    /// (service_id, asb_id) pair maps to exactly one CAL instance.
-    pub asb_identifier: String,
-
-    /// Path, URI, or descriptor for the network configuration resource
-    /// that defines valid CAL Topics and network connections (§4.7).
-    pub network_config: String,
-}
-
 /// The actual factory.
 /// New types go here
 ///
@@ -400,17 +347,28 @@ struct AsbKey {
 
 type AsbFactory = HashMap<AsbKey, Arc<Mutex<dyn AbstractServiceBus>>>;
 
-fn get_asb<S: Into<String>>(service_identifier: S, asb_identifier: S, logger: slog::Logger)
--> CalResult<Arc<Mutex<dyn AbstractServiceBus>>> {
-
+fn get_asb<S: Into<String>>(
+    service_identifier: S,
+    asb_identifier: S,
+    logger: slog::Logger,
+) -> CalResult<Arc<Mutex<dyn AbstractServiceBus>>> {
     let mut fact = ASB_FACTORY.lock().unwrap();
-    let key = AsbKey{service_identifier: service_identifier.into(), asb_identifier: asb_identifier.into()};
-    fact.entry(key.clone()).or_try_insert_with(|| {
-        match key.asb_identifier.as_str() {
-            ZMQ_ASB_ID => Ok(Arc::new(Mutex::new(ZmqAsb::new(key.service_identifier.clone(), logger)))),
-            _ => Err(CalError::new(CalErrorKind::InitializationFailure, "Invalid ASB type"))
-        }
-    }).cloned()
+    let key = AsbKey {
+        service_identifier: service_identifier.into(),
+        asb_identifier: asb_identifier.into(),
+    };
+    fact.entry(key.clone())
+        .or_try_insert_with(|| match key.asb_identifier.as_str() {
+            ZMQ_ASB_ID => Ok(Arc::new(Mutex::new(ZmqAsb::new(
+                key.service_identifier.clone(),
+                logger,
+            )))),
+            _ => Err(CalError::new(
+                CalErrorKind::InitializationFailure,
+                "Invalid ASB type",
+            )),
+        })
+        .cloned()
 }
 
 lazy_static! {

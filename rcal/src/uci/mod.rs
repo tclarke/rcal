@@ -53,9 +53,10 @@ pub enum CalErrorKind {
     /// (CAL-016035).
     AbstractInstantiation,
     /// An internal error within the CAL Implementation.
-    ImplementationError{
+    ImplementationError {
         /// The optional implementation error type
-        kind: Option<CalImplementationErrorKind>},
+        kind: Option<CalImplementationErrorKind>,
+    },
 }
 
 /// More detail on a specific implementation error.
@@ -86,11 +87,15 @@ impl Display for CalErrorKind {
                 write!(f, "Cannot instantiate abstract CAL Message type")
             }
             // Implementation errors
-            Self::ImplementationError { kind: None } => write!(f, "Internal CAL implementation error"),
-            Self::ImplementationError { kind: Some(CalImplementationErrorKind::ConfigError) } =>
-                write!(f, "Unable to parse or interpret CAL configuration."),
-            Self::ImplementationError { kind: Some(CalImplementationErrorKind::ListenerError) } =>
-                write!(f, "Status listener error."),
+            Self::ImplementationError { kind: None } => {
+                write!(f, "Internal CAL implementation error")
+            }
+            Self::ImplementationError {
+                kind: Some(CalImplementationErrorKind::ConfigError),
+            } => write!(f, "Unable to parse or interpret CAL configuration."),
+            Self::ImplementationError {
+                kind: Some(CalImplementationErrorKind::ListenerError),
+            } => write!(f, "Status listener error."),
         }
     }
 }

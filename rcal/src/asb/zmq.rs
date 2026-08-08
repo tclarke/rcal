@@ -5,14 +5,14 @@
 // =============================================================================
 #![allow(dead_code)]
 
+use slog::{Logger, trace};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use zeromq::{PubSocket, SubSocket};
-use slog::{Logger, trace};
 
-use crate::uci::{CalResult, CalError, CalImplementationErrorKind};
-use crate::uci::base::{ServiceUuids, UUID};
 use super::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
+use crate::uci::base::{ServiceUuids, UUID};
+use crate::uci::{CalError, CalImplementationErrorKind, CalResult};
 
 pub const ZMQ_ASB_ID: &str = "zmq";
 
@@ -34,7 +34,7 @@ impl ZmqAsb {
     pub fn new<S: Into<String>>(service_id: S, logger: Logger) -> Self {
         Self {
             service_id: service_id.into(),
-            uuids: ServiceUuids{
+            uuids: ServiceUuids {
                 system: UUID::nil(),
                 service: UUID::nil(),
                 subsystem: None,
@@ -52,11 +52,17 @@ impl ZmqAsb {
         }
     }
 
-    pub fn update_status<S: Into<String>>(&mut self, state: AsbConnectionState, description: S) -> CalResult<()> {
+    pub fn update_status<S: Into<String>>(
+        &mut self,
+        state: AsbConnectionState,
+        description: S,
+    ) -> CalResult<()> {
         self.status.state.validate_transition(state)?;
         self.status.state = state;
         self.status.description = description.into();
-        self.listeners.iter().for_each(|l| {l.lock().unwrap().on_status_change(&self.status);});
+        self.listeners.iter().for_each(|l| {
+            l.lock().unwrap().on_status_change(&self.status);
+        });
         Ok(())
     }
 }
@@ -70,7 +76,7 @@ impl AbstractServiceBus for ZmqAsb {
         self.service_id.as_str()
     }
 
-    fn asb_identifier(&self)  -> &str {
+    fn asb_identifier(&self) -> &str {
         ZMQ_ASB_ID
     }
 
@@ -97,9 +103,15 @@ impl AbstractServiceBus for ZmqAsb {
         listener: Arc<Mutex<dyn AsbStatusListener>>,
     ) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::register_status_listener()");
-        if let Some(_) = self.listeners.iter().position(|l| {Arc::ptr_eq(l, &listener)}) {
+        if let Some(_) = self
+            .listeners
+            .iter()
+            .position(|l| Arc::ptr_eq(l, &listener))
+        {
             Err(CalError::new_impl(
-                CalImplementationErrorKind::ListenerError, "Status listener already registered."))
+                CalImplementationErrorKind::ListenerError,
+                "Status listener already registered.",
+            ))
         } else {
             self.listeners.push(listener);
             Ok(())
@@ -111,12 +123,18 @@ impl AbstractServiceBus for ZmqAsb {
         listener: Arc<Mutex<dyn AsbStatusListener>>,
     ) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::unregister_status_listener()");
-        if let Some(index) = self.listeners.iter().position(|l| {Arc::ptr_eq(l, &listener)}) {
+        if let Some(index) = self
+            .listeners
+            .iter()
+            .position(|l| Arc::ptr_eq(l, &listener))
+        {
             self.listeners.swap_remove(index);
             Ok(())
         } else {
             Err(CalError::new_impl(
-                CalImplementationErrorKind::ListenerError, "Status listener not registered."))
+                CalImplementationErrorKind::ListenerError,
+                "Status listener not registered.",
+            ))
         }
     }
 
@@ -127,17 +145,17 @@ impl AbstractServiceBus for ZmqAsb {
 
 #[cfg(test)]
 mod tests {
-    use rcal_macros::init_test_logger;
     use super::*;
+    use rcal_macros::init_test_logger;
 
     #[test]
     fn test_check_creation() {
         let logger = rcal_macros::init_test_logger!();
         // let ns = UUID::generate_v4();
         let a = ZmqAsb::new("Test Service", logger);
-            /* UUID::generate_v3(&ns, b"service"),
-            UUID::generate_v3(&ns, b"system"),
-            Some(UUID::generate_v3(&ns, b"subsystem"))); */
+        /* UUID::generate_v3(&ns, b"service"),
+        UUID::generate_v3(&ns, b"system"),
+        Some(UUID::generate_v3(&ns, b"subsystem"))); */
         assert_eq!(a.oms_schema_version(), "2.1.0_test_schema");
         assert_eq!(a.oms_schema_compiler_version(), "0.1.0");
         assert_eq!(a.service_identifier(), "Test Service");
@@ -160,8 +178,14 @@ mod tests {
     fn test_status_listeners() {
         let logger = init_test_logger!();
         let mut a = ZmqAsb::new("Test Service", logger);
-        let l1 = Arc::new(Mutex::new(TestStatusListener{count: 0, state: AsbConnectionState::Inoperable}));
-        let l2 = Arc::new(Mutex::new(TestStatusListener{count: 0, state: AsbConnectionState::Inoperable}));
+        let l1 = Arc::new(Mutex::new(TestStatusListener {
+            count: 0,
+            state: AsbConnectionState::Inoperable,
+        }));
+        let l2 = Arc::new(Mutex::new(TestStatusListener {
+            count: 0,
+            state: AsbConnectionState::Inoperable,
+        }));
 
         assert_eq!(a.listeners.len(), 0);
         a.update_status(AsbConnectionState::Normal, "").unwrap();
