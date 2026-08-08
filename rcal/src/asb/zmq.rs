@@ -52,10 +52,12 @@ impl ZmqAsb {
         }
     }
 
-    pub fn update_status<S: Into<String>>(&mut self, state: AsbConnectionState, description: S) {
+    pub fn update_status<S: Into<String>>(&mut self, state: AsbConnectionState, description: S) -> CalResult<()> {
+        self.status.state.validate_transition(state)?;
         self.status.state = state;
         self.status.description = description.into();
         self.listeners.iter().for_each(|l| {l.lock().unwrap().on_status_change(&self.status);});
+        Ok(())
     }
 }
 
@@ -162,13 +164,13 @@ mod tests {
         let l2 = Arc::new(Mutex::new(TestStatusListener{count: 0, state: AsbConnectionState::Inoperable}));
 
         assert_eq!(a.listeners.len(), 0);
-        a.update_status(AsbConnectionState::Normal, "");
+        a.update_status(AsbConnectionState::Normal, "").unwrap();
         assert_eq!(l1.lock().unwrap().count, 0);
         assert_eq!(l2.lock().unwrap().count, 0);
 
         a.register_status_listener(l1.clone()).unwrap();
         assert_eq!(a.listeners.len(), 1);
-        a.update_status(AsbConnectionState::Degraded, "");
+        a.update_status(AsbConnectionState::Degraded, "").unwrap();
         assert_eq!(l1.lock().unwrap().count, 1);
         assert_eq!(l1.lock().unwrap().state, AsbConnectionState::Degraded);
         assert_eq!(l2.lock().unwrap().count, 0);
@@ -176,7 +178,7 @@ mod tests {
 
         a.register_status_listener(l2.clone()).unwrap();
         assert_eq!(a.listeners.len(), 2);
-        a.update_status(AsbConnectionState::Normal, "");
+        a.update_status(AsbConnectionState::Normal, "").unwrap();
         assert_eq!(l1.lock().unwrap().count, 2);
         assert_eq!(l1.lock().unwrap().state, AsbConnectionState::Normal);
         assert_eq!(l2.lock().unwrap().count, 1);
@@ -184,7 +186,7 @@ mod tests {
 
         a.unregister_status_listener(l1.clone()).unwrap();
         assert_eq!(a.listeners.len(), 1);
-        a.update_status(AsbConnectionState::Failed, "");
+        a.update_status(AsbConnectionState::Failed, "").unwrap();
         assert_eq!(l1.lock().unwrap().count, 2);
         assert_eq!(l1.lock().unwrap().state, AsbConnectionState::Normal);
         assert_eq!(l2.lock().unwrap().count, 2);
