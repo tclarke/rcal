@@ -10,18 +10,22 @@ use std::sync::Arc;
 use zeromq::{PubSocket, SubSocket};
 use slog::{Logger, trace, error};
 
-use crate::uci::{CalResult, CalError, CalErrorKind};
+use crate::calconfig::{Transport};
+use crate::uci::{CalResult, CalError, CalImplementationErrorKind};
 use crate::uci::base::{ServiceUuids, UUID};
 use super::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
 
 pub const ZMQ_ASB_ID: &str = "zmq";
 
 pub struct ZmqAsb {
+    asb_id: String,
     service_id: String,
     uuids: ServiceUuids,
 
     out_conns: HashMap<String, PubSocket>,
     in_conns: HashMap<String, SubSocket>,
+
+    listeners: Vec<Arc<dyn AsbStatusListener>>,
 
     logger: slog::Logger,
 }
@@ -40,8 +44,16 @@ impl ZmqAsb {
             out_conns: HashMap::new(),
             in_conns: HashMap::new(),
 
+            listeners: Vec::new(),
+
             logger,
         }
+    }
+
+    pub fn update_status<S: Into<String>>(&self, state: AsbConnectionState, description: S) {
+        self.status.state = state;
+        self.status.description = description.into();
+        self.listeners.iter().for_each(|mut l| {l.on_status_change(&self.status);});
     }
 }
 
@@ -71,17 +83,18 @@ impl AbstractServiceBus for ZmqAsb {
         version
     }
 
-    fn connection_status(&self) -> AsbStatus {
-        AsbStatus::new(AsbConnectionState::Inoperable, String::from("Incomplete"))
-    }
-
     fn register_status_listener(
         &mut self,
         _listener: Arc<dyn AsbStatusListener>,
     ) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::register_status_listener()");
-        error!(self.logger, "Not implemented!");
-        Err(CalError::new(CalErrorKind::ImplementationError{kind: None}, String::from("Not implemented")))
+        if let Some(index) = self.listeners.iter().position(|l| *l == listener) {
+            Err(CalError::new_impl(
+                CalImplementationErrorKind::ListenerError, "Status listener not registered."))
+        } else {
+            self.listeners.push(listener);
+            Ok(())
+        }
     }
 
     fn unregister_status_listener(
@@ -89,12 +102,16 @@ impl AbstractServiceBus for ZmqAsb {
         _listener: &Arc<dyn AsbStatusListener>,
     ) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::unregister_status_listener()");
-        error!(self.logger, "Not implemented!");
-        Err(CalError::new(CalErrorKind::ImplementationError{kind: None}, String::from("Not implemented")))
+        if let Some(index) = self.listeners.iter().position(|l| l == listener) {
+            self.listeners.swap_remove(index);
+            Ok(())
+        } else {
+            Err(CalError*::new_impl(
+                CalImplementationErrorKind::ListenerErr.&mut self.stateor, "Status listener not registered."))
+        }
     }
 
     fn close(&mut self) -> CalResult<()> {
-        trace!(self.logger, "ZmqAsb::close()");
         Ok(())
     }
 }
@@ -115,5 +132,53 @@ mod tests {
         assert_eq!(a.oms_schema_compiler_version(), "0.1.0");
         assert_eq!(a.service_identifier(), "Test Service");
         assert_eq!(a.asb_identifier(), ZMQ_ASB_ID)
+    }
+
+    struct TestStatusListener {
+        count: i8,
+        state: AsbConnectionState,
+    }
+
+    impl AsbStatusListener for TestStatusListener {
+        fn on_status_change(&mut self, status: &AsbStatus) {
+            self.count += 1;
+            &mut self.state = status.state;
+        }
+    }
+
+    #[test]
+    fn test_status_listeners() {
+        let mut a = ZmqAsb::new("Test Service");
+        let mut l1 = Arc::new(TestStatusListener{count: 0, state: AsbConnectionState::Inoperable});
+        let mut l2 = Arc::new(TestStatusListener{count: 0, state: AsbConnectionState::Inoperable});
+
+        assert_eq!(a.listeners.len(), 0);
+        a.update_status(AsbConnectionState::Normal, "");
+        assert_eq!(l1.count, 0);
+        assert_eq!(l2.count, 0);
+
+        a.register_status_listener(&l1.into()).unwrap();
+        assert_eq!(a.listeners.len(), 1);
+        a.update_status(AsbConnectionState::Degraded, "");
+        assert_eq!(l1.count, 1);
+        assert_eq!(l1.state, AsbConnectionState::Degraded);
+        assert_eq!(l2.count, 0);
+        assert_eq!(l2.state, AsbConnectionState::Inoperable);
+
+        a.register_status_listener(&l2.into()).unwrap();
+        assert_eq!(a.listeners.len(), 2);
+        a.update_status(AsbConnectionState::Normal, "");
+        assert_eq!(l1.count, 2);
+        assert_eq!(l1.state, AsbConnectionState::Normal);
+        assert_eq!(l2.count, 1);
+        assert_eq!(l2.state, AsbConnectionState::Normal);
+
+        a.unregister_status_listener(&l1.into()).unwrap();
+        assert_eq!(a.listeners.len(), 1);
+        a.update_status(AsbConnectionState::Failed, "");
+        assert_eq!(l1.count, 2);
+        assert_eq!(l1.state, AsbConnectionState::Normal);
+        assert_eq!(l2.count, 2);
+        assert_eq!(l2.state, AsbConnectionState::Failed);
     }
 }

@@ -229,7 +229,7 @@ pub trait AsbStatusListener: Send + Sync {
     ///
     /// This method must not block indefinitely; doing so will delay or
     /// prevent subsequent status updates from being delivered.
-    fn on_status_change(&self, status: &AsbStatus);
+    fn on_status_change(&mut self, status: &AsbStatus);
 }
 
 // ─── AbstractServiceBus ───────────────────────────────────────────────────
@@ -316,7 +316,7 @@ pub trait AbstractServiceBus: Send + Sync {
     /// within the calling thread's context.
     ///
     /// May be called in any connection state, including `Failed`.
-    fn connection_status(&self) -> AsbStatus;
+    fn connection_status(&self) -> &AsbStatus;
 
     // ─── Connection Status — Callback Interface ───────────────────────────
 

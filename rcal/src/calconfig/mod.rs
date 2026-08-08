@@ -52,6 +52,9 @@ pub struct UUIDFactory {
     /// The factory type
     pub type_: UUIDFactoryType,
 
+    /// Namespace for "namespace' generators."
+    pub namespace: Option<UUID>,
+
     /// MAC address to timebased. If not specified, the
     /// default interface's mac address will be used.
     pub node: Option<mac_address::MacAddress>,

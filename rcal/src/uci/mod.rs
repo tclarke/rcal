@@ -64,6 +64,7 @@ pub enum CalErrorKind {
 pub enum CalImplementationErrorKind {
     /// An error parsing or interpreting the CAL configuration file.
     ConfigError,
+    ListenerError,
 }
 
 impl Display for CalErrorKind {
