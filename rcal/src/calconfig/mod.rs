@@ -3,7 +3,6 @@ use crate::uci::base::UUID;
 use crate::uci::{CalError, CalImplementationErrorKind, CalResult};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use slog::{error, info};
 use std::fmt;
 use std::fs;
 use std::sync::Mutex;
@@ -24,16 +23,19 @@ pub struct CalConfig {
 
 impl CalConfig {
     pub fn get_service(&self, name: &String) -> Option<&Service> {
-        self.service.iter().find(|item| { item.id == *name })
+        self.service.iter().find(|item| item.id == *name)
     }
 
     pub fn get_transport(&self, name: &String) -> Option<&Transport> {
-        self.transport.iter().find(|item| { item.id == *name })
+        self.transport.iter().find(|item| item.id == *name)
     }
 
     pub fn get_transport_for_service(&self, name: &String) -> Option<&Transport> {
         let service_conf = self.get_service(name)?;
-        let transport_name = service_conf.transport.as_ref().or(self.system.default_transport.as_ref())?;
+        let transport_name = service_conf
+            .transport
+            .as_ref()
+            .or(self.system.default_transport.as_ref())?;
         self.get_transport(transport_name)
     }
 }
@@ -101,8 +103,7 @@ pub struct Topic {
     pub topic: Option<String>,
 }
 
-pub fn parse_config_from_file(filename: &str, logger: slog::Logger) -> CalResult<CalConfig> {
-    info!(logger, "Parsing config file {}", filename);
+pub fn parse_config_from_file(filename: &str) -> CalResult<CalConfig> {
     let config_str = fs::read_to_string(filename).map_err(|err| {
         CalError::with_impl_source(
             CalImplementationErrorKind::ConfigError,
@@ -110,12 +111,11 @@ pub fn parse_config_from_file(filename: &str, logger: slog::Logger) -> CalResult
             err,
         )
     })?;
-    parse_config(config_str.as_str(), logger)
+    parse_config(config_str.as_str())
 }
 
-pub fn parse_config(config_str: &str, logger: slog::Logger) -> CalResult<CalConfig> {
+pub fn parse_config(config_str: &str) -> CalResult<CalConfig> {
     let config = toml::from_str(config_str).map_err(|err| {
-        error!(logger, "{}", err);
         CalError::with_impl_source(
             CalImplementationErrorKind::ConfigError,
             "Can't parse configuration",
@@ -144,31 +144,16 @@ pub fn get_test_config_path(filename: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcal_macros::init_test_logger;
 
     #[test]
     fn test_parse_file() {
-        let logger = init_test_logger!();
-        parse_config_from_file(
-            get_test_config_path("calconfig_sample.toml").as_str(),
-            logger,
-        )
-        .unwrap();
+        parse_config_from_file(get_test_config_path("calconfig_sample.toml").as_str()).unwrap();
     }
 
     #[test]
     fn test_uuid_factory() {
-        let logger = init_test_logger!();
-        parse_config(
-            "[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"Random\"\n",
-            logger.clone(),
-        )
-        .unwrap();
-        parse_config(
-            "[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\n",
-            logger.clone(),
-        )
-        .unwrap();
-        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\nnode=\"00:11:22:33:44:55\"\n", logger.clone()).unwrap();
+        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"Random\"\n").unwrap();
+        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\n").unwrap();
+        parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\nnode=\"00:11:22:33:44:55\"\n").unwrap();
     }
 }
