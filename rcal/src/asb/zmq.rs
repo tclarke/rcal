@@ -5,7 +5,7 @@
 use slog::{Logger, trace};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use zeromq::{PubSocket, SubSocket};
+use zeromq::{Socket, PubSocket, SubSocket};
 
 use super::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
 use crate::calconfig::{CalConfig, Transport};
@@ -78,6 +78,13 @@ impl ZmqAsb {
             transport_uri: tconfig.uri.clone(),
             listeners: Vec::new(),
         })
+    }
+
+    // Connect to the pub/sub bus.
+    pub async fn connect(&mut self) -> CalResult<()> {
+        let mut sub_socket = SubSocket::new();
+        sub_socket.connect(&self.transport_uri).await.map_err(|err| CalError::with_source(crate::uci::CalErrorKind::InitializationFailure, "Can't sub to zmq.", err))?;
+        Ok(())
     }
 
     /// Transitions to `state`, updates the description, then notifies all
