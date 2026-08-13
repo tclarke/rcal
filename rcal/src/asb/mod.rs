@@ -422,24 +422,22 @@ mod tests {
     use super::*;
     use crate::calconfig::{get_test_config_path, parse_config_from_file};
     use rcal_macros::init_test_logger;
+    use std::sync::atomic::{AtomicU16, Ordering};
 
-    fn test_config() -> Arc<CalConfig> {
-        Arc::new(
-            parse_config_from_file(&get_test_config_path("calconfig_sample.toml"))
-                .expect("test config must load"),
-        )
-    }
+    static NEXT_PORT: AtomicU16 = AtomicU16::new(55700);
 
     #[tokio::test]
     async fn test_asb_factory_same_key_returns_same_instance() {
-        let config = test_config();
+        let p1 = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
+        let p2 = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
+        let config = zmq::test_config_on_ports(&[p1, p2]);
         let logger = init_test_logger!();
 
         let a = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone()).await
             .expect("first get_asb must succeed");
         let b = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone()).await
             .expect("second get_asb must succeed");
-        let c = get_asb("test_svc_2", "TestZmq", Arc::clone(&config), logger.clone()).await
+        let c = get_asb("test_svc_2", "TestZmq2", Arc::clone(&config), logger.clone()).await
             .expect("different service must succeed");
 
         // Same (service, asb) key → same Arc (CERT CAL-005202)

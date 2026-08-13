@@ -205,24 +205,50 @@ impl AbstractServiceBus for ZmqAsb {
 // Unit tests
 // ════════════════════════════════════════════════════════════════════════════
 
+/// Builds a [`CalConfig`] with one transport entry per port in `ports`.
+///
+/// Transport IDs are `"TestZmq"` for index 0, `"TestZmq2"` for index 1, etc.
+/// The system UUID is derived via `UUID::generate_v3` using the fixed base UUID
+/// as namespace and the first port (as a decimal string) as the name, so each
+/// unique port set gets a deterministic but distinct system UUID.
+#[cfg(test)]
+pub(super) fn test_config_on_ports(ports: &[u16]) -> Arc<CalConfig> {
+    use crate::calconfig;
+    use crate::uci::base::UUID;
+    const BASE_UUID: &str = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b";
+    let ns = UUID::parse_str(BASE_UUID).unwrap();
+    let sys_uuid = UUID::generate_v3(&ns, ports[0].to_string().as_bytes());
+    let mut transports = String::new();
+    for (i, &port) in ports.iter().enumerate() {
+        let id = if i == 0 {
+            "TestZmq".to_string()
+        } else {
+            format!("TestZmq{}", i + 1)
+        };
+        transports.push_str(&format!(
+            "\n[[transport]]\nid = \"{id}\"\ntype = \"zmq\"\nuri = \"tcp://127.0.0.1:{port}\"\n"
+        ));
+    }
+    let toml = format!(
+        "[system]\nid = \"TestSystem\"\nlabel = \"OMS Test System\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n{transports}"
+    );
+    Arc::new(calconfig::parse_config(&toml).unwrap())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::calconfig;
     use rcal_macros::init_test_logger;
-    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::atomic::{AtomicI32, AtomicU16, Ordering};
 
-    fn get_test_conf() -> Arc<CalConfig> {
-        Arc::new(
-            calconfig::parse_config_from_file(&calconfig::get_test_config_path(
-                "calconfig_sample.toml",
-            ))
-            .unwrap(),
-        )
+    static NEXT_PORT: AtomicU16 = AtomicU16::new(55600);
+
+    fn next_port() -> u16 {
+        NEXT_PORT.fetch_add(1, Ordering::SeqCst)
     }
 
     async fn make_bus(logger: Logger) -> ZmqAsb {
-        let config = get_test_conf();
+        let config = test_config_on_ports(&[next_port()]);
         let tconfig = config
             .get_transport(&String::from("TestZmq"))
             .expect("TestZmq transport must exist in test config");
