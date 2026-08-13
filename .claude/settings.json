@@ -12,8 +12,8 @@
       "Edit(*)",
       "Bash(grep *)",
       "Bash(ls *)",
-      "link *",
-      "cargo *",
+      "Bash(link *)",
+      "Bash(cargo *)",
       "mcp__memory__*"
     ],
     "ask": [
