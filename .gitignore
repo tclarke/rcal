@@ -1,1 +1,7 @@
 *.archimate.bak
+.secrets/
+.env*
+skills-lock.json
+.claude/settings.local.json
+.claude/skills
+rcal/.cargo/config.toml

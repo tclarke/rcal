@@ -19,21 +19,22 @@
 #![allow(dead_code)]
 #![warn(missing_docs)]
 
+pub use uuid::timestamp::context::ContextV1;
+
+use crate::calconfig::{CAL_CONFIG, UUIDFactoryType};
 use crate::uci::{CalError, CalErrorKind, CalResult};
 use std::fmt;
-pub use uuid::timestamp::context::ContextV1;
 use uuid::{Uuid, Variant as UuidVariant, Version as UuidVersion};
 
 /// Re-exports for uci::asb
 ///
-pub use crate::asb::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener, CalInstanceConfig, };
+pub use crate::asb::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
 
 /// Re-exported [`uuid::Timestamp`] so callers can build version-1 UUID
 /// timestamps without declaring a direct `uuid` crate dependency.
 ///
 /// Used with [`UUID::generate_v1`].
 pub use uuid::Timestamp as UuidTimestamp;
-
 
 /// RFC 4122–conformant Universally Unique Identifier backed by
 /// [`uuid::Uuid`].
@@ -65,7 +66,9 @@ pub use uuid::Timestamp as UuidTimestamp;
 ///
 /// # CERT coverage
 /// CAL-016477, CAL-016479, CAL-005181
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 pub struct UUID(Uuid);
 
 impl UUID {
@@ -173,6 +176,27 @@ impl UUID {
     /// (OMSC-SPC-008 §9.8.1.2.23.1).
     pub const fn nil() -> Self {
         Self(Uuid::nil())
+    }
+
+    /// Generate a new UUID using the configured type.
+    /// This is configured via the configuration section "UUIDFactoryType"
+    pub fn generate() -> Self {
+        let config = CAL_CONFIG.lock().unwrap();
+        match config.uuidfactory.type_ {
+            UUIDFactoryType::Random => Self::generate_v4(),
+            UUIDFactoryType::TimeBased => {
+                let ctx = ContextV1::new_random();
+                let ts = UuidTimestamp::now(&ctx);
+                if let Some(node) = config.uuidfactory.node {
+                    Self::generate_v1(ts, &node.bytes())
+                } else {
+                    Self::generate_v1(
+                        ts,
+                        &mac_address::get_mac_address().unwrap().unwrap().bytes(),
+                    )
+                }
+            }
+        }
     }
 
     /// Generate a random (version 4) UUID using a cryptographically secure
@@ -394,4 +418,35 @@ pub struct ServiceUuids {
     pub components: Vec<UUID>,
     /// UUIDs of named capabilities within this Service.
     pub capabilities: Vec<UUID>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::calconfig::UUIDFactoryType;
+    use rcal_macros::init_test_logger;
+    use slog::debug;
+
+    #[test]
+    fn test_uuid_factory() {
+        let logger = init_test_logger!();
+
+        debug!(logger, "Default (random): {}", UUID::generate());
+        {
+            let mut config = CAL_CONFIG.lock().unwrap();
+            config.uuidfactory.type_ = UUIDFactoryType::TimeBased;
+            debug!(logger, "Change to time based");
+        }
+        debug!(logger, "TimeBased: {}", UUID::generate());
+        {
+            let mut config = CAL_CONFIG.lock().unwrap();
+            config.uuidfactory.node = mac_address::get_mac_address().unwrap();
+            debug!(
+                logger,
+                "Time based with local node {}",
+                mac_address::get_mac_address().unwrap().unwrap()
+            );
+        }
+        debug!(logger, "TimeBased: {}", UUID::generate());
+    }
 }

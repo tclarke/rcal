@@ -11,14 +11,12 @@ The `04_OMSC-SPC-001_RevL_CAL_Specification_DandD_v2_5.docx.pdf` file contains a
 
 The `06_OMSC-SPC-008_RevK_CxxCALSpec_DandD_v2_5.docx.pdf` contains all of the C++ requirements and description.
 
-Ignore all other files in the `specs` directory.
+When asked to evaluate specific requirements, use the `specs/cal_cert_requirements.md` file which summarizes all of the CERT CAL requirements. Only read .pdf specification files if the information is not available in the requirements table.
 
 ## Design
 The `oms_rust_cal_core.archimate` file is the defacto design document and should always be maintained to match the Rust implementation. Before making large changes to code, always change the archimate design first and only when accepted should you create Rust code.
 
 The `Design Rust CAL interfaces (exceptions, UUIDs, bus).txt` file is a saved conversation with Claude Sonnet 4.6 and represents the earliest part of the design process. Nothing in there should be assumed to be the real design unless it corresponds with the archimate and Rust code files. It may be used as clarification and additional information if needed.
-
-The `cal_cer_requirements.md` file contains the "CERT CAL-" requirements extracted from the CAL requirements document. These are also contained in the archimate file.
 
 `archimate_layout.py` is a tool to create a visually pleasing archimate View by using force directed layout to position items in the view.
 
@@ -33,5 +31,5 @@ This is a standard cargo layout. all `.rs` and `.toml` files can be used as inpu
  - New features of existing dependencies may be added without asking.
  - Always create unit tests in the `test` private model when a test can be written.
  - Purely abstract interfaces do not need unit tests unless you are explicitly directed to add them.
- - Always use modules based on the C++ namespaces in the "CERT C++" 
+ - Always use modules based on the C++ namespaces in the "CERT C++"
  - Additional modules may be added for Rust specific tools, interfaces, and implementations. For example, the abstract service bus (ASB) interfaces will be in the `uci::base` module but ASB implementations can be in `uci::asb` or `asb` modules.

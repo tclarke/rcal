@@ -1,0 +1,24 @@
+[system]
+id = "TestSystem"
+label = "OMS Test System"
+uuid = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b"
+
+[[transport]]
+id = "TestZmq"
+type = "zmq"
+uri = "tcp://127.0.0.1:55544"
+
+[[service]]
+id = "TestService1"
+transport = "TestZmq"
+
+[[service.topic]]
+id = "SystemStatus"
+
+[[service.topic]]
+id = "SubsystemStatus"
+
+[[service.topic]]
+id = "SubsystemStatus2"
+type = "SubsystemStatus"
+topic = "SubsystemStatus_Internal"

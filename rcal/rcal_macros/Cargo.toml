@@ -1,0 +1,13 @@
+[package]
+name = "rcal_macros"
+version = "0.1.0"
+edition = "2024"
+
+[[test]]
+name = "integration"
+harness = true
+
+[dev-dependencies]
+slog = "2.8.2"
+slog-term = "2.9.2"
+slog-async = "2.8.0"
