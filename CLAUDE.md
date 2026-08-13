@@ -13,6 +13,8 @@ The `06_OMSC-SPC-008_RevK_CxxCALSpec_DandD_v2_5.docx.pdf` contains all of the C+
 
 When asked to evaluate specific requirements, use the `specs/cal_cert_requirements.md` file which summarizes all of the CERT CAL requirements. Only read .pdf specification files if the information is not available in the requirements table.
 
+When asked about UCI schema types, elements, or message definitions, use `specs/schema_summary.md` first. Only read the raw `.xsd` files if the information is not available in the summary.
+
 ## Design
 The `oms_rust_cal_core.archimate` file is the defacto design document and should always be maintained to match the Rust implementation. Before making large changes to code, always change the archimate design first and only when accepted should you create Rust code.
 
