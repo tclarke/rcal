@@ -1,0 +1,14 @@
+== Setting up claude
+- install rtk
+- install ripgrep
+- Install caveman
+  - `claude plugin marketplace add JuliusBrussee/caveman`
+  - `claude plugin install caveman@caveman`
+- Install PonyTail
+  - `claude plugin markeyplace add DietrichGebert/ponytail`
+  - `claude plugin install ponytail/ponytail`
+- Optional: Install and configure OmniRoute
+  - `npm install -h omniroute`
+  - `omniroute server`
+- Optional: Install skills
+  - `npx skills add https://github.com/wshobson/agents --skill rust-async-patterns`

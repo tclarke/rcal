@@ -1,0 +1,33 @@
+{
+  "model": "claude-sonnet-4-6",
+  "language": "english",
+  "editorMode": "vim",
+  "cleanupPeriodDays": 60,
+  "defaultShell": "powershell",
+  "permissions": {
+    "defaultMode": "default",
+    "allow": [
+      "Bash(git *)",
+      "PowerShell(git *)",
+      "Edit(*)",
+      "mcp__memory__*"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "PowerShell(git push *)",
+      "Bash(rm *)",
+      "PowerShell(del *)",
+      "PowerShell(rm *)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(./secrets/**)"
+    ]
+  },
+  "hooks": { "PreToolUse": [{
+    "matcher": "Bash",
+    "hooks": [{ "type": "command",
+      "command": "rtk.exe hook claude"
+    }]
+  }]}
+}
