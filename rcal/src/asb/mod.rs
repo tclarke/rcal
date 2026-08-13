@@ -354,7 +354,7 @@ lazy_static! {
 ///
 /// Returns `Err(InitializationFailure)` when no matching (or default)
 /// transport is configured, or when the underlying constructor fails.
-pub fn get_asb(
+pub async fn get_asb(
     service_identifier: impl Into<String>,
     asb_identifier: impl Into<String>,
     config: Arc<CalConfig>,
@@ -400,7 +400,7 @@ pub fn get_asb(
             logger,
             Arc::clone(&config),
             transport,
-        )?)),
+        ).await?)),
         other => {
             return Err(CalError::new(
                 CalErrorKind::InitializationFailure,
@@ -430,16 +430,16 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_asb_factory_same_key_returns_same_instance() {
+    #[tokio::test]
+    async fn test_asb_factory_same_key_returns_same_instance() {
         let config = test_config();
         let logger = init_test_logger!();
 
-        let a = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
+        let a = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone()).await
             .expect("first get_asb must succeed");
-        let b = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
+        let b = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone()).await
             .expect("second get_asb must succeed");
-        let c = get_asb("test_svc_2", "TestZmq", Arc::clone(&config), logger.clone())
+        let c = get_asb("test_svc_2", "TestZmq", Arc::clone(&config), logger.clone()).await
             .expect("different service must succeed");
 
         // Same (service, asb) key → same Arc (CERT CAL-005202)
@@ -451,17 +451,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_asb_factory_unknown_transport_returns_err() {
+    #[tokio::test]
+    async fn test_asb_factory_unknown_transport_returns_err() {
         let logger = init_test_logger!();
         let no_default_config = Arc::new(
             parse_config_from_file(&get_test_config_path("calconfig_no_default.toml")).unwrap(),
         );
-        assert!(get_asb("svc", "dummy", no_default_config, logger).is_err());
+        assert!(get_asb("svc", "dummy", no_default_config, logger).await.is_err());
     }
 
-    #[test]
-    fn test_state_display_does_not_recurse() {
+    #[tokio::test]
+    async fn test_state_display_does_not_recurse() {
         assert_eq!(AsbConnectionState::Initializing.to_string(), "Initializing");
         assert_eq!(AsbConnectionState::Normal.to_string(), "Normal");
         assert_eq!(AsbConnectionState::Degraded.to_string(), "Degraded");
@@ -471,8 +471,8 @@ mod tests {
 
     // ── State-transition validation ───────────────────────────────────────
 
-    #[test]
-    fn test_valid_transitions() {
+    #[tokio::test]
+    async fn test_valid_transitions() {
         use AsbConnectionState::*;
         let cases = [
             (Initializing, Normal),
@@ -498,8 +498,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_invalid_transitions() {
+    #[tokio::test]
+    async fn test_invalid_transitions() {
         use AsbConnectionState::*;
         // Failed is terminal.
         for to in [Initializing, Normal, Degraded, Inoperable] {

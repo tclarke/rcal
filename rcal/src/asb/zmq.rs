@@ -5,6 +5,7 @@
 use slog::{Logger, trace};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
 use zeromq::{Socket, PubSocket, SubSocket};
 
 use super::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
@@ -25,11 +26,11 @@ pub struct ZmqAsb {
     service_id: String,
     uuids: ServiceUuids,
 
-    /// ZeroMQ publisher sockets keyed by topic.
-    out_conns: HashMap<String, PubSocket>,
+    /// ZeroMQ publisher socket.
+    publisher: PubSocket,
 
     /// ZeroMQ subscriber sockets keyed by topic.
-    in_conns: HashMap<String, SubSocket>,
+    subs: HashMap<String, SubSocket>,
 
     /// Current ASB connection status.
     status: AsbStatus,
@@ -53,13 +54,18 @@ impl ZmqAsb {
     ///
     /// The `transport_uri` is cloned from `tconfig` so the struct carries no
     /// borrowed lifetime.
-    pub fn new(
+    pub async fn new(
         service_id: impl Into<String>,
         asb_id: impl Into<String>,
         logger: Logger,
         config: Arc<CalConfig>,
         tconfig: &Transport,
     ) -> CalResult<Self> {
+        let transport_uri = tconfig.uri.clone();
+        let mut publisher= PubSocket::new();
+        let _ = publisher.bind(&transport_uri).await.map_err(|err| CalError::with_source(
+            crate::uci::CalErrorKind::InitializationFailure,
+        format!("Can't bind to publisher socket to zmq. {}", transport_uri), err))?;
         Ok(Self {
             service_id: service_id.into(),
             asb_id: asb_id.into(),
@@ -70,20 +76,18 @@ impl ZmqAsb {
                 components: Vec::new(),
                 capabilities: Vec::new(),
             },
-            out_conns: HashMap::new(),
-            in_conns: HashMap::new(),
+            publisher,
+            subs: HashMap::new(),
             status: AsbStatus::new(AsbConnectionState::Initializing, "ZeroMQ ASB initializing"),
             logger,
             config,
-            transport_uri: tconfig.uri.clone(),
+            transport_uri,
             listeners: Vec::new(),
         })
     }
 
     // Connect to the pub/sub bus.
     pub async fn connect(&mut self) -> CalResult<()> {
-        let mut sub_socket = SubSocket::new();
-        sub_socket.connect(&self.transport_uri).await.map_err(|err| CalError::with_source(crate::uci::CalErrorKind::InitializationFailure, "Can't sub to zmq.", err))?;
         Ok(())
     }
 
@@ -217,20 +221,20 @@ mod tests {
         )
     }
 
-    fn make_bus(logger: Logger) -> ZmqAsb {
+    async fn make_bus(logger: Logger) -> ZmqAsb {
         let config = get_test_conf();
         let tconfig = config
             .get_transport(&String::from("TestZmq"))
             .expect("TestZmq transport must exist in test config");
-        ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig).unwrap()
+        ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig).await.unwrap()
     }
 
     // ── Basic construction ────────────────────────────────────────────────
 
-    #[test]
-    fn test_check_creation() {
+    #[tokio::test]
+    async fn test_check_creation() {
         let logger = init_test_logger!();
-        let a = make_bus(logger);
+        let a = make_bus(logger).await;
         assert_eq!(a.oms_schema_version(), "2.1.0_test_schema");
         assert_eq!(a.oms_schema_compiler_version(), "0.1.0");
         assert_eq!(a.service_identifier(), "Test Service");
@@ -299,10 +303,10 @@ mod tests {
     /// unregister l1                   3         2
     /// update_status(Failed)           3         3
     /// ```
-    #[test]
-    fn test_status_listeners() {
+    #[tokio::test]
+    async fn test_status_listeners() {
         let logger = init_test_logger!();
-        let mut a = make_bus(logger);
+        let mut a = make_bus(logger).await;
 
         let l1 = Arc::new(Mutex::new(TestStatusListener::new()));
         let l2 = Arc::new(Mutex::new(TestStatusListener::new()));
@@ -371,12 +375,13 @@ mod tests {
         assert_eq!(l1.lock().unwrap().last_state(), AsbConnectionState::Normal);
         assert_eq!(l2.lock().unwrap().call_count(), 3);
         assert_eq!(l2.lock().unwrap().last_state(), AsbConnectionState::Failed);
+        drop(a);
     }
 
-    #[test]
-    fn test_duplicate_register_returns_err() {
+    #[tokio::test]
+    async fn test_duplicate_register_returns_err() {
         let logger = init_test_logger!();
-        let mut a = make_bus(logger);
+        let mut a = make_bus(logger).await;
 
         let l = Arc::new(Mutex::new(TestStatusListener::new()));
         a.register_status_listener(l.clone()).unwrap();
@@ -387,10 +392,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_unregister_unknown_returns_err() {
+    #[tokio::test]
+    async fn test_unregister_unknown_returns_err() {
         let logger = init_test_logger!();
-        let mut a = make_bus(logger);
+        let mut a = make_bus(logger).await;
 
         let l = Arc::new(Mutex::new(TestStatusListener::new()));
         let result = a.unregister_status_listener(l);
@@ -400,10 +405,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_invalid_state_transition_returns_err() {
+    #[tokio::test]
+    async fn test_invalid_state_transition_returns_err() {
         let logger = init_test_logger!();
-        let mut a = make_bus(logger);
+        let mut a = make_bus(logger).await;
 
         // Drive to Failed.
         a.update_status(AsbConnectionState::Normal, "").unwrap();

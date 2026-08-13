@@ -9,7 +9,6 @@ edition = "2024"
 lazy_static = "1.5.0"
 mac_address = { version = "1.1.8", features = ["serde"] }
 rcal_macros = { path = "./rcal_macros" }
-ramqp = "0.8.2"
 serde = { version = "1.0.229", features = ["derive"] }
 slog = "2.8.2"
 slog-async = "2.8.0"
@@ -17,7 +16,8 @@ slog-term = "2.9.2"
 toml = "1.1.4"
 uuid = { version = "1.24.0", features = ["v1", "v3", "v4", "slog", "serde", "rng"] }
 zeromq = "0.6.0"
-tokio = { version = "1.53.1", features = ["macros", "net", "sync", "test-util"] }
+tokio = { version = "1.53.1", features = ["full"] }
+bytes = "1.12.1"
 
 [[test]]
 name = "zmq_pub_sub"
