@@ -1,36 +1,32 @@
-//! ZeroMQ-backed Abstract Service Bus implementation.
+//! omq-tokio-backed Abstract Service Bus implementation (RADIO/DISH).
 
 #![allow(dead_code)]
 
 use slog::{Logger, trace};
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use zeromq::{Socket, PubSocket, SubSocket};
+use omq_tokio::{Endpoint, Options, Socket, SocketType};
 
 use super::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
 use crate::calconfig::{CalConfig, Transport};
 use crate::uci::base::{ServiceUuids, UUID};
-use crate::uci::{CalError, CalImplementationErrorKind, CalResult};
+use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalResult};
 
-/// ASB identifier string for the ZeroMQ transport.
+/// ASB identifier string for the ZeroMQ-compatible transport.
 pub const ZMQ_ASB_ID: &str = "zmq";
 
-/// ZeroMQ-backed CAL instance.
+/// omq-tokio RADIO/DISH-backed CAL instance.
 ///
-/// Implements [`AbstractServiceBus`] using ZeroMQ PUB/SUB sockets.
-///
-/// The struct is `'static` — it owns all data it needs.
+/// Implements [`AbstractServiceBus`] using RADIO for broadcast (no broker
+/// required for up to ~10 peers). TCP and inproc: RADIO binds, DISH connects.
+/// UDP: DISH binds, RADIO connects — callers handle that polarity in tests.
 pub struct ZmqAsb {
     asb_id: String,
     service_id: String,
     uuids: ServiceUuids,
 
-    /// ZeroMQ publisher socket.
-    publisher: PubSocket,
-
-    /// ZeroMQ subscriber sockets keyed by topic.
-    subs: HashMap<String, SubSocket>,
+    /// RADIO socket — the send/publish side.
+    radio: Option<Socket>,
 
     /// Current ASB connection status.
     status: AsbStatus,
@@ -41,8 +37,6 @@ pub struct ZmqAsb {
     config: Arc<CalConfig>,
 
     /// Transport URI extracted from the resolved [`Transport`] at construction.
-    /// Owned to avoid holding a borrow of `CalConfig` for the lifetime of
-    /// this struct
     transport_uri: String,
 
     /// Registered connection-status listeners.
@@ -52,8 +46,8 @@ pub struct ZmqAsb {
 impl ZmqAsb {
     /// Constructs a new `ZmqAsb` in the `Initializing` state.
     ///
-    /// The `transport_uri` is cloned from `tconfig` so the struct carries no
-    /// borrowed lifetime.
+    /// For tcp:// and inproc:// URIs the RADIO socket binds immediately.
+    /// For udp:// URIs the RADIO connects to an existing DISH listener.
     pub async fn new(
         service_id: impl Into<String>,
         asb_id: impl Into<String>,
@@ -62,10 +56,33 @@ impl ZmqAsb {
         tconfig: &Transport,
     ) -> CalResult<Self> {
         let transport_uri = tconfig.uri.clone();
-        let mut publisher= PubSocket::new();
-        let _ = publisher.bind(&transport_uri).await.map_err(|err| CalError::with_source(
-            crate::uci::CalErrorKind::InitializationFailure,
-        format!("Can't bind to publisher socket to zmq. {}", transport_uri), err))?;
+        let ep: Endpoint = transport_uri.parse().map_err(|e| {
+            CalError::new(
+                CalErrorKind::InitializationFailure,
+                format!("Invalid transport URI '{}': {}", transport_uri, e),
+            )
+        })?;
+
+        let radio = Socket::new(SocketType::Radio, Options::default());
+
+        // UDP polarity: DISH binds, RADIO connects.
+        // TCP/inproc polarity: RADIO binds, DISH connects.
+        if matches!(ep, Endpoint::Udp { .. }) {
+            radio.connect(ep).await.map_err(|e| {
+                CalError::new(
+                    CalErrorKind::InitializationFailure,
+                    format!("RADIO udp connect to '{}' failed: {}", transport_uri, e),
+                )
+            })?;
+        } else {
+            radio.bind(ep).await.map_err(|e| {
+                CalError::new(
+                    CalErrorKind::InitializationFailure,
+                    format!("RADIO bind to '{}' failed: {}", transport_uri, e),
+                )
+            })?;
+        }
+
         Ok(Self {
             service_id: service_id.into(),
             asb_id: asb_id.into(),
@@ -76,8 +93,7 @@ impl ZmqAsb {
                 components: Vec::new(),
                 capabilities: Vec::new(),
             },
-            publisher,
-            subs: HashMap::new(),
+            radio: Some(radio),
             status: AsbStatus::new(AsbConnectionState::Initializing, "ZeroMQ ASB initializing"),
             logger,
             config,
@@ -86,7 +102,7 @@ impl ZmqAsb {
         })
     }
 
-    // Connect to the pub/sub bus.
+    /// Connect to the bus (future use: establish DISH subscriptions).
     pub async fn connect(&mut self) -> CalResult<()> {
         Ok(())
     }
@@ -130,8 +146,6 @@ impl AbstractServiceBus for ZmqAsb {
     }
 
     fn oms_schema_version(&self) -> &str {
-        // In a production build this would be embedded at compile time via
-        // a build.rs / env!() pattern.
         "2.1.0_test_schema"
     }
 
@@ -143,20 +157,12 @@ impl AbstractServiceBus for ZmqAsb {
         &self.status
     }
 
-    /// Registers a status listener.
-    ///
-    /// The listener's `on_status_change` is called **immediately** with the
-    /// current state before the method returns, as required by §5.9.
-    ///
-    /// Returns `Err(ImplementationError { ListenerError })` if the same
-    /// `Arc` is already registered (pointer equality check).
     fn register_status_listener(
         &mut self,
         listener: Arc<Mutex<dyn AsbStatusListener>>,
     ) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::register_status_listener()");
 
-        // Reject duplicate registrations (same Arc pointer).
         if self.listeners.iter().any(|l| Arc::ptr_eq(l, &listener)) {
             return Err(CalError::new_impl(
                 CalImplementationErrorKind::ListenerError,
@@ -164,11 +170,7 @@ impl AbstractServiceBus for ZmqAsb {
             ));
         }
 
-        // CERT CAL-016366: invoke immediately with the current status *before*
-        // adding to the list, so the call happens outside the listeners vec
-        // iteration path (prevents potential borrow issues).
         listener.lock().unwrap().on_status_change(&self.status);
-
         self.listeners.push(listener);
         Ok(())
     }
@@ -179,12 +181,7 @@ impl AbstractServiceBus for ZmqAsb {
     ) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::unregister_status_listener()");
 
-        if let Some(index) = self
-            .listeners
-            .iter()
-            .position(|l| Arc::ptr_eq(l, &listener))
-        {
-            // swap_remove is O(1); listener ordering is not guaranteed.
+        if let Some(index) = self.listeners.iter().position(|l| Arc::ptr_eq(l, &listener)) {
             self.listeners.swap_remove(index);
             Ok(())
         } else {
@@ -196,7 +193,10 @@ impl AbstractServiceBus for ZmqAsb {
     }
 
     fn close(&mut self) -> CalResult<()> {
-        // TODO: close open PUB/SUB sockets, drain in-flight messages.
+        // ponytail: fire-and-forget close; add graceful drain if message loss on shutdown matters
+        if let Some(sock) = self.radio.take() {
+            tokio::spawn(async move { let _ = sock.close().await; });
+        }
         Ok(())
     }
 }
@@ -205,12 +205,7 @@ impl AbstractServiceBus for ZmqAsb {
 // Unit tests
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Builds a [`CalConfig`] with one transport entry per port in `ports`.
-///
-/// Transport IDs are `"TestZmq"` for index 0, `"TestZmq2"` for index 1, etc.
-/// The system UUID is derived via `UUID::generate_v3` using the fixed base UUID
-/// as namespace and the first port (as a decimal string) as the name, so each
-/// unique port set gets a deterministic but distinct system UUID.
+/// Builds a [`CalConfig`] with one TCP transport entry per port in `ports`.
 #[cfg(test)]
 pub(super) fn test_config_on_ports(ports: &[u16]) -> Arc<CalConfig> {
     use crate::calconfig;
@@ -235,11 +230,29 @@ pub(super) fn test_config_on_ports(ports: &[u16]) -> Arc<CalConfig> {
     Arc::new(calconfig::parse_config(&toml).unwrap())
 }
 
+/// Builds a [`CalConfig`] with an inproc transport.
+#[cfg(test)]
+pub(super) fn test_config_inproc(name: &str) -> Arc<CalConfig> {
+    use crate::calconfig;
+    use crate::uci::base::UUID;
+    const BASE_UUID: &str = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b";
+    let ns = UUID::parse_str(BASE_UUID).unwrap();
+    let sys_uuid = UUID::generate_v3(&ns, name.as_bytes());
+    let toml = format!(
+        "[system]\nid = \"TestSystem\"\nlabel = \"OMS Test System\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n\n[[transport]]\nid = \"TestZmq\"\ntype = \"zmq\"\nuri = \"inproc://{name}\"\n"
+    );
+    Arc::new(calconfig::parse_config(&toml).unwrap())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use omq_tokio::{MonitorEvent, Socket, SocketType, Options, Message, Endpoint};
+    use omq_tokio::endpoint::Host;
     use rcal_macros::init_test_logger;
+    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::atomic::{AtomicI32, AtomicU16, Ordering};
+    use std::time::Duration;
 
     static NEXT_PORT: AtomicU16 = AtomicU16::new(55600);
 
@@ -252,7 +265,9 @@ mod tests {
         let tconfig = config
             .get_transport(&String::from("TestZmq"))
             .expect("TestZmq transport must exist in test config");
-        ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig).await.unwrap()
+        ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap()
     }
 
     // ── Basic construction ────────────────────────────────────────────────
@@ -265,20 +280,118 @@ mod tests {
         assert_eq!(a.oms_schema_compiler_version(), "0.1.0");
         assert_eq!(a.service_identifier(), "Test Service");
         assert_eq!(a.asb_identifier(), ZMQ_ASB_ID);
-        assert_eq!(
-            a.connection_status().state,
-            AsbConnectionState::Initializing
-        );
+        assert_eq!(a.connection_status().state, AsbConnectionState::Initializing);
+    }
+
+    // ── Transport: inproc ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_radio_dish_inproc() {
+        let radio = Socket::new(SocketType::Radio, Options::default());
+        radio.bind("inproc://test-asb-inproc".parse::<Endpoint>().unwrap()).await.unwrap();
+
+        let dish = Socket::new(SocketType::Dish, Options::default());
+        dish.connect("inproc://test-asb-inproc".parse::<Endpoint>().unwrap()).await.unwrap();
+        dish.join("telemetry").await.unwrap();
+
+        radio.send(Message::multipart(["telemetry", "42.0"])).await.unwrap();
+        // inproc is synchronous within the runtime — no sleep needed
+        radio.send(Message::multipart(["ignored-group", "dropped"])).await.unwrap();
+
+        let msg = dish.recv().await.unwrap();
+        assert_eq!(msg.part_bytes(0).unwrap(), "telemetry");
+        assert_eq!(msg.part_bytes(1).unwrap(), "42.0");
+
+        radio.close().await.unwrap();
+        dish.close().await.unwrap();
+    }
+
+    // ── Transport: tcp ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_radio_dish_tcp() {
+        let radio = Socket::new(SocketType::Radio, Options::default());
+        let bound = radio
+            .bind("tcp://127.0.0.1:0".parse::<Endpoint>().unwrap())
+            .await
+            .unwrap();
+        let port = match bound {
+            Endpoint::Tcp { port, .. } => port,
+            _ => panic!("expected TCP endpoint"),
+        };
+
+        let dish = Socket::new(SocketType::Dish, Options::default());
+        dish.join("status").await.unwrap();
+        dish.connect(format!("tcp://127.0.0.1:{port}").parse::<Endpoint>().unwrap())
+            .await
+            .unwrap();
+
+        // Wait for ZMTP handshake to complete.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        radio.send(Message::multipart(["status", "online"])).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let msg = dish.recv().await.unwrap();
+        assert_eq!(msg.part_bytes(0).unwrap(), "status");
+        assert_eq!(msg.part_bytes(1).unwrap(), "online");
+
+        radio.close().await.unwrap();
+        dish.close().await.unwrap();
+    }
+
+    // ── Transport: udp ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_radio_dish_udp() {
+        // UDP polarity: DISH binds, RADIO connects.
+        let dish = Socket::new(SocketType::Dish, Options::default());
+        let mut mon = dish.monitor();
+        dish.bind(Endpoint::Udp {
+            group: None,
+            host: Host::Ip(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            port: 0,
+        })
+        .await
+        .unwrap();
+
+        // Read the OS-assigned port from the monitor event.
+        let port = loop {
+            match mon.recv().await.unwrap() {
+                MonitorEvent::Listening {
+                    endpoint: Endpoint::Udp { port, .. },
+                } => break port,
+                _ => continue,
+            }
+        };
+
+        dish.join("sensor").await.unwrap();
+
+        let radio = Socket::new(SocketType::Radio, Options::default());
+        radio
+            .connect(Endpoint::Udp {
+                group: None,
+                host: Host::Ip(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+                port,
+            })
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        radio.send(Message::multipart(["sensor", "hot"])).await.unwrap();
+        radio.send(Message::multipart(["other", "dropped"])).await.unwrap();
+
+        let msg = dish.recv().await.unwrap();
+        assert_eq!(msg.part_bytes(0).unwrap(), "sensor");
+        assert_eq!(msg.part_bytes(1).unwrap(), "hot");
+
+        radio.close().await.unwrap();
+        dish.close().await.unwrap();
     }
 
     // ── Listener helper ───────────────────────────────────────────────────
 
-    /// A status listener that records how many times it has been called and
-    /// the most recent state observed.
-    ///
-    /// Uses `AtomicI32` for the count so the type is `Sync` even without a
-    /// `Mutex` around the whole struct.  The state is wrapped in a `Mutex`
-    /// because `AsbConnectionState` is `Copy` but needs interior mutability.
     struct TestStatusListener {
         count: AtomicI32,
         last_state: Mutex<AsbConnectionState>,
@@ -310,25 +423,6 @@ mod tests {
 
     // ── Status-listener tests ─────────────────────────────────────────────
 
-    /// Full lifecycle test for `register_status_listener`,
-    /// `update_status`, and `unregister_status_listener`.
-    ///
-    /// The immediate-invocation rule means each `register_status_listener`
-    /// call adds **+1** to the listener's count before the first
-    /// `update_status` is invoked.
-    ///
-    /// ```
-    /// Step                       l1.count  l2.count
-    /// ─────────────────────────  ────────  ────────
-    /// initial                         0         0
-    /// update_status(Normal)           0         0   (not yet registered)
-    /// register l1  → immediate +1     1         0   (state = Normal)
-    /// update_status(Degraded)         2         0
-    /// register l2  → immediate +1     2         1   (state = Degraded)
-    /// update_status(Normal)           3         2
-    /// unregister l1                   3         2
-    /// update_status(Failed)           3         3
-    /// ```
     #[tokio::test]
     async fn test_status_listeners() {
         let logger = init_test_logger!();
@@ -337,67 +431,39 @@ mod tests {
         let l1 = Arc::new(Mutex::new(TestStatusListener::new()));
         let l2 = Arc::new(Mutex::new(TestStatusListener::new()));
 
-        // No listeners yet — update has no effect on counts.
         assert_eq!(a.listeners.len(), 0);
         a.update_status(AsbConnectionState::Normal, "").unwrap();
         assert_eq!(l1.lock().unwrap().call_count(), 0);
         assert_eq!(l2.lock().unwrap().call_count(), 0);
 
-        // Register l1 → immediate callback fires (CERT CAL-016366).
         a.register_status_listener(l1.clone()).unwrap();
         assert_eq!(a.listeners.len(), 1);
-        assert_eq!(
-            l1.lock().unwrap().call_count(),
-            1,
-            "immediate callback on register"
-        );
+        assert_eq!(l1.lock().unwrap().call_count(), 1, "immediate callback on register");
         assert_eq!(l1.lock().unwrap().last_state(), AsbConnectionState::Normal);
         assert_eq!(l2.lock().unwrap().call_count(), 0);
 
-        // update_status fires all registered listeners.
-        a.update_status(AsbConnectionState::Degraded, "degraded")
-            .unwrap();
+        a.update_status(AsbConnectionState::Degraded, "degraded").unwrap();
         assert_eq!(l1.lock().unwrap().call_count(), 2);
-        assert_eq!(
-            l1.lock().unwrap().last_state(),
-            AsbConnectionState::Degraded
-        );
+        assert_eq!(l1.lock().unwrap().last_state(), AsbConnectionState::Degraded);
         assert_eq!(l2.lock().unwrap().call_count(), 0);
 
-        // Register l2 → immediate callback with *current* state (Degraded).
         a.register_status_listener(l2.clone()).unwrap();
         assert_eq!(a.listeners.len(), 2);
         assert_eq!(l1.lock().unwrap().call_count(), 2);
-        assert_eq!(
-            l2.lock().unwrap().call_count(),
-            1,
-            "immediate callback on register"
-        );
-        assert_eq!(
-            l2.lock().unwrap().last_state(),
-            AsbConnectionState::Degraded
-        );
+        assert_eq!(l2.lock().unwrap().call_count(), 1, "immediate callback on register");
+        assert_eq!(l2.lock().unwrap().last_state(), AsbConnectionState::Degraded);
 
-        // Both listeners receive the next update.
-        a.update_status(AsbConnectionState::Normal, "recovered")
-            .unwrap();
+        a.update_status(AsbConnectionState::Normal, "recovered").unwrap();
         assert_eq!(l1.lock().unwrap().call_count(), 3);
         assert_eq!(l1.lock().unwrap().last_state(), AsbConnectionState::Normal);
         assert_eq!(l2.lock().unwrap().call_count(), 2);
         assert_eq!(l2.lock().unwrap().last_state(), AsbConnectionState::Normal);
 
-        // Unregister l1.
         a.unregister_status_listener(l1.clone()).unwrap();
         assert_eq!(a.listeners.len(), 1);
 
-        // Only l2 receives the Failed update.
-        a.update_status(AsbConnectionState::Failed, "terminal")
-            .unwrap();
-        assert_eq!(
-            l1.lock().unwrap().call_count(),
-            3,
-            "l1 must not be called after unregister"
-        );
+        a.update_status(AsbConnectionState::Failed, "terminal").unwrap();
+        assert_eq!(l1.lock().unwrap().call_count(), 3, "l1 must not be called after unregister");
         assert_eq!(l1.lock().unwrap().last_state(), AsbConnectionState::Normal);
         assert_eq!(l2.lock().unwrap().call_count(), 3);
         assert_eq!(l2.lock().unwrap().last_state(), AsbConnectionState::Failed);
@@ -412,10 +478,7 @@ mod tests {
         let l = Arc::new(Mutex::new(TestStatusListener::new()));
         a.register_status_listener(l.clone()).unwrap();
         let result = a.register_status_listener(l.clone());
-        assert!(
-            result.is_err(),
-            "registering the same Arc twice must return Err"
-        );
+        assert!(result.is_err(), "registering the same Arc twice must return Err");
     }
 
     #[tokio::test]
@@ -425,10 +488,7 @@ mod tests {
 
         let l = Arc::new(Mutex::new(TestStatusListener::new()));
         let result = a.unregister_status_listener(l);
-        assert!(
-            result.is_err(),
-            "unregistering an unknown listener must return Err"
-        );
+        assert!(result.is_err(), "unregistering an unknown listener must return Err");
     }
 
     #[tokio::test]
@@ -436,11 +496,9 @@ mod tests {
         let logger = init_test_logger!();
         let mut a = make_bus(logger).await;
 
-        // Drive to Failed.
         a.update_status(AsbConnectionState::Normal, "").unwrap();
         a.update_status(AsbConnectionState::Failed, "").unwrap();
 
-        // All transitions out of Failed must be rejected.
         for next in [
             AsbConnectionState::Initializing,
             AsbConnectionState::Normal,

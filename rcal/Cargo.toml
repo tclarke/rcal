@@ -15,10 +15,10 @@ slog-async = "2.8.0"
 slog-term = "2.9.2"
 toml = "1.1.4"
 uuid = { version = "1.24.0", features = ["v1", "v3", "v4", "slog", "serde", "rng"] }
-zeromq = "0.6.0"
+omq-tokio = "0.21.1"
 tokio = { version = "1.53.1", features = ["full"] }
 bytes = "1.12.1"
 
 [[test]]
-name = "zmq_pub_sub"
+name = "zmq_radio_dish"
 harness = true
