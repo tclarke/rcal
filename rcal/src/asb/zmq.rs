@@ -22,6 +22,9 @@ use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage,
 /// ASB identifier string for the ZeroMQ-compatible transport.
 pub const ZMQ_ASB_ID: &str = "zmq";
 
+/// Sends a shutdown signal to all reader tasks spawned by this ASB.
+type ShutdownTx = Arc<tokio::sync::watch::Sender<bool>>;
+
 // ════════════════════════════════════════════════════════════════════════════
 // Serialization helpers
 // ════════════════════════════════════════════════════════════════════════════
@@ -126,6 +129,9 @@ pub struct ZmqAsb {
     /// Registered connection-status listeners.
     listeners: Vec<Arc<dyn AsbStatusListener>>,
 
+    /// Signals all reader tasks to stop; sent on close() (CAL-016049).
+    shutdown_tx: ShutdownTx,
+
     /// Test-only gate: forwarding task acquires+drops this before each drain.
     /// Hold externally to freeze the task while flooding writes.
     #[cfg(test)]
@@ -172,6 +178,9 @@ impl ZmqAsb {
             })?;
         }
 
+        let (shutdown_tx, _) = tokio::sync::watch::channel(false);
+        let shutdown_tx = Arc::new(shutdown_tx);
+
         let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
         tokio::spawn(async move {
             while let Some(msg) = write_rx.recv().await {
@@ -199,6 +208,7 @@ impl ZmqAsb {
             peer_uris: Vec::new(),
             serialization_format: tconfig.format.clone(),
             listeners: Vec::new(),
+            shutdown_tx,
             #[cfg(test)]
             write_gate: Arc::new(tokio::sync::Mutex::new(())),
         })
@@ -321,7 +331,9 @@ impl AbstractServiceBus for ZmqAsb {
 
     fn close(&mut self) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::close()");
-        // Dropping write_tx closes the channel; the background task exits and closes the socket.
+        // Signal all reader tasks to unblock any pending dish.recv() (CAL-016049).
+        let _ = self.shutdown_tx.send(true);
+        // Dropping write_tx closes the channel; the background writer task exits.
         self.write_tx = None;
         Ok(())
     }
@@ -629,6 +641,7 @@ where
         let task_alive_task = Arc::clone(&task_alive);
         let topic_str = topic.to_string();
         let _format = self.serialization_format.clone(); // ponytail: deserialization is format-agnostic (XML only); extend if binary formats are added
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         let task = tokio::spawn(async move {
             let dish = Socket::new(SocketType::Dish, Options::default());
@@ -643,7 +656,14 @@ where
 
             let mut last_accepted: Option<Instant> = None;
 
-            while let Ok(raw) = dish.recv().await {
+            loop {
+                let raw = tokio::select! {
+                    result = dish.recv() => match result {
+                        Ok(r) => r,
+                        Err(_) => break,
+                    },
+                    _ = shutdown_rx.changed() => break,
+                };
                 let payload = raw.part_bytes(1).unwrap_or_default();
                 if let Ok(m) = deserialize_message::<M>(&payload) {
                     // TimeBasedFilter: drop messages within min_separation (CAL-005431)
@@ -1450,6 +1470,41 @@ mod tests {
         );
 
         asb.close().unwrap();
+    }
+
+    // ── close() unblocks read() (CAL-016049) ─────────────────────────────
+
+    #[init_test_logger]
+    #[tokio::test]
+    async fn test_close_unblocks_blocked_read() {
+        let port = next_port();
+        let config = test_config_on_ports(&[port]);
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+            &mut asb,
+            "test.topic",
+            TopicQos::default(),
+        )
+        .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Spawn a task that blocks indefinitely waiting for a message.
+        let read_task = tokio::task::spawn_blocking(move || reader.read(None));
+
+        // Close the ASB — must wake the blocked read().
+        asb.close().unwrap();
+
+        let result = tokio::time::timeout(Duration::from_millis(500), read_task)
+            .await
+            .expect("read() did not unblock within 500 ms after close()")
+            .expect("task did not panic");
+
+        assert!(result.is_err(), "read() must return Err after close() (CAL-016049)");
     }
 
     // ── QoS: TimeBasedFilter ──────────────────────────────────────────────
