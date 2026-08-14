@@ -33,6 +33,7 @@ pub use crate::asb::{
     AsbConnectionState, AsbStatus, AsbStatusListener, MessageListener,
     Expiration, MessageBuffer, Reliability, TimeBasedFilter, TopicQos,
 };
+pub use crate::calconfig::SerializationFormat;
 
 /// Re-exported [`uuid::Timestamp`] so callers can build version-1 UUID
 /// timestamps without declaring a direct `uuid` crate dependency.
