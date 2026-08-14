@@ -56,10 +56,53 @@
         <documentation>Trait implemented by CAL Clients to receive ASB connection status change notifications via callback. Method: on_status_change(status: AsbStatus). Called immediately upon registration (CAL-016366), then on every subsequent state change.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationInterface" name="AbstractServiceBus" id="e-asb">
-        <documentation>Primary CAL instance interface. Methods: service_id(), uuids() (CAL-005203), connection_status(), register_status_listener() (CAL-016366), unregister_status_listener(), create_writer(), create_reader(). CERTs: CAL-005201, CAL-005202, CAL-005203, CAL-016366.</documentation>
+        <documentation>Primary CAL instance interface (object-safe). Methods: service_id(), uuids() (CAL-005203), connection_status(), register_status_listener() (CAL-016366), unregister_status_listener(), close(). Generic factory methods (create_writer, create_reader) live in the non-object-safe extension trait AbstractServiceBusExt. CERTs: CAL-005201, CAL-005202, CAL-005203, CAL-016366.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="AbstractServiceBusExt(M)" id="e-asbext">
+        <documentation>Non-object-safe extension trait of AbstractServiceBus providing generic factory methods for typed Writers and Readers. Bounded by M: CalMessage + Serialize + DeserializeOwned at the impl site. Methods: create_writer(topic: &amp;str, qos: TopicQos) returning CalResult(Box(dyn AbstractWriter(M))), create_reader(topic: &amp;str, qos: TopicQos) returning CalResult(Box(dyn AbstractReader(M))). CERTs: CAL-005364, CAL-005374.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="AbstractWriter(M)" id="e-writer">
+        <documentation>Trait for a CAL Writer associated with exactly one Client Topic (CAL-005368). M is a CalMessage type. Methods: topic() returning &amp;str, write(message: &amp;M) returning CalResult(()) — errors on topic unavailable (CAL-005369) or resources unavailable (CAL-016043), close() consuming Box(Self). Accepts TopicQos at creation (CAL-005210). CERTs: CAL-005364, CAL-005368, CAL-005369, CAL-016043.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="AbstractReader(M)" id="e-reader">
+        <documentation>Trait for a CAL Reader associated with exactly one Client Topic (CAL-005378). M is a CalMessage type. Callback interface (CAL-005379): add_listener, remove_listener. Polling interface (CAL-005380): read(timeout) blocking (CAL-016049), read_no_wait() non-blocking. read() returns OperationNotPermitted when listeners are registered (CAL-016050). Messages removed from buffer on delivery (CAL-016052) or after listener dispatch (CAL-016045). Topic connection established at creation (CAL-005394); buffering begins per QoS (CAL-016044). CERTs: CAL-005374, CAL-005378, CAL-005379, CAL-005380, CAL-005391, CAL-005392, CAL-005394, CAL-016044, CAL-016045, CAL-016049, CAL-016050, CAL-016052.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="MessageListener(M)" id="e-msglistener">
+        <documentation>Callback trait registered with AbstractReader to receive incoming CAL Messages (CAL-005391). Method: on_message(msg: &amp;Arc(M)) — called once per received message with a shared reference (CAL-005392). The reference remains valid for the duration of the call (CAL-016046). CERTs: CAL-005391, CAL-005392, CAL-016046.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationFunction" name="CalInstanceFactory" id="e-calfactory">
         <documentation>Platform entry-point function for obtaining a fully initialised CAL instance. Signature: fn(config: CalInstanceConfig) returning CalResult of boxed AbstractServiceBus. CERTs: CAL-005201, CAL-005202.</documentation>
+      </element>
+    </folder>
+    <folder name="QoS" id="f-qos">
+      <element xsi:type="archimate:DataObject" name="TopicQos" id="e-topicqos">
+        <documentation>QoS configuration aggregate accepted by create_writer and create_reader (CAL-005210). Contains four independent axes: MessageBuffer, Expiration, Reliability, TimeBasedFilter. Default: no buffer limit, no expiration, best-effort, no filter. CERT: CAL-005210.</documentation>
+      </element>
+      <element xsi:type="archimate:DataObject" name="MessageBuffer" id="e-msgbuffer">
+        <documentation>Limits buffered message count. Writer (CAL-005445): drop oldest when writer buffer full. Reader (CAL-016079): drop oldest when reader buffer full. Field: max_count: Option(usize) — None means unlimited. CERTs: CAL-005444, CAL-005445, CAL-016079.</documentation>
+      </element>
+      <element xsi:type="archimate:DataObject" name="Expiration" id="e-expiration">
+        <documentation>Time-to-live for Reader buffer messages. Expired messages are dropped before delivery (CAL-005437). Field: ttl: Option(Duration) — None means no expiration. CERT: CAL-005437.</documentation>
+      </element>
+      <element xsi:type="archimate:DataObject" name="Reliability" id="e-reliability">
+        <documentation>Delivery guarantee level. BestEffort: no retransmission. Reliable: resend undelivered messages while available (CAL-005434), preserving order (CAL-016076). CERTs: CAL-005434, CAL-016076.</documentation>
+      </element>
+      <element xsi:type="archimate:DataObject" name="TimeBasedFilter" id="e-tbf">
+        <documentation>Reader-side minimum inter-arrival filter. Messages received within min_separation of the last accepted message are dropped (CAL-005431). Field: min_separation: Option(Duration). CERT: CAL-005431.</documentation>
+      </element>
+    </folder>
+    <folder name="ZMQ Implementation" id="f-zmq">
+      <element xsi:type="archimate:ApplicationComponent" name="ZmqAsb" id="e-zmqasb">
+        <documentation>omq-tokio RADIO/DISH-backed concrete implementation of AbstractServiceBus and AbstractServiceBusExt. Owns a RADIO socket via a background tokio task; ZmqWriters enqueue through a channel. Each ZmqReader owns an independent DISH socket in its own background task. Transport URI from CalConfig [[transport]]. For multi-process topologies, peer RADIO URIs are registered via add_receive_peer(); readers connect DISH to all peers. RADIO binds for TCP/inproc; RADIO connects for UDP (DISH binds for UDP). Serialization controlled by SerializationFormat in transport config.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationComponent" name="ZmqWriter(M)" id="e-zmqwriter">
+        <documentation>Concrete AbstractWriter for the ZMQ transport. Serializes M to XML (compact or indented per SerializationFormat), assembles a two-part RADIO/DISH message [group=topic, payload=XML], and sends via the shared ZmqAsb write channel. Close is a no-op — channel is shared with ZmqAsb. CERTs realized: CAL-005368, CAL-005369, CAL-016043.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationComponent" name="ZmqReader(M)" id="e-zmqreader">
+        <documentation>Concrete AbstractReader for the ZMQ transport. Owns a DISH socket in a background tokio task that connects to registered peer RADIO URIs and joins the topic group. Dispatches to registered MessageListeners (callback mode) or buffers in a std::sync::mpsc channel (polling mode). Callback and polling modes are mutually exclusive (CAL-016050). Close aborts the background task. CERTs realized: CAL-005378, CAL-005379, CAL-005380, CAL-005391, CAL-005392, CAL-005394, CAL-016044, CAL-016045, CAL-016049, CAL-016050, CAL-016052.</documentation>
+      </element>
+      <element xsi:type="archimate:DataObject" name="SerializationFormat" id="e-serformat">
+        <documentation>Enum controlling XML serialization style on a ZMQ transport. Variants: Xml (compact, no whitespace), PrettyXml (indented, human-readable). Configured per transport via the 'format' key in [[transport]] TOML. Default: Xml.</documentation>
       </element>
     </folder>
   </folder>
@@ -118,6 +161,66 @@
     <element xsi:type="archimate:RealizationRelationship" id="id-040cc6ac8bb54518bd613c20" source="e-calfactory" target="req-cal-005201"/>
     <element xsi:type="archimate:RealizationRelationship" id="id-efc0d27c03ba4717b3487dfc" source="e-calfactory" target="req-cal-005202"/>
     <element xsi:type="archimate:AssociationRelationship" id="id-11da5b76579a4dc38e718ca402b04fdc" source="e-serviceuuids" target="e-caluuid"/>
+    <!-- AbstractServiceBusExt -->
+    <element xsi:type="archimate:AssociationRelationship" id="r-asbext-asb" source="e-asbext" target="e-asb"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-asbext-writer" source="e-asbext" target="e-writer"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-asbext-reader" source="e-asbext" target="e-reader"/>
+    <!-- AbstractWriter -->
+    <element xsi:type="archimate:AssociationRelationship" id="r-writer-msg" source="e-writer" target="e-calmessage"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-writer-qos" source="e-writer" target="e-topicqos"/>
+    <!-- AbstractReader -->
+    <element xsi:type="archimate:AssociationRelationship" id="r-reader-listener" source="e-reader" target="e-msglistener"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-reader-qos" source="e-reader" target="e-topicqos"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-reader-msg" source="e-reader" target="e-calmessage"/>
+    <!-- MessageListener -->
+    <element xsi:type="archimate:AssociationRelationship" id="r-listener-msg" source="e-msglistener" target="e-calmessage"/>
+    <!-- TopicQos composition -->
+    <element xsi:type="archimate:CompositionRelationship" id="r-qos-buffer" source="e-topicqos" target="e-msgbuffer"/>
+    <element xsi:type="archimate:CompositionRelationship" id="r-qos-expiration" source="e-topicqos" target="e-expiration"/>
+    <element xsi:type="archimate:CompositionRelationship" id="r-qos-reliability" source="e-topicqos" target="e-reliability"/>
+    <element xsi:type="archimate:CompositionRelationship" id="r-qos-tbf" source="e-topicqos" target="e-tbf"/>
+    <!-- ZMQ implementation -->
+    <element xsi:type="archimate:RealizationRelationship" id="r-zmqasb-real-asb" source="e-zmqasb" target="e-asb"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-zmqasb-real-asbext" source="e-zmqasb" target="e-asbext"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-zmqwriter-real" source="e-zmqwriter" target="e-writer"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-zmqreader-real" source="e-zmqreader" target="e-reader"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-zmqasb-writer" source="e-zmqasb" target="e-zmqwriter"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-zmqasb-reader" source="e-zmqasb" target="e-zmqreader"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-zmqasb-serformat" source="e-zmqasb" target="e-serformat"/>
+    <!-- CERT realizations: AbstractServiceBusExt -->
+    <element xsi:type="archimate:RealizationRelationship" id="r-asbext-c005364" source="e-asbext" target="req-cal-005364"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-asbext-c005374" source="e-asbext" target="req-cal-005374"/>
+    <!-- CERT realizations: AbstractWriter -->
+    <element xsi:type="archimate:RealizationRelationship" id="r-writer-c005364" source="e-writer" target="req-cal-005364"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-writer-c005368" source="e-writer" target="req-cal-005368"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-writer-c005369" source="e-writer" target="req-cal-005369"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-writer-c016043" source="e-writer" target="req-cal-016043"/>
+    <!-- CERT realizations: AbstractReader -->
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c005374" source="e-reader" target="req-cal-005374"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c005378" source="e-reader" target="req-cal-005378"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c005379" source="e-reader" target="req-cal-005379"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c005380" source="e-reader" target="req-cal-005380"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c005391" source="e-reader" target="req-cal-005391"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c005392" source="e-reader" target="req-cal-005392"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c005394" source="e-reader" target="req-cal-005394"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c016044" source="e-reader" target="req-cal-016044"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c016045" source="e-reader" target="req-cal-016045"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c016049" source="e-reader" target="req-cal-016049"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c016050" source="e-reader" target="req-cal-016050"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reader-c016052" source="e-reader" target="req-cal-016052"/>
+    <!-- CERT realizations: MessageListener -->
+    <element xsi:type="archimate:RealizationRelationship" id="r-listener-c005391" source="e-msglistener" target="req-cal-005391"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-listener-c005392" source="e-msglistener" target="req-cal-005392"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-listener-c016046" source="e-msglistener" target="req-cal-016046"/>
+    <!-- CERT realizations: QoS types -->
+    <element xsi:type="archimate:RealizationRelationship" id="r-topicqos-c005210" source="e-topicqos" target="req-cal-005210"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-msgbuffer-c005444" source="e-msgbuffer" target="req-cal-005444"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-msgbuffer-c005445" source="e-msgbuffer" target="req-cal-005445"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-msgbuffer-c016079" source="e-msgbuffer" target="req-cal-016079"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-expiration-c005437" source="e-expiration" target="req-cal-005437"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reliability-c005434" source="e-reliability" target="req-cal-005434"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-reliability-c016076" source="e-reliability" target="req-cal-016076"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-tbf-c005431" source="e-tbf" target="req-cal-005431"/>
   </folder>
   <folder name="Motivation" id="f-motivation" type="motivation">
     <element xsi:type="archimate:Requirement" name="CAL-005179" id="req-cal-005179">
@@ -799,6 +902,87 @@
       </child>
       <child xsi:type="archimate:DiagramObject" id="id-d3e5744e1e7142b5be42df1898af8155" archimateElement="id-c61875c97edb47dead97af08036ed0d4">
         <bounds x="835" y="141" width="120" height="55"/>
+      </child>
+    </element>
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Detail - Writer and Reader" id="v6">
+      <child xsi:type="archimate:DiagramObject" id="do-v6-asb" archimateElement="e-asb">
+        <bounds x="10" y="10" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-asbext-asb" source="do-v6-asbext" target="do-v6-asb" archimateRelationship="r-asbext-asb"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v6-asbext" targetConnections="con-v6-asbext-asb" archimateElement="e-asbext">
+        <bounds x="160" y="10" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-asbext-writer" source="do-v6-asbext" target="do-v6-writer" archimateRelationship="r-asbext-writer"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-asbext-reader" source="do-v6-asbext" target="do-v6-reader" archimateRelationship="r-asbext-reader"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v6-writer" targetConnections="con-v6-asbext-writer" archimateElement="e-writer">
+        <bounds x="310" y="10" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-writer-msg" source="do-v6-writer" target="do-v6-calmessage" archimateRelationship="r-writer-msg"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-writer-qos" source="do-v6-writer" target="do-v6-topicqos" archimateRelationship="r-writer-qos"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v6-reader" targetConnections="con-v6-asbext-reader" archimateElement="e-reader">
+        <bounds x="310" y="100" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-reader-listener" source="do-v6-reader" target="do-v6-msglistener" archimateRelationship="r-reader-listener"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-reader-qos" source="do-v6-reader" target="do-v6-topicqos" archimateRelationship="r-reader-qos"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-reader-msg" source="do-v6-reader" target="do-v6-calmessage" archimateRelationship="r-reader-msg"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v6-msglistener" targetConnections="con-v6-reader-listener" archimateElement="e-msglistener">
+        <bounds x="460" y="100" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-listener-msg" source="do-v6-msglistener" target="do-v6-calmessage" archimateRelationship="r-listener-msg"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v6-calmessage" targetConnections="con-v6-writer-msg con-v6-reader-msg con-v6-listener-msg" archimateElement="e-calmessage">
+        <bounds x="460" y="10" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v6-topicqos" targetConnections="con-v6-writer-qos con-v6-reader-qos" archimateElement="e-topicqos">
+        <bounds x="160" y="180" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-qos-buffer" source="do-v6-topicqos" target="do-v6-msgbuffer" archimateRelationship="r-qos-buffer"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-qos-expiration" source="do-v6-topicqos" target="do-v6-expiration" archimateRelationship="r-qos-expiration"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-qos-reliability" source="do-v6-topicqos" target="do-v6-reliability" archimateRelationship="r-qos-reliability"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v6-qos-tbf" source="do-v6-topicqos" target="do-v6-tbf" archimateRelationship="r-qos-tbf"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v6-msgbuffer" targetConnections="con-v6-qos-buffer" archimateElement="e-msgbuffer">
+        <bounds x="10" y="270" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v6-expiration" targetConnections="con-v6-qos-expiration" archimateElement="e-expiration">
+        <bounds x="160" y="270" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v6-reliability" targetConnections="con-v6-qos-reliability" archimateElement="e-reliability">
+        <bounds x="310" y="270" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v6-tbf" targetConnections="con-v6-qos-tbf" archimateElement="e-tbf">
+        <bounds x="460" y="270" width="120" height="55"/>
+      </child>
+    </element>
+    <element xsi:type="archimate:ArchimateDiagramModel" name="Detail - ZMQ Implementation" id="v7">
+      <child xsi:type="archimate:DiagramObject" id="do-v7-asb" archimateElement="e-asb">
+        <bounds x="10" y="10" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v7-asbext" archimateElement="e-asbext">
+        <bounds x="160" y="10" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v7-writer" archimateElement="e-writer">
+        <bounds x="310" y="10" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v7-reader" archimateElement="e-reader">
+        <bounds x="310" y="100" width="120" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v7-zmqasb" archimateElement="e-zmqasb">
+        <bounds x="10" y="180" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v7-zmqasb-asb" source="do-v7-zmqasb" target="do-v7-asb" archimateRelationship="r-zmqasb-real-asb"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v7-zmqasb-asbext" source="do-v7-zmqasb" target="do-v7-asbext" archimateRelationship="r-zmqasb-real-asbext"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v7-zmqasb-writer" source="do-v7-zmqasb" target="do-v7-zmqwriter" archimateRelationship="r-zmqasb-writer"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v7-zmqasb-reader" source="do-v7-zmqasb" target="do-v7-zmqreader" archimateRelationship="r-zmqasb-reader"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v7-zmqasb-serformat" source="do-v7-zmqasb" target="do-v7-serformat" archimateRelationship="r-zmqasb-serformat"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v7-zmqwriter" targetConnections="con-v7-zmqasb-writer" archimateElement="e-zmqwriter">
+        <bounds x="160" y="180" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v7-zmqwriter-real" source="do-v7-zmqwriter" target="do-v7-writer" archimateRelationship="r-zmqwriter-real"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v7-zmqreader" targetConnections="con-v7-zmqasb-reader" archimateElement="e-zmqreader">
+        <bounds x="310" y="180" width="120" height="55"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v7-zmqreader-real" source="do-v7-zmqreader" target="do-v7-reader" archimateRelationship="r-zmqreader-real"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="do-v7-serformat" targetConnections="con-v7-zmqasb-serformat" archimateElement="e-serformat">
+        <bounds x="460" y="180" width="120" height="55"/>
       </child>
     </element>
   </folder>
