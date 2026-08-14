@@ -1,15 +1,9 @@
 #![allow(dead_code)]
 use crate::uci::base::UUID;
 use crate::uci::{CalError, CalImplementationErrorKind, CalResult};
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
-use std::sync::Mutex;
-
-lazy_static! {
-    pub static ref CAL_CONFIG: Mutex<CalConfig> = Mutex::new(CalConfig::default());
-}
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
