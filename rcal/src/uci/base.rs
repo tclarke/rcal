@@ -31,6 +31,7 @@ use uuid::{Uuid, Variant as UuidVariant, Version as UuidVersion};
 pub use crate::asb::{
     AbstractReader, AbstractServiceBus, AbstractServiceBusExt, AbstractWriter,
     AsbConnectionState, AsbStatus, AsbStatusListener, MessageListener,
+    Expiration, MessageBuffer, Reliability, TimeBasedFilter, TopicQos,
 };
 
 /// Re-exported [`uuid::Timestamp`] so callers can build version-1 UUID

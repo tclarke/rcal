@@ -484,6 +484,70 @@ pub trait AbstractReader<M: CalMessage>: Send + Sync {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// QoS settings
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Reliability policy for a Client Topic (CERT CAL-005434, CAL-016076).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Reliability {
+    /// Best-effort delivery — messages may be dropped (default).
+    #[default]
+    BestEffort,
+    /// Reliable delivery — unacknowledged messages are retransmitted in order.
+    Reliable,
+}
+
+/// Minimum inter-arrival gap for accepted messages (CERT CAL-005431).
+///
+/// The reader silently drops any message received within `min_separation` of
+/// the previously accepted message.
+#[derive(Debug, Clone)]
+pub struct TimeBasedFilter {
+    /// Minimum time that must elapse between two consecutively accepted messages.
+    pub min_separation: Duration,
+}
+
+/// Maximum lifetime for a buffered message (CERT CAL-005437).
+///
+/// Messages older than `max_age` are removed from the receive buffer.
+#[derive(Debug, Clone)]
+pub struct Expiration {
+    /// Age after which a buffered message is discarded.
+    pub max_age: Duration,
+}
+
+/// Bounded message buffer (CERT CAL-005444, CAL-005445, CAL-015746, CAL-016079).
+///
+/// Used for both the writer-side send buffer (`TopicQos::writer_buffer`) and
+/// the reader-side receive buffer (`TopicQos::reader_buffer`). When the count
+/// of buffered messages exceeds `max_messages`, the oldest is dropped.
+#[derive(Debug, Clone)]
+pub struct MessageBuffer {
+    /// Maximum number of messages held in the buffer before the oldest is dropped.
+    pub max_messages: usize,
+}
+
+/// Aggregate Quality of Service settings for a Client Topic (CERT CAL-005210).
+///
+/// Pass to [`AbstractServiceBusExt::create_writer`] or
+/// [`AbstractServiceBusExt::create_reader`] at creation time. The default
+/// value selects best-effort reliability with no filtering, no expiration, and
+/// unbounded buffers.
+#[derive(Debug, Clone, Default)]
+pub struct TopicQos {
+    /// Delivery reliability policy (default: `BestEffort`).
+    pub reliability: Reliability,
+    /// Time-based filter applied on the reader side; `None` disables filtering.
+    pub time_based_filter: Option<TimeBasedFilter>,
+    /// Message lifetime on the reader's receive buffer; `None` disables expiry.
+    pub expiration: Option<Expiration>,
+    /// Writer-side send buffer limit; `None` means unbounded.
+    pub writer_buffer: Option<MessageBuffer>,
+    /// Reader-side receive buffer limit; `None` means unbounded.
+    pub reader_buffer: Option<MessageBuffer>,
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // AbstractServiceBusExt
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -496,20 +560,22 @@ pub trait AbstractReader<M: CalMessage>: Send + Sync {
 /// # CERT coverage
 /// CAL-005364 (`create_writer`), CAL-005374 (`create_reader`)
 pub trait AbstractServiceBusExt<M: CalMessage>: AbstractServiceBus {
-    /// Creates a [`AbstractWriter`] bound to `topic` (CERT CAL-005364).
+    /// Creates a [`AbstractWriter`] bound to `topic` with the given QoS
+    /// settings (CERT CAL-005364, CAL-005210).
     ///
     /// Returns `Err(TopicUnavailable)` if `topic` is not a valid Client Topic
     /// for this service (CERT CAL-005368, CAL-005369).
-    fn create_writer(&mut self, topic: &str) -> CalResult<Box<dyn AbstractWriter<M>>>;
+    fn create_writer(&mut self, topic: &str, qos: TopicQos) -> CalResult<Box<dyn AbstractWriter<M>>>;
 
-    /// Creates an [`AbstractReader`] bound to `topic` (CERT CAL-005374).
+    /// Creates an [`AbstractReader`] bound to `topic` with the given QoS
+    /// settings (CERT CAL-005374, CAL-005210).
     ///
     /// The topic connection and message buffering are established before this
     /// returns (CERT CAL-005394, CAL-016044).
     ///
     /// Returns `Err(TopicUnavailable)` if `topic` is not a valid Client Topic
     /// (CERT CAL-005378).
-    fn create_reader(&mut self, topic: &str) -> CalResult<Box<dyn AbstractReader<M>>>;
+    fn create_reader(&mut self, topic: &str, qos: TopicQos) -> CalResult<Box<dyn AbstractReader<M>>>;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
