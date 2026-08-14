@@ -548,34 +548,34 @@ pub async fn get_asb(
         asb_identifier: asb_identifier.into(),
     };
 
-    let mut map = ASB_FACTORY.lock().unwrap();
+    // Resolve transport config and check for an existing instance — both
+    // without holding the lock across an await point.
+    let transport = {
+        let map = ASB_FACTORY.lock().unwrap();
+        if let Some(existing) = map.get(&key) {
+            return Ok(Arc::clone(existing));
+        }
+        config
+            .get_transport(&key.asb_identifier)
+            .or_else(|| {
+                config
+                    .system
+                    .default_transport
+                    .as_ref()
+                    .and_then(|def| config.get_transport(def))
+            })
+            .ok_or_else(|| {
+                CalError::new(
+                    CalErrorKind::InitializationFailure,
+                    format!(
+                        "No transport configured for '{}' and no default_transport available.",
+                        key.asb_identifier
+                    ),
+                )
+            })?
+    }; // lock dropped here
 
-    // Return an existing instance without constructing a new one.
-    if let Some(existing) = map.get(&key) {
-        return Ok(Arc::clone(existing));
-    }
-
-    // Resolve transport: exact match first, then fall back to default.
-    let transport = config
-        .get_transport(&key.asb_identifier)
-        .or_else(|| {
-            config
-                .system
-                .default_transport
-                .as_ref()
-                .and_then(|def| config.get_transport(def))
-        })
-        .ok_or_else(|| {
-            CalError::new(
-                CalErrorKind::InitializationFailure,
-                format!(
-                    "No transport configured for '{}' and no default_transport available.",
-                    key.asb_identifier
-                ),
-            )
-        })?;
-
-    // Construct the appropriate ASB implementation.
+    // Construct the implementation without holding the factory lock.
     let instance: AsbInstance = match transport.type_.as_str() {
         ZMQ_ASB_ID => Arc::new(Mutex::new(ZmqAsb::new(
             key.service_identifier.clone(),
@@ -592,8 +592,10 @@ pub async fn get_asb(
         }
     };
 
-    map.insert(key, Arc::clone(&instance));
-    Ok(instance)
+    // Re-acquire to insert; a concurrent call may have won the race — in that
+    // case return the existing instance (CAL-005202: one instance per key).
+    let mut map = ASB_FACTORY.lock().unwrap();
+    Ok(Arc::clone(map.entry(key).or_insert(instance)))
 }
 
 // ════════════════════════════════════════════════════════════════════════════
