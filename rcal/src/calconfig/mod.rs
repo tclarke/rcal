@@ -151,7 +151,7 @@ pub fn get_test_config_path(filename: &str) -> String {
     file_path.push("tests");
     file_path.push("fixtures");
     file_path.push(filename);
-    file_path.into_string().unwrap()
+    file_path.to_string_lossy().into_owned()
 }
 
 #[cfg(test)]
