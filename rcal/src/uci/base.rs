@@ -432,10 +432,9 @@ mod tests {
     use rcal_macros::init_test_logger;
     use slog::debug;
 
+    #[init_test_logger]
     #[test]
     fn test_uuid_factory() {
-        let logger = init_test_logger!();
-
         debug!(logger, "Default (random): {}", UUID::generate());
         {
             let mut config = CAL_CONFIG.lock().unwrap();

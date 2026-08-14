@@ -148,6 +148,7 @@ impl ZmqAsb {
             let _ = radio.close().await;
         });
 
+        let logger = logger.new(slog::o!("subsystem" => "zmq"));
         Ok(Self {
             service_id: service_id.into(),
             asb_id: asb_id.into(),
@@ -278,6 +279,7 @@ impl AbstractServiceBus for ZmqAsb {
     }
 
     fn close(&mut self) -> CalResult<()> {
+        trace!(self.logger, "ZmqAsb::close()");
         // Dropping write_tx closes the channel; the background task exits and closes the socket.
         self.write_tx = None;
         Ok(())
@@ -295,6 +297,7 @@ type PollState<M> = Arc<(Mutex<VecDeque<(Instant, Arc<M>)>>, Condvar)>;
 /// RADIO socket background task.
 pub struct ZmqWriter<M: CalMessage> {
     topic: String,
+    logger: Logger,
     format: SerializationFormat,
     direct_tx: Option<tokio::sync::mpsc::UnboundedSender<Message>>,
     writer_buf: Option<Arc<Mutex<VecDeque<Message>>>>,
@@ -310,6 +313,7 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
     }
 
     fn write(&mut self, message: &M) -> CalResult<()> {
+        trace!(self.logger, "ZmqWriter::write()"; "topic" => &self.topic);
         let xml = serialize_message(message, &self.format)?;
         // RADIO/DISH: part[0] = group (topic for DISH filtering), part[1] = payload
         let msg = Message::multipart([self.topic.clone(), xml]);
@@ -335,6 +339,7 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
     }
 
     fn close(self: Box<Self>) -> CalResult<()> {
+        trace!(self.logger, "ZmqWriter::close()"; "topic" => &self.topic);
         if let Some(buf) = &self.writer_buf {
             let remaining = buf.lock().unwrap().len();
             if remaining > 0 {
@@ -374,6 +379,7 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
 /// UDP-polarity transports (DISH binds, RADIO connects) are not supported.
 pub struct ZmqReader<M: CalMessage> {
     topic: String,
+    logger: Logger,
     listeners: Arc<Mutex<Vec<Arc<dyn MessageListener<M>>>>>,
     /// Shared queue + condvar for poll-mode delivery with expiration support.
     poll_state: PollState<M>,
@@ -407,6 +413,7 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
     }
 
     fn read(&mut self, timeout: Option<Duration>) -> CalResult<Option<Arc<M>>> {
+        trace!(self.logger, "ZmqReader::read()"; "topic" => &self.topic, "timeout_ms" => timeout.map(|d| d.as_millis()));
         if !self.listeners.lock().unwrap().is_empty() {
             return Err(CalError::new(
                 CalErrorKind::OperationNotPermitted,
@@ -450,6 +457,7 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
     }
 
     fn read_no_wait(&mut self) -> CalResult<Option<Arc<M>>> {
+        trace!(self.logger, "ZmqReader::read_no_wait()"; "topic" => &self.topic);
         if !self.listeners.lock().unwrap().is_empty() {
             return Err(CalError::new(
                 CalErrorKind::OperationNotPermitted,
@@ -467,6 +475,7 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
     }
 
     fn close(self: Box<Self>) -> CalResult<()> {
+        trace!(self.logger, "ZmqReader::close()"; "topic" => &self.topic);
         self.task.abort();
         Ok(())
     }
@@ -526,8 +535,10 @@ where
             (Some(tx), None, None, None)
         };
 
+        trace!(self.logger, "ZmqAsb::create_writer()"; "topic" => topic);
         Ok(Box::new(ZmqWriter {
             topic: topic.to_string(),
+            logger: self.logger.new(slog::o!("topic" => topic.to_string())),
             format: self.serialization_format.clone(),
             direct_tx,
             writer_buf,
@@ -629,8 +640,10 @@ where
             poll_state_task.1.notify_all();
         });
 
+        trace!(self.logger, "ZmqAsb::create_reader()"; "topic" => topic);
         Ok(Box::new(ZmqReader {
             topic: topic.to_string(),
+            logger: self.logger.new(slog::o!("topic" => topic.to_string())),
             listeners,
             poll_state,
             task_alive,
@@ -731,9 +744,9 @@ mod tests {
 
     // ── Basic construction ────────────────────────────────────────────────
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_check_creation() {
-        let logger = init_test_logger!();
         let a = make_bus(logger).await;
         assert_eq!(a.oms_schema_version(), "2.1.0_test_schema");
         assert_eq!(a.oms_schema_compiler_version(), "0.1.0");
@@ -909,9 +922,9 @@ mod tests {
 
     // ── Status-listener tests ─────────────────────────────────────────────
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_status_listeners() {
-        let logger = init_test_logger!();
         let mut a = make_bus(logger).await;
 
         let l1 = Arc::new(TestStatusListener::new());
@@ -961,9 +974,9 @@ mod tests {
         drop(a);
     }
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_duplicate_register_returns_err() {
-        let logger = init_test_logger!();
         let mut a = make_bus(logger).await;
 
         let ld: Arc<dyn AsbStatusListener> = Arc::new(TestStatusListener::new());
@@ -975,9 +988,9 @@ mod tests {
         );
     }
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_unregister_unknown_returns_err() {
-        let logger = init_test_logger!();
         let mut a = make_bus(logger).await;
 
         let ld: Arc<dyn AsbStatusListener> = Arc::new(TestStatusListener::new());
@@ -988,9 +1001,9 @@ mod tests {
         );
     }
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_invalid_state_transition_returns_err() {
-        let logger = init_test_logger!();
         let mut a = make_bus(logger).await;
 
         a.update_status(AsbConnectionState::Normal, "").unwrap();
@@ -1011,9 +1024,9 @@ mod tests {
 
     // ── Writer tests ──────────────────────────────────────────────────────
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_writer_sends_message() {
-        let logger = init_test_logger!();
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
@@ -1058,9 +1071,9 @@ mod tests {
         asb.close().unwrap();
     }
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_writer_pretty_xml() {
-        let logger = init_test_logger!();
         let port = next_port();
         // Build config with pretty_xml format
         use crate::calconfig;
@@ -1117,9 +1130,9 @@ mod tests {
 
     // ── Reader tests ──────────────────────────────────────────────────────
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_reader_poll_mode() {
-        let logger = init_test_logger!();
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
@@ -1160,9 +1173,9 @@ mod tests {
         asb.close().unwrap();
     }
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_reader_read_no_wait_empty() {
-        let logger = init_test_logger!();
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
@@ -1183,9 +1196,9 @@ mod tests {
         asb.close().unwrap();
     }
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_reader_timeout_returns_none() {
-        let logger = init_test_logger!();
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
@@ -1207,9 +1220,9 @@ mod tests {
         asb.close().unwrap();
     }
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_reader_poll_fails_with_listener() {
-        let logger = init_test_logger!();
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
@@ -1244,9 +1257,9 @@ mod tests {
         asb.close().unwrap();
     }
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_reader_callback_mode() {
-        let logger = init_test_logger!();
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
@@ -1310,9 +1323,9 @@ mod tests {
 
     // ── QoS: TimeBasedFilter ──────────────────────────────────────────────
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_qos_time_based_filter() {
-        let logger = init_test_logger!();
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
@@ -1364,9 +1377,9 @@ mod tests {
 
     // ── QoS: Expiration ───────────────────────────────────────────────────
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_qos_expiration() {
-        let logger = init_test_logger!();
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
@@ -1407,9 +1420,9 @@ mod tests {
 
     // ── QoS: MessageBuffer (reader) ───────────────────────────────────────
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_qos_reader_buffer() {
-        let logger = init_test_logger!();
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
@@ -1452,9 +1465,9 @@ mod tests {
 
     // ── QoS: MessageBuffer (writer) ───────────────────────────────────────
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_qos_writer_buffer() {
-        let logger = init_test_logger!();
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
@@ -1509,9 +1522,9 @@ mod tests {
         asb.close().unwrap();
     }
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_writer_close_errors_on_unflushed() {
-        let logger = init_test_logger!();
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();

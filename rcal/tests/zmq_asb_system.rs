@@ -9,7 +9,6 @@ use std::time::Duration;
 use rcal::asb::zmq::ZmqAsb;
 use rcal::uci::CalMessage;
 use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, MessageListener, TopicQos};
-use rcal_macros::init_test_logger;
 
 // ── shared port allocator ─────────────────────────────────────────────────────
 
@@ -77,9 +76,9 @@ impl MessageListener<IntMsg> for CollectListener {
 ///   C — callback reader on "data" + polling reader on "status"
 ///
 /// Verifies fanout to two DISH sockets and simultaneous polling + callback modes.
+#[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_three_clients_shared_bus() {
-    let logger = init_test_logger!();
     let mut bus = make_bus("Sys", next_port(), logger).await;
 
     let mut a_writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
@@ -166,9 +165,9 @@ async fn test_three_clients_shared_bus() {
 /// Cross-connections via `add_receive_peer`:
 ///   B.peer_uris = [port_a]
 ///   C.peer_uris = [port_a, port_b]
+#[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_three_clients_separate_radios() {
-    let logger = init_test_logger!();
     let port_a = next_port();
     let port_b = next_port();
     let port_c = next_port();

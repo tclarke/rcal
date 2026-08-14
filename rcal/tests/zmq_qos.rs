@@ -10,7 +10,6 @@ use std::time::Duration;
 use rcal::asb::zmq::ZmqAsb;
 use rcal::uci::CalMessage;
 use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, TopicQos};
-use rcal_macros::init_test_logger;
 
 // ── shared port allocator ─────────────────────────────────────────────────────
 
@@ -59,9 +58,9 @@ impl CalMessage for QosMsg {
 
 /// Sends a burst, verifies only the first passes, then verifies the filter resets
 /// after `min_separation` has elapsed.
+#[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_qos_time_based_filter() {
-    let logger = init_test_logger!();
     let mut bus = make_bus("TBF", next_port(), logger).await;
 
     let reader_qos = TopicQos {
@@ -122,9 +121,9 @@ async fn test_qos_time_based_filter() {
 
 /// Writes messages, sleeps past max_age, verifies they expired.
 /// Then writes fresh messages and verifies they survive.
+#[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_qos_expiration() {
-    let logger = init_test_logger!();
     let mut bus = make_bus("Exp", next_port(), logger).await;
 
     let reader_qos = TopicQos {
@@ -177,9 +176,9 @@ async fn test_qos_expiration() {
 // ── MessageBuffer (reader) ────────────────────────────────────────────────────
 
 /// Floods 5 messages into a cap-3 reader buffer; verifies oldest 2 dropped.
+#[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_qos_reader_buffer() {
-    let logger = init_test_logger!();
     let mut bus = make_bus("RBuf", next_port(), logger).await;
 
     let reader_qos = TopicQos {

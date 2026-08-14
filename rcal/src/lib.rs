@@ -6,5 +6,6 @@
 
 pub mod asb;
 pub mod calconfig;
+pub mod logging;
 pub mod uci;
 pub mod xs;
