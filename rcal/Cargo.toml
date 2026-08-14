@@ -17,7 +17,6 @@ toml = "1.1.4"
 uuid = { version = "1.24.0", features = ["v1", "v3", "v4", "slog", "serde", "rng"] }
 omq-tokio = "0.21.1"
 tokio = { version = "1.53.1", features = ["full"] }
-bytes = "1.12.1"
 quick-xml = { version = "0.37", features = ["serialize"] }
 
 [[test]]
