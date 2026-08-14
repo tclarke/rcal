@@ -44,6 +44,37 @@ fn serialize_message<M: serde::Serialize>(
     }
 }
 
+/// Validates that message type `M` matches the topic's registered type in
+/// the service config, if one is configured. No-op when the service or topic
+/// is not configured (CAL-005208).
+fn validate_topic_type<M: CalMessage>(
+    config: &crate::calconfig::CalConfig,
+    service_id: &str,
+    topic: &str,
+) -> CalResult<()> {
+    let Some(service) = config.get_service(service_id) else {
+        return Ok(());
+    };
+    let Some(topic_cfg) = service.topic.iter().find(|t| t.id == topic) else {
+        return Ok(());
+    };
+    let Some(registered_type) = &topic_cfg.type_ else {
+        return Ok(());
+    };
+    if registered_type != M::message_type_name() {
+        return Err(CalError::new(
+            CalErrorKind::TopicUnavailable,
+            format!(
+                "Topic '{}' is registered for type '{}' but got '{}' (CAL-005208)",
+                topic,
+                registered_type,
+                M::message_type_name()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn deserialize_message<M: serde::de::DeserializeOwned>(xml: &[u8]) -> CalResult<M> {
     let xml_str = std::str::from_utf8(xml)
         .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
@@ -94,6 +125,9 @@ pub struct ZmqAsb {
     /// Registered connection-status listeners.
     listeners: Vec<Arc<dyn AsbStatusListener>>,
 
+    /// Signals all reader tasks to stop; sent on close() (CAL-016049).
+    shutdown_tx: Arc<tokio::sync::watch::Sender<()>>,
+
     /// Test-only gate: forwarding task acquires+drops this before each drain.
     /// Hold externally to freeze the task while flooding writes.
     #[cfg(test)]
@@ -140,6 +174,9 @@ impl ZmqAsb {
             })?;
         }
 
+        let (shutdown_tx, _) = tokio::sync::watch::channel(());
+        let shutdown_tx = Arc::new(shutdown_tx);
+
         let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
         tokio::spawn(async move {
             while let Some(msg) = write_rx.recv().await {
@@ -167,6 +204,7 @@ impl ZmqAsb {
             peer_uris: Vec::new(),
             serialization_format: tconfig.format.clone(),
             listeners: Vec::new(),
+            shutdown_tx,
             #[cfg(test)]
             write_gate: Arc::new(tokio::sync::Mutex::new(())),
         })
@@ -249,6 +287,15 @@ impl AbstractServiceBus for ZmqAsb {
     fn register_status_listener(&mut self, listener: Arc<dyn AsbStatusListener>) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::register_status_listener()");
 
+        if !self.status.state.allows_add_listener() {
+            return Err(CalError::new(
+                CalErrorKind::InvalidState {
+                    current: self.status.state,
+                },
+                "Cannot register listener in Failed state (CAL-016366).",
+            ));
+        }
+
         if self.listeners.iter().any(|l| Arc::ptr_eq(l, &listener)) {
             return Err(CalError::new_impl(
                 CalImplementationErrorKind::ListenerError,
@@ -280,7 +327,9 @@ impl AbstractServiceBus for ZmqAsb {
 
     fn close(&mut self) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::close()");
-        // Dropping write_tx closes the channel; the background task exits and closes the socket.
+        // Signal all reader tasks to unblock any pending dish.recv() (CAL-016049).
+        let _ = self.shutdown_tx.send(());
+        // Dropping write_tx closes the channel; the background writer task exits.
         self.write_tx = None;
         Ok(())
     }
@@ -494,6 +543,7 @@ where
         topic: &str,
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractWriter<M>>> {
+        validate_topic_type::<M>(&self.config, &self.service_id, topic)?;
         let tx = self
             .write_tx
             .as_ref()
@@ -554,6 +604,7 @@ where
         topic: &str,
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractReader<M>>> {
+        validate_topic_type::<M>(&self.config, &self.service_id, topic)?;
         // Build the list of RADIO URIs for this reader's DISH to connect to.
         // If no peers are registered, connect to our own RADIO (single-process use).
         let connect_uris: Vec<String> = if self.peer_uris.is_empty() {
@@ -586,6 +637,7 @@ where
         let task_alive_task = Arc::clone(&task_alive);
         let topic_str = topic.to_string();
         let _format = self.serialization_format.clone(); // ponytail: deserialization is format-agnostic (XML only); extend if binary formats are added
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         let task = tokio::spawn(async move {
             let dish = Socket::new(SocketType::Dish, Options::default());
@@ -600,7 +652,14 @@ where
 
             let mut last_accepted: Option<Instant> = None;
 
-            while let Ok(raw) = dish.recv().await {
+            loop {
+                let raw = tokio::select! {
+                    result = dish.recv() => match result {
+                        Ok(r) => r,
+                        Err(_) => break,
+                    },
+                    _ = shutdown_rx.changed() => break,
+                };
                 let payload = raw.part_bytes(1).unwrap_or_default();
                 if let Ok(m) = deserialize_message::<M>(&payload) {
                     // TimeBasedFilter: drop messages within min_separation (CAL-005431)
@@ -1003,6 +1062,20 @@ mod tests {
 
     #[init_test_logger]
     #[tokio::test]
+    async fn test_register_listener_in_failed_state_returns_err() {
+        let mut a = make_bus(logger).await;
+        a.update_status(AsbConnectionState::Normal, "").unwrap();
+        a.update_status(AsbConnectionState::Failed, "terminal").unwrap();
+
+        let ld: Arc<dyn AsbStatusListener> = Arc::new(TestStatusListener::new());
+        assert!(
+            a.register_status_listener(ld).is_err(),
+            "register_status_listener in Failed state must return Err (CAL-016366)"
+        );
+    }
+
+    #[init_test_logger]
+    #[tokio::test]
     async fn test_invalid_state_transition_returns_err() {
         let mut a = make_bus(logger).await;
 
@@ -1020,6 +1093,76 @@ mod tests {
                 "transition Failed → {next:?} must be rejected"
             );
         }
+    }
+
+    // ── Topic-type enforcement (CAL-005208) ──────────────────────────────
+
+    fn test_config_with_topic_type(port: u16, topic: &str, type_name: &str) -> Arc<CalConfig> {
+        use crate::calconfig;
+        let toml = format!(
+            "[system]\nid = \"Test Service\"\ndefault_transport = \"TestZmq\"\n\
+             [[transport]]\nid = \"TestZmq\"\ntype = \"zmq\"\nuri = \"tcp://127.0.0.1:{port}\"\n\
+             [[service]]\nid = \"Test Service\"\n\
+             [[service.topic]]\nid = \"{topic}\"\ntype = \"{type_name}\"\n"
+        );
+        Arc::new(calconfig::parse_config(&toml).unwrap())
+    }
+
+    #[init_test_logger]
+    #[tokio::test]
+    async fn test_create_writer_wrong_type_returns_err() {
+        let port = next_port();
+        let config = test_config_with_topic_type(port, "test.topic", "some.OtherMsg");
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        let result = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+            &mut asb,
+            "test.topic",
+            TopicQos::default(),
+        );
+        assert!(result.is_err(), "create_writer must fail on type mismatch (CAL-005208)");
+    }
+
+    #[init_test_logger]
+    #[tokio::test]
+    async fn test_create_reader_wrong_type_returns_err() {
+        let port = next_port();
+        let config = test_config_with_topic_type(port, "test.topic", "some.OtherMsg");
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        let result = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+            &mut asb,
+            "test.topic",
+            TopicQos::default(),
+        );
+        assert!(result.is_err(), "create_reader must fail on type mismatch (CAL-005208)");
+    }
+
+    #[init_test_logger]
+    #[tokio::test]
+    async fn test_create_writer_correct_type_succeeds() {
+        let port = next_port();
+        let config = test_config_with_topic_type(port, "test.topic", "test.TestMsg");
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        assert!(
+            <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+                &mut asb,
+                "test.topic",
+                TopicQos::default(),
+            )
+            .is_ok(),
+            "create_writer must succeed when type matches"
+        );
     }
 
     // ── Writer tests ──────────────────────────────────────────────────────
@@ -1319,6 +1462,41 @@ mod tests {
         );
 
         asb.close().unwrap();
+    }
+
+    // ── close() unblocks read() (CAL-016049) ─────────────────────────────
+
+    #[init_test_logger]
+    #[tokio::test]
+    async fn test_close_unblocks_blocked_read() {
+        let port = next_port();
+        let config = test_config_on_ports(&[port]);
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+            &mut asb,
+            "test.topic",
+            TopicQos::default(),
+        )
+        .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Spawn a task that blocks indefinitely waiting for a message.
+        let read_task = tokio::task::spawn_blocking(move || reader.read(None));
+
+        // Close the ASB — must wake the blocked read().
+        asb.close().unwrap();
+
+        let result = tokio::time::timeout(Duration::from_millis(500), read_task)
+            .await
+            .expect("read() did not unblock within 500 ms after close()")
+            .expect("task did not panic");
+
+        assert!(result.is_err(), "read() must return Err after close() (CAL-016049)");
     }
 
     // ── QoS: TimeBasedFilter ──────────────────────────────────────────────

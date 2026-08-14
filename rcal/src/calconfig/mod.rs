@@ -16,15 +16,15 @@ pub struct CalConfig {
 }
 
 impl CalConfig {
-    pub fn get_service(&self, name: &String) -> Option<&Service> {
-        self.service.iter().find(|item| item.id == *name)
+    pub fn get_service(&self, name: &str) -> Option<&Service> {
+        self.service.iter().find(|item| item.id == name)
     }
 
-    pub fn get_transport(&self, name: &String) -> Option<&Transport> {
-        self.transport.iter().find(|item| item.id == *name)
+    pub fn get_transport(&self, name: &str) -> Option<&Transport> {
+        self.transport.iter().find(|item| item.id == name)
     }
 
-    pub fn get_transport_for_service(&self, name: &String) -> Option<&Transport> {
+    pub fn get_transport_for_service(&self, name: &str) -> Option<&Transport> {
         let service_conf = self.get_service(name)?;
         let transport_name = service_conf
             .transport
