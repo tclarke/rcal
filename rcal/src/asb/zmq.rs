@@ -22,9 +22,6 @@ use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage,
 /// ASB identifier string for the ZeroMQ-compatible transport.
 pub const ZMQ_ASB_ID: &str = "zmq";
 
-/// Sends a shutdown signal to all reader tasks spawned by this ASB.
-type ShutdownTx = Arc<tokio::sync::watch::Sender<bool>>;
-
 // ════════════════════════════════════════════════════════════════════════════
 // Serialization helpers
 // ════════════════════════════════════════════════════════════════════════════
@@ -52,11 +49,10 @@ fn serialize_message<M: serde::Serialize>(
 /// is not configured (CAL-005208).
 fn validate_topic_type<M: CalMessage>(
     config: &crate::calconfig::CalConfig,
-    service_id: &str,
+    service_id: &String,
     topic: &str,
 ) -> CalResult<()> {
-    use crate::uci::CalErrorKind;
-    let Some(service) = config.get_service(&service_id.to_string()) else {
+    let Some(service) = config.get_service(service_id) else {
         return Ok(());
     };
     let Some(topic_cfg) = service.topic.iter().find(|t| t.id == topic) else {
@@ -130,7 +126,7 @@ pub struct ZmqAsb {
     listeners: Vec<Arc<dyn AsbStatusListener>>,
 
     /// Signals all reader tasks to stop; sent on close() (CAL-016049).
-    shutdown_tx: ShutdownTx,
+    shutdown_tx: Arc<tokio::sync::watch::Sender<bool>>,
 
     /// Test-only gate: forwarding task acquires+drops this before each drain.
     /// Hold externally to freeze the task while flooding writes.
@@ -1103,14 +1099,10 @@ mod tests {
 
     fn test_config_with_topic_type(port: u16, topic: &str, type_name: &str) -> Arc<CalConfig> {
         use crate::calconfig;
-        use crate::uci::base::UUID;
-        const BASE_UUID: &str = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b";
-        let ns = UUID::parse_str(BASE_UUID).unwrap();
-        let sys_uuid = UUID::generate_v3(&ns, port.to_string().as_bytes());
         let toml = format!(
-            "[system]\nid = \"TestSystem\"\nlabel = \"OMS Test System\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n\n\
-             [[transport]]\nid = \"TestZmq\"\ntype = \"zmq\"\nuri = \"tcp://127.0.0.1:{port}\"\n\n\
-             [[service]]\nid = \"Test Service\"\ntransport = \"TestZmq\"\n\n\
+            "[system]\nid = \"Test Service\"\ndefault_transport = \"TestZmq\"\n\
+             [[transport]]\nid = \"TestZmq\"\ntype = \"zmq\"\nuri = \"tcp://127.0.0.1:{port}\"\n\
+             [[service]]\nid = \"Test Service\"\n\
              [[service.topic]]\nid = \"{topic}\"\ntype = \"{type_name}\"\n"
         );
         Arc::new(calconfig::parse_config(&toml).unwrap())
