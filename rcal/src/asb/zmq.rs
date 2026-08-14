@@ -3,10 +3,11 @@
 #![allow(dead_code)]
 
 use slog::{Logger, trace};
+use std::collections::VecDeque;
 use std::marker::PhantomData;
-use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use omq_tokio::{Endpoint, Message, Options, Socket, SocketType};
 
@@ -278,9 +279,12 @@ impl AbstractServiceBus for ZmqAsb {
 /// RADIO socket background task.
 pub struct ZmqWriter<M: CalMessage> {
     topic: String,
-    _qos: TopicQos,
     format: SerializationFormat,
-    write_tx: tokio::sync::mpsc::UnboundedSender<Message>,
+    direct_tx: Option<tokio::sync::mpsc::UnboundedSender<Message>>,
+    writer_buf: Option<Arc<Mutex<VecDeque<Message>>>>,
+    writer_notify: Option<Arc<tokio::sync::Notify>>,
+    writer_max: Option<usize>,
+    writer_task: Option<tokio::task::JoinHandle<()>>,
     _phantom: PhantomData<M>,
 }
 
@@ -293,12 +297,32 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
         let xml = serialize_message(message, &self.format)?;
         // RADIO/DISH: part[0] = group (topic for DISH filtering), part[1] = payload
         let msg = Message::multipart([self.topic.clone(), xml]);
-        self.write_tx
-            .send(msg)
-            .map_err(|_| CalError::new(CalErrorKind::AsbFailed, "ASB write channel closed"))
+        match &self.writer_buf {
+            Some(buf) => {
+                let max = self.writer_max.unwrap();
+                let mut q = buf.lock().unwrap();
+                while q.len() >= max {
+                    q.pop_front(); // drop oldest (CAL-005445)
+                }
+                q.push_back(msg);
+                drop(q);
+                self.writer_notify.as_ref().unwrap().notify_one();
+                Ok(())
+            }
+            None => self
+                .direct_tx
+                .as_ref()
+                .unwrap()
+                .send(msg)
+                .map_err(|_| CalError::new(CalErrorKind::AsbFailed, "ASB write channel closed")),
+        }
     }
 
     fn close(self: Box<Self>) -> CalResult<()> {
+        if let Some(task) = self.writer_task {
+            // ponytail: abort forwarding task; unflushed messages in writer_buf are dropped
+            task.abort();
+        }
         Ok(())
     }
 }
@@ -323,10 +347,12 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
 /// UDP-polarity transports (DISH binds, RADIO connects) are not supported.
 pub struct ZmqReader<M: CalMessage> {
     topic: String,
-    _qos: TopicQos,
     listeners: Arc<Mutex<Vec<Arc<dyn MessageListener<M>>>>>,
-    // ponytail: Mutex<Receiver> for Send + Sync; Receiver alone is !Sync
-    poll_rx: Mutex<std::sync::mpsc::Receiver<Arc<M>>>,
+    /// Shared queue + condvar for poll-mode delivery with expiration support.
+    poll_state: Arc<(Mutex<VecDeque<(Instant, Arc<M>)>>, Condvar)>,
+    /// Set false by the receive task on exit; wakes any blocked read().
+    task_alive: Arc<AtomicBool>,
+    expiration: Option<Duration>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -360,20 +386,36 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
                 "polling is not permitted while listeners are registered (CAL-016050)",
             ));
         }
-        let rx = self.poll_rx.lock().unwrap();
-        match timeout {
-            Some(d) => match rx.recv_timeout(d) {
-                Ok(m) => Ok(Some(m)),
-                Err(RecvTimeoutError::Timeout) => Ok(None),
-                Err(RecvTimeoutError::Disconnected) => Err(CalError::new(
-                    CalErrorKind::AsbFailed,
-                    "reader task has stopped",
-                )),
-            },
-            None => rx
-                .recv()
-                .map(Some)
-                .map_err(|_| CalError::new(CalErrorKind::AsbFailed, "reader task has stopped")),
+        let (lock, cvar) = &*self.poll_state;
+        let deadline = timeout.map(|d| Instant::now() + d);
+        let mut queue = lock.lock().unwrap();
+        loop {
+            // Expire buffered messages older than max_age (CAL-005437)
+            if let Some(max_age) = self.expiration {
+                while queue.front().map_or(false, |(t, _)| t.elapsed() > max_age) {
+                    queue.pop_front();
+                }
+            }
+            if let Some((_, msg)) = queue.pop_front() {
+                return Ok(Some(msg));
+            }
+            if !self.task_alive.load(Ordering::Acquire) {
+                return Err(CalError::new(CalErrorKind::AsbFailed, "reader task has stopped"));
+            }
+            let remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
+            match remaining {
+                Some(r) if r.is_zero() => return Ok(None),
+                Some(r) => {
+                    let (q, result) = cvar.wait_timeout(queue, r).unwrap();
+                    queue = q;
+                    if result.timed_out() {
+                        return Ok(None);
+                    }
+                }
+                None => {
+                    queue = cvar.wait(queue).unwrap();
+                }
+            }
         }
     }
 
@@ -384,14 +426,14 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
                 "polling is not permitted while listeners are registered (CAL-016050)",
             ));
         }
-        match self.poll_rx.lock().unwrap().try_recv() {
-            Ok(m) => Ok(Some(m)),
-            Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Disconnected) => Err(CalError::new(
-                CalErrorKind::AsbFailed,
-                "reader task has stopped",
-            )),
+        let (lock, _) = &*self.poll_state;
+        let mut queue = lock.lock().unwrap();
+        if let Some(max_age) = self.expiration {
+            while queue.front().map_or(false, |(t, _)| t.elapsed() > max_age) {
+                queue.pop_front();
+            }
         }
+        Ok(queue.pop_front().map(|(_, m)| m))
     }
 
     fn close(self: Box<Self>) -> CalResult<()> {
@@ -426,11 +468,36 @@ where
             })?
             .clone();
 
+        let writer_max = qos.writer_buffer.map(|b| b.max_messages);
+        let (direct_tx, writer_buf, writer_notify, writer_task) = if let Some(_max) = writer_max {
+            let buf: Arc<Mutex<VecDeque<Message>>> = Arc::new(Mutex::new(VecDeque::new()));
+            let notify = Arc::new(tokio::sync::Notify::new());
+            let buf_task = Arc::clone(&buf);
+            let notify_task = Arc::clone(&notify);
+            let task = tokio::spawn(async move {
+                loop {
+                    notify_task.notified().await;
+                    let msgs: Vec<Message> = buf_task.lock().unwrap().drain(..).collect();
+                    for m in msgs {
+                        if tx.send(m).is_err() {
+                            return;
+                        }
+                    }
+                }
+            });
+            (None, Some(buf), Some(notify), Some(task))
+        } else {
+            (Some(tx), None, None, None)
+        };
+
         Ok(Box::new(ZmqWriter {
             topic: topic.to_string(),
-            _qos: qos,
             format: self.serialization_format.clone(),
-            write_tx: tx,
+            direct_tx,
+            writer_buf,
+            writer_notify,
+            writer_max,
+            writer_task,
             _phantom: PhantomData,
         }))
     }
@@ -457,10 +524,19 @@ where
             })?;
         }
 
-        let (poll_tx, poll_rx) = std::sync::mpsc::channel::<Arc<M>>();
+        let time_filter = qos.time_based_filter;
+        let expiration_dur = qos.expiration.map(|e| e.max_age);
+        let reader_max = qos.reader_buffer.map(|b| b.max_messages);
+
+        let poll_state: Arc<(Mutex<VecDeque<(Instant, Arc<M>)>>, Condvar)> =
+            Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
+        let task_alive = Arc::new(AtomicBool::new(true));
+
         let listeners: Arc<Mutex<Vec<Arc<dyn MessageListener<M>>>>> =
             Arc::new(Mutex::new(Vec::new()));
         let listeners_task = Arc::clone(&listeners);
+        let poll_state_task = Arc::clone(&poll_state);
+        let task_alive_task = Arc::clone(&task_alive);
         let topic_str = topic.to_string();
         let _format = self.serialization_format.clone(); // ponytail: deserialization is format-agnostic (XML only); extend if binary formats are added
 
@@ -475,14 +551,34 @@ where
             }
             let _ = dish.join(topic_str).await;
 
+            let mut last_accepted: Option<Instant> = None;
+
             while let Ok(raw) = dish.recv().await {
                 let payload = raw.part_bytes(1).unwrap_or_default();
                 if let Ok(m) = deserialize_message::<M>(&payload) {
+                    // TimeBasedFilter: drop messages within min_separation (CAL-005431)
+                    if let Some(ref f) = time_filter {
+                        if let Some(last) = last_accepted {
+                            if last.elapsed() < f.min_separation {
+                                continue;
+                            }
+                        }
+                    }
+                    last_accepted = Some(Instant::now());
+
                     let arc_m = Arc::new(m);
                     let ls = listeners_task.lock().unwrap();
                     if ls.is_empty() {
-                        // Polling mode: buffer in channel (CAL-016052)
-                        let _ = poll_tx.send(Arc::clone(&arc_m));
+                        // Polling mode: buffer in queue (CAL-016052)
+                        let (lock, cvar) = &*poll_state_task;
+                        let mut queue = lock.lock().unwrap();
+                        if let Some(max) = reader_max {
+                            while queue.len() >= max {
+                                queue.pop_front(); // drop oldest (CAL-015746)
+                            }
+                        }
+                        queue.push_back((Instant::now(), Arc::clone(&arc_m)));
+                        cvar.notify_one();
                     } else {
                         // Callback mode: dispatch to all listeners (CAL-005392)
                         for l in ls.iter() {
@@ -492,13 +588,18 @@ where
                     }
                 }
             }
+
+            // Signal any blocked read() callers that the task has exited
+            task_alive_task.store(false, Ordering::Release);
+            poll_state_task.1.notify_all();
         });
 
         Ok(Box::new(ZmqReader {
             topic: topic.to_string(),
-            _qos: qos,
             listeners,
-            poll_rx: Mutex::new(poll_rx),
+            poll_state,
+            task_alive,
+            expiration: expiration_dur,
             task,
         }))
     }
@@ -1168,6 +1269,189 @@ mod tests {
             2,
             "listener must be called once per message"
         );
+
+        asb.close().unwrap();
+    }
+
+    // ── QoS: TimeBasedFilter ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_qos_time_based_filter() {
+        let logger = init_test_logger!();
+        let port = next_port();
+        let config = test_config_on_ports(&[port]);
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        let qos = TopicQos {
+            time_based_filter: Some(super::super::TimeBasedFilter {
+                min_separation: Duration::from_millis(200),
+            }),
+            ..TopicQos::default()
+        };
+        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+            &mut asb,
+            "test.topic",
+            qos,
+        )
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+            &mut asb,
+            "test.topic",
+            TopicQos::default(),
+        )
+        .unwrap();
+
+        // Send two messages back-to-back; second should be filtered
+        writer.write(&TestMsg { value: "first".into() }).unwrap();
+        writer.write(&TestMsg { value: "second".into() }).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let m1 = reader.read_no_wait().unwrap();
+        let m2 = reader.read_no_wait().unwrap();
+        assert!(m1.is_some(), "first message must pass filter");
+        assert!(m2.is_none(), "second message must be dropped by time filter");
+
+        asb.close().unwrap();
+    }
+
+    // ── QoS: Expiration ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_qos_expiration() {
+        let logger = init_test_logger!();
+        let port = next_port();
+        let config = test_config_on_ports(&[port]);
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        let qos = TopicQos {
+            expiration: Some(super::super::Expiration {
+                max_age: Duration::from_millis(50),
+            }),
+            ..TopicQos::default()
+        };
+        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+            &mut asb,
+            "test.topic",
+            qos,
+        )
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+            &mut asb,
+            "test.topic",
+            TopicQos::default(),
+        )
+        .unwrap();
+        writer.write(&TestMsg { value: "expire_me".into() }).unwrap();
+        // Let the message arrive in the buffer, then age past max_age
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let result = reader.read_no_wait().unwrap();
+        assert!(result.is_none(), "expired message must be discarded");
+
+        asb.close().unwrap();
+    }
+
+    // ── QoS: MessageBuffer (reader) ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_qos_reader_buffer() {
+        let logger = init_test_logger!();
+        let port = next_port();
+        let config = test_config_on_ports(&[port]);
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        let qos = TopicQos {
+            reader_buffer: Some(super::super::MessageBuffer { max_messages: 2 }),
+            ..TopicQos::default()
+        };
+        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+            &mut asb,
+            "test.topic",
+            qos,
+        )
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+            &mut asb,
+            "test.topic",
+            TopicQos::default(),
+        )
+        .unwrap();
+
+        // Send 3 messages; buffer holds 2 — oldest must be dropped
+        writer.write(&TestMsg { value: "a".into() }).unwrap();
+        writer.write(&TestMsg { value: "b".into() }).unwrap();
+        writer.write(&TestMsg { value: "c".into() }).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let m1 = reader.read_no_wait().unwrap();
+        let m2 = reader.read_no_wait().unwrap();
+        let m3 = reader.read_no_wait().unwrap();
+        // "a" is dropped (oldest); "b" and "c" survive
+        assert_eq!(m1.as_deref().map(|m| m.value.as_str()), Some("b"));
+        assert_eq!(m2.as_deref().map(|m| m.value.as_str()), Some("c"));
+        assert!(m3.is_none(), "buffer must be empty after 2 messages");
+
+        asb.close().unwrap();
+    }
+
+    // ── QoS: MessageBuffer (writer) ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_qos_writer_buffer() {
+        let logger = init_test_logger!();
+        let port = next_port();
+        let config = test_config_on_ports(&[port]);
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        let writer_qos = TopicQos {
+            writer_buffer: Some(super::super::MessageBuffer { max_messages: 2 }),
+            ..TopicQos::default()
+        };
+        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+            &mut asb,
+            "test.topic",
+            writer_qos,
+        )
+        .unwrap();
+
+        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+            &mut asb,
+            "test.topic",
+            TopicQos::default(),
+        )
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Write 3 messages into a buffer of max 2; "a" (oldest) must be dropped
+        writer.write(&TestMsg { value: "a".into() }).unwrap();
+        writer.write(&TestMsg { value: "b".into() }).unwrap();
+        writer.write(&TestMsg { value: "c".into() }).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let received: Vec<_> = std::iter::from_fn(|| reader.read_no_wait().unwrap())
+            .map(|m| m.value.clone())
+            .collect();
+        // At most 2 messages should have been forwarded; "a" must not appear
+        assert!(!received.contains(&"a".to_string()), "oldest message must be dropped by writer buffer");
+        assert!(received.len() <= 2, "at most max_messages forwarded");
 
         asb.close().unwrap();
     }
