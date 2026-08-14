@@ -11,7 +11,7 @@ The `04_OMSC-SPC-001_RevL_CAL_Specification_DandD_v2_5.docx.pdf` file contains a
 
 The `06_OMSC-SPC-008_RevK_CxxCALSpec_DandD_v2_5.docx.pdf` contains all of the C++ requirements and description.
 
-When asked to evaluate specific requirements, use the `specs/cal_cert_requirements.md` file which summarizes all of the CERT CAL requirements. Only read .pdf specification files if the information is not available in the requirements table.
+When asked to evaluate specific requirements, use the `specs/cal_cert_requirements.md` file which summarizes all of the CERT CAL requirements and the `specs/cpp_cert_requirements.md` file which summarizes all of the CERT C++ requirements.. Only read .pdf specification files if the information is not available in the requirements table.
 
 When asked about UCI schema types, elements, or message definitions, use `specs/schema_summary.md` first. Only read the raw `.xsd` files if the information is not available in the summary.
 
