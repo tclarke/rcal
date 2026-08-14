@@ -706,12 +706,12 @@ mod tests {
 
     static NEXT_PORT: AtomicU16 = AtomicU16::new(55700);
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_asb_factory_same_key_returns_same_instance() {
         let p1 = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
         let p2 = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
         let config = zmq::test_config_on_ports(&[p1, p2]);
-        let logger = init_test_logger!();
 
         let a = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
             .await
@@ -737,9 +737,9 @@ mod tests {
         );
     }
 
+    #[init_test_logger]
     #[tokio::test]
     async fn test_asb_factory_unknown_transport_returns_err() {
-        let logger = init_test_logger!();
         let no_default_config = Arc::new(
             parse_config_from_file(&get_test_config_path("calconfig_no_default.toml")).unwrap(),
         );

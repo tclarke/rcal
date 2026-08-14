@@ -46,6 +46,95 @@ impl fmt::Display for CalConfig {
     }
 }
 
+/// Log level for a sink or global default.
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    #[default]
+    Warn,
+    Error,
+}
+
+impl From<LogLevel> for slog::Level {
+    fn from(l: LogLevel) -> Self {
+        match l {
+            LogLevel::Trace => slog::Level::Trace,
+            LogLevel::Debug => slog::Level::Debug,
+            LogLevel::Info => slog::Level::Info,
+            LogLevel::Warn => slog::Level::Warning,
+            LogLevel::Error => slog::Level::Error,
+        }
+    }
+}
+
+/// Log output format.
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    /// Colored terminal output.
+    #[default]
+    Pretty,
+    /// Plaintext, no ANSI colors.
+    Basic,
+    /// key=value pairs (logfmt).
+    Logfmt,
+    /// JSON objects.
+    Json,
+}
+
+/// Log sink destination.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase", tag = "type")]
+pub enum SinkType {
+    #[default]
+    Stdout,
+    Stderr,
+    File { path: String },
+}
+
+/// Configuration for one log sink.
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(default)]
+pub struct SinkConfig {
+    #[serde(flatten)]
+    pub sink_type: SinkType,
+    pub level: LogLevel,
+    pub format: LogFormat,
+    /// Subsystem names to include; empty = accept all.
+    pub subsystems: Vec<String>,
+}
+
+impl Default for SinkConfig {
+    fn default() -> Self {
+        Self {
+            sink_type: SinkType::Stdout,
+            level: LogLevel::Warn,
+            format: LogFormat::Pretty,
+            subsystems: Vec::new(),
+        }
+    }
+}
+
+/// Logging configuration stored under `[system.logging]`.
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(default)]
+pub struct LoggingConfig {
+    pub default_level: LogLevel,
+    pub sink: Vec<SinkConfig>,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            default_level: LogLevel::Warn,
+            sink: Vec::new(),
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
 pub struct System {
@@ -53,6 +142,7 @@ pub struct System {
     pub label: Option<String>,
     pub uuid: UUID,
     pub default_transport: Option<String>,
+    pub logging: LoggingConfig,
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
