@@ -8,7 +8,7 @@
   - `claude plugin markeyplace add DietrichGebert/ponytail`
   - `claude plugin install ponytail/ponytail`
 - Optional: Install and configure OmniRoute
-  - `npm install -h omniroute`
+  - `npm install -g omniroute`
   - `omniroute server`
 - Optional: Install skills
   - `npx skills add https://github.com/wshobson/agents --skill rust-async-patterns`
