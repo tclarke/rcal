@@ -249,6 +249,15 @@ impl AbstractServiceBus for ZmqAsb {
     fn register_status_listener(&mut self, listener: Arc<dyn AsbStatusListener>) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::register_status_listener()");
 
+        if !self.status.state.allows_add_listener() {
+            return Err(CalError::new(
+                CalErrorKind::InvalidState {
+                    current: self.status.state,
+                },
+                "Cannot register listener in Failed state (CAL-016366).",
+            ));
+        }
+
         if self.listeners.iter().any(|l| Arc::ptr_eq(l, &listener)) {
             return Err(CalError::new_impl(
                 CalImplementationErrorKind::ListenerError,
@@ -998,6 +1007,20 @@ mod tests {
         assert!(
             result.is_err(),
             "unregistering an unknown listener must return Err"
+        );
+    }
+
+    #[init_test_logger]
+    #[tokio::test]
+    async fn test_register_listener_in_failed_state_returns_err() {
+        let mut a = make_bus(logger).await;
+        a.update_status(AsbConnectionState::Normal, "").unwrap();
+        a.update_status(AsbConnectionState::Failed, "terminal").unwrap();
+
+        let ld: Arc<dyn AsbStatusListener> = Arc::new(TestStatusListener::new());
+        assert!(
+            a.register_status_listener(ld).is_err(),
+            "register_status_listener in Failed state must return Err (CAL-016366)"
         );
     }
 
