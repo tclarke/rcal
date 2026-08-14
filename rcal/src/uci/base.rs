@@ -29,9 +29,9 @@ use uuid::{Uuid, Variant as UuidVariant, Version as UuidVersion};
 /// Re-exports for uci::asb
 ///
 pub use crate::asb::{
-    AbstractReader, AbstractServiceBus, AbstractServiceBusExt, AbstractWriter,
-    AsbConnectionState, AsbStatus, AsbStatusListener, MessageListener,
-    Expiration, MessageBuffer, Reliability, TimeBasedFilter, TopicQos,
+    AbstractReader, AbstractServiceBus, AbstractServiceBusExt, AbstractWriter, AsbConnectionState,
+    AsbStatus, AsbStatusListener, Expiration, MessageBuffer, MessageListener, Reliability,
+    TimeBasedFilter, TopicQos,
 };
 pub use crate::calconfig::SerializationFormat;
 

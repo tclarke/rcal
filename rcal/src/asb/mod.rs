@@ -13,9 +13,9 @@
 #![warn(missing_docs)]
 
 use crate::calconfig::CalConfig;
+use crate::uci::CalMessage;
 use crate::uci::base::ServiceUuids;
 use crate::uci::{CalError, CalErrorKind, CalResult};
-use crate::uci::CalMessage;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::env;
@@ -309,10 +309,7 @@ pub trait AbstractServiceBus: Send + Sync {
     ///
     /// Returns `Err(InvalidState)` when called in the `Failed` state
     /// (Table 5.9-2: `addListener()` in `Failed` → Error).
-    fn register_status_listener(
-        &mut self,
-        listener: Arc<dyn AsbStatusListener>,
-    ) -> CalResult<()>;
+    fn register_status_listener(&mut self, listener: Arc<dyn AsbStatusListener>) -> CalResult<()>;
 
     /// Unregisters a previously registered ASB status listener.
     ///
@@ -565,7 +562,11 @@ pub trait AbstractServiceBusExt<M: CalMessage>: AbstractServiceBus {
     ///
     /// Returns `Err(TopicUnavailable)` if `topic` is not a valid Client Topic
     /// for this service (CERT CAL-005368, CAL-005369).
-    fn create_writer(&mut self, topic: &str, qos: TopicQos) -> CalResult<Box<dyn AbstractWriter<M>>>;
+    fn create_writer(
+        &mut self,
+        topic: &str,
+        qos: TopicQos,
+    ) -> CalResult<Box<dyn AbstractWriter<M>>>;
 
     /// Creates an [`AbstractReader`] bound to `topic` with the given QoS
     /// settings (CERT CAL-005374, CAL-005210).
@@ -575,7 +576,11 @@ pub trait AbstractServiceBusExt<M: CalMessage>: AbstractServiceBus {
     ///
     /// Returns `Err(TopicUnavailable)` if `topic` is not a valid Client Topic
     /// (CERT CAL-005378).
-    fn create_reader(&mut self, topic: &str, qos: TopicQos) -> CalResult<Box<dyn AbstractReader<M>>>;
+    fn create_reader(
+        &mut self,
+        topic: &str,
+        qos: TopicQos,
+    ) -> CalResult<Box<dyn AbstractReader<M>>>;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -643,13 +648,16 @@ pub async fn get_asb(
 
     // Construct the implementation without holding the factory lock.
     let instance: AsbInstance = match transport.type_.as_str() {
-        ZMQ_ASB_ID => Arc::new(Mutex::new(ZmqAsb::new(
-            key.service_identifier.clone(),
-            key.asb_identifier.clone(),
-            logger,
-            Arc::clone(&config),
-            transport,
-        ).await?)),
+        ZMQ_ASB_ID => Arc::new(Mutex::new(
+            ZmqAsb::new(
+                key.service_identifier.clone(),
+                key.asb_identifier.clone(),
+                logger,
+                Arc::clone(&config),
+                transport,
+            )
+            .await?,
+        )),
         other => {
             return Err(CalError::new(
                 CalErrorKind::InitializationFailure,
@@ -675,7 +683,9 @@ mod trait_object_safety {
 
     struct Ping;
     impl CalMessage for Ping {
-        fn message_type_name() -> &'static str { "test.Ping" }
+        fn message_type_name() -> &'static str {
+            "test.Ping"
+        }
     }
 
     // Compile-only assertions — fail at definition site if any trait is not object-safe.
@@ -703,12 +713,20 @@ mod tests {
         let config = zmq::test_config_on_ports(&[p1, p2]);
         let logger = init_test_logger!();
 
-        let a = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone()).await
+        let a = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
+            .await
             .expect("first get_asb must succeed");
-        let b = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone()).await
+        let b = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
+            .await
             .expect("second get_asb must succeed");
-        let c = get_asb("test_svc_2", "TestZmq2", Arc::clone(&config), logger.clone()).await
-            .expect("different service must succeed");
+        let c = get_asb(
+            "test_svc_2",
+            "TestZmq2",
+            Arc::clone(&config),
+            logger.clone(),
+        )
+        .await
+        .expect("different service must succeed");
 
         // Same (service, asb) key → same Arc (CERT CAL-005202)
         assert!(Arc::ptr_eq(&a, &b), "same key should return the same Arc");
@@ -725,7 +743,11 @@ mod tests {
         let no_default_config = Arc::new(
             parse_config_from_file(&get_test_config_path("calconfig_no_default.toml")).unwrap(),
         );
-        assert!(get_asb("svc", "dummy", no_default_config, logger).await.is_err());
+        assert!(
+            get_asb("svc", "dummy", no_default_config, logger)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

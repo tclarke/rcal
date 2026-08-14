@@ -4,21 +4,19 @@
 
 use slog::{Logger, trace};
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use omq_tokio::{Endpoint, Message, Options, Socket, SocketType};
 
 use super::{
-    AbstractReader, AbstractServiceBus, AbstractServiceBusExt, AbstractWriter,
-    AsbConnectionState, AsbStatus, AsbStatusListener, MessageListener, TopicQos,
+    AbstractReader, AbstractServiceBus, AbstractServiceBusExt, AbstractWriter, AsbConnectionState,
+    AsbStatus, AsbStatusListener, MessageListener, TopicQos,
 };
 use crate::calconfig::{CalConfig, SerializationFormat, Transport};
 use crate::uci::base::{ServiceUuids, UUID};
-use crate::uci::{
-    CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult,
-};
+use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
 
 /// ASB identifier string for the ZeroMQ-compatible transport.
 pub const ZMQ_ASB_ID: &str = "zmq";
@@ -27,7 +25,10 @@ pub const ZMQ_ASB_ID: &str = "zmq";
 // Serialization helpers
 // ════════════════════════════════════════════════════════════════════════════
 
-fn serialize_message<M: serde::Serialize>(msg: &M, format: &SerializationFormat) -> CalResult<String> {
+fn serialize_message<M: serde::Serialize>(
+    msg: &M,
+    format: &SerializationFormat,
+) -> CalResult<String> {
     match format {
         SerializationFormat::Xml => quick_xml::se::to_string(msg)
             .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string())),
@@ -211,10 +212,7 @@ impl AbstractServiceBus for ZmqAsb {
         &self.status
     }
 
-    fn register_status_listener(
-        &mut self,
-        listener: Arc<dyn AsbStatusListener>,
-    ) -> CalResult<()> {
+    fn register_status_listener(&mut self, listener: Arc<dyn AsbStatusListener>) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::register_status_listener()");
 
         if self.listeners.iter().any(|l| Arc::ptr_eq(l, &listener)) {
@@ -348,9 +346,10 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
             Some(d) => match rx.recv_timeout(d) {
                 Ok(m) => Ok(Some(m)),
                 Err(RecvTimeoutError::Timeout) => Ok(None),
-                Err(RecvTimeoutError::Disconnected) => {
-                    Err(CalError::new(CalErrorKind::AsbFailed, "reader task has stopped"))
-                }
+                Err(RecvTimeoutError::Disconnected) => Err(CalError::new(
+                    CalErrorKind::AsbFailed,
+                    "reader task has stopped",
+                )),
             },
             None => rx
                 .recv()
@@ -369,9 +368,10 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
         match self.poll_rx.lock().unwrap().try_recv() {
             Ok(m) => Ok(Some(m)),
             Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Disconnected) => {
-                Err(CalError::new(CalErrorKind::AsbFailed, "reader task has stopped"))
-            }
+            Err(TryRecvError::Disconnected) => Err(CalError::new(
+                CalErrorKind::AsbFailed,
+                "reader task has stopped",
+            )),
         }
     }
 
@@ -389,13 +389,19 @@ impl<M> AbstractServiceBusExt<M> for ZmqAsb
 where
     M: CalMessage + serde::Serialize + serde::de::DeserializeOwned,
 {
-    fn create_writer(&mut self, topic: &str, qos: TopicQos) -> CalResult<Box<dyn AbstractWriter<M>>> {
+    fn create_writer(
+        &mut self,
+        topic: &str,
+        qos: TopicQos,
+    ) -> CalResult<Box<dyn AbstractWriter<M>>> {
         let tx = self
             .write_tx
             .as_ref()
             .ok_or_else(|| {
                 CalError::new(
-                    CalErrorKind::InvalidState { current: self.status.state },
+                    CalErrorKind::InvalidState {
+                        current: self.status.state,
+                    },
                     "ASB is closed",
                 )
             })?
@@ -410,7 +416,11 @@ where
         }))
     }
 
-    fn create_reader(&mut self, topic: &str, qos: TopicQos) -> CalResult<Box<dyn AbstractReader<M>>> {
+    fn create_reader(
+        &mut self,
+        topic: &str,
+        qos: TopicQos,
+    ) -> CalResult<Box<dyn AbstractReader<M>>> {
         // Parse URI now for fast-fail on invalid config (no network I/O).
         let ep: Endpoint = self.transport_uri.parse().map_err(|e| {
             CalError::new(
@@ -511,11 +521,14 @@ pub(super) fn test_config_inproc(name: &str) -> Arc<CalConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use omq_tokio::{MonitorEvent, Socket, SocketType, Options, Message, Endpoint};
     use omq_tokio::endpoint::Host;
+    use omq_tokio::{Endpoint, Message, MonitorEvent, Options, Socket, SocketType};
     use rcal_macros::init_test_logger;
     use std::net::{IpAddr, Ipv4Addr};
-    use std::sync::{atomic::{AtomicI32, AtomicU32, Ordering}, Mutex};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicI32, AtomicU32, Ordering},
+    };
     use std::time::Duration;
 
     static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(55600);
@@ -557,7 +570,10 @@ mod tests {
         assert_eq!(a.oms_schema_compiler_version(), "0.1.0");
         assert_eq!(a.service_identifier(), "Test Service");
         assert_eq!(a.asb_identifier(), ZMQ_ASB_ID);
-        assert_eq!(a.connection_status().state, AsbConnectionState::Initializing);
+        assert_eq!(
+            a.connection_status().state,
+            AsbConnectionState::Initializing
+        );
     }
 
     // ── Transport: inproc ─────────────────────────────────────────────────
@@ -565,15 +581,26 @@ mod tests {
     #[tokio::test]
     async fn test_radio_dish_inproc() {
         let radio = Socket::new(SocketType::Radio, Options::default());
-        radio.bind("inproc://test-asb-inproc".parse::<Endpoint>().unwrap()).await.unwrap();
+        radio
+            .bind("inproc://test-asb-inproc".parse::<Endpoint>().unwrap())
+            .await
+            .unwrap();
 
         let dish = Socket::new(SocketType::Dish, Options::default());
-        dish.connect("inproc://test-asb-inproc".parse::<Endpoint>().unwrap()).await.unwrap();
+        dish.connect("inproc://test-asb-inproc".parse::<Endpoint>().unwrap())
+            .await
+            .unwrap();
         dish.join("telemetry").await.unwrap();
 
-        radio.send(Message::multipart(["telemetry", "42.0"])).await.unwrap();
+        radio
+            .send(Message::multipart(["telemetry", "42.0"]))
+            .await
+            .unwrap();
         // inproc is synchronous within the runtime — no sleep needed
-        radio.send(Message::multipart(["ignored-group", "dropped"])).await.unwrap();
+        radio
+            .send(Message::multipart(["ignored-group", "dropped"]))
+            .await
+            .unwrap();
 
         let msg = dish.recv().await.unwrap();
         assert_eq!(msg.part_bytes(0).unwrap(), "telemetry");
@@ -599,14 +626,21 @@ mod tests {
 
         let dish = Socket::new(SocketType::Dish, Options::default());
         dish.join("status").await.unwrap();
-        dish.connect(format!("tcp://127.0.0.1:{port}").parse::<Endpoint>().unwrap())
-            .await
-            .unwrap();
+        dish.connect(
+            format!("tcp://127.0.0.1:{port}")
+                .parse::<Endpoint>()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
         // Wait for ZMTP handshake to complete.
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        radio.send(Message::multipart(["status", "online"])).await.unwrap();
+        radio
+            .send(Message::multipart(["status", "online"]))
+            .await
+            .unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;
 
         let msg = dish.recv().await.unwrap();
@@ -656,8 +690,14 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(20)).await;
 
-        radio.send(Message::multipart(["sensor", "hot"])).await.unwrap();
-        radio.send(Message::multipart(["other", "dropped"])).await.unwrap();
+        radio
+            .send(Message::multipart(["sensor", "hot"]))
+            .await
+            .unwrap();
+        radio
+            .send(Message::multipart(["other", "dropped"]))
+            .await
+            .unwrap();
 
         let msg = dish.recv().await.unwrap();
         assert_eq!(msg.part_bytes(0).unwrap(), "sensor");
@@ -721,7 +761,8 @@ mod tests {
         assert_eq!(l1.last_state(), AsbConnectionState::Normal);
         assert_eq!(l2.call_count(), 0);
 
-        a.update_status(AsbConnectionState::Degraded, "degraded").unwrap();
+        a.update_status(AsbConnectionState::Degraded, "degraded")
+            .unwrap();
         assert_eq!(l1.call_count(), 2);
         assert_eq!(l1.last_state(), AsbConnectionState::Degraded);
         assert_eq!(l2.call_count(), 0);
@@ -732,7 +773,8 @@ mod tests {
         assert_eq!(l2.call_count(), 1, "immediate callback on register");
         assert_eq!(l2.last_state(), AsbConnectionState::Degraded);
 
-        a.update_status(AsbConnectionState::Normal, "recovered").unwrap();
+        a.update_status(AsbConnectionState::Normal, "recovered")
+            .unwrap();
         assert_eq!(l1.call_count(), 3);
         assert_eq!(l1.last_state(), AsbConnectionState::Normal);
         assert_eq!(l2.call_count(), 2);
@@ -741,7 +783,8 @@ mod tests {
         a.unregister_status_listener(&l1d).unwrap();
         assert_eq!(a.listeners.len(), 1);
 
-        a.update_status(AsbConnectionState::Failed, "terminal").unwrap();
+        a.update_status(AsbConnectionState::Failed, "terminal")
+            .unwrap();
         assert_eq!(l1.call_count(), 3, "l1 must not be called after unregister");
         assert_eq!(l1.last_state(), AsbConnectionState::Normal);
         assert_eq!(l2.call_count(), 3);
@@ -757,7 +800,10 @@ mod tests {
         let ld: Arc<dyn AsbStatusListener> = Arc::new(TestStatusListener::new());
         a.register_status_listener(ld.clone()).unwrap();
         let result = a.register_status_listener(ld.clone());
-        assert!(result.is_err(), "registering the same Arc twice must return Err");
+        assert!(
+            result.is_err(),
+            "registering the same Arc twice must return Err"
+        );
     }
 
     #[tokio::test]
@@ -767,7 +813,10 @@ mod tests {
 
         let ld: Arc<dyn AsbStatusListener> = Arc::new(TestStatusListener::new());
         let result = a.unregister_status_listener(&ld);
-        assert!(result.is_err(), "unregistering an unknown listener must return Err");
+        assert!(
+            result.is_err(),
+            "unregistering an unknown listener must return Err"
+        );
     }
 
     #[tokio::test]
@@ -805,9 +854,13 @@ mod tests {
 
         let dish = Socket::new(SocketType::Dish, Options::default());
         dish.join("test.topic").await.unwrap();
-        dish.connect(format!("tcp://127.0.0.1:{port}").parse::<Endpoint>().unwrap())
-            .await
-            .unwrap();
+        dish.connect(
+            format!("tcp://127.0.0.1:{port}")
+                .parse::<Endpoint>()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
@@ -817,7 +870,9 @@ mod tests {
         )
         .unwrap();
 
-        let msg = TestMsg { value: "hello".to_string() };
+        let msg = TestMsg {
+            value: "hello".to_string(),
+        };
         writer.write(&msg).unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;
 
@@ -825,7 +880,10 @@ mod tests {
         assert_eq!(received.part_bytes(0).unwrap(), "test.topic");
         let payload = received.part_bytes(1).unwrap();
         let xml = std::str::from_utf8(&payload).unwrap();
-        assert!(xml.contains("hello"), "expected XML to contain 'hello', got: {xml}");
+        assert!(
+            xml.contains("hello"),
+            "expected XML to contain 'hello', got: {xml}"
+        );
 
         dish.close().await.unwrap();
         asb.close().unwrap();
@@ -852,9 +910,13 @@ mod tests {
 
         let dish = Socket::new(SocketType::Dish, Options::default());
         dish.join("test.topic").await.unwrap();
-        dish.connect(format!("tcp://127.0.0.1:{port}").parse::<Endpoint>().unwrap())
-            .await
-            .unwrap();
+        dish.connect(
+            format!("tcp://127.0.0.1:{port}")
+                .parse::<Endpoint>()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
@@ -864,13 +926,20 @@ mod tests {
         )
         .unwrap();
 
-        writer.write(&TestMsg { value: "pretty".to_string() }).unwrap();
+        writer
+            .write(&TestMsg {
+                value: "pretty".to_string(),
+            })
+            .unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;
 
         let received = dish.recv().await.unwrap();
         let payload = received.part_bytes(1).unwrap();
         let xml = std::str::from_utf8(&payload).unwrap();
-        assert!(xml.contains('\n'), "pretty XML must contain newlines, got: {xml}");
+        assert!(
+            xml.contains('\n'),
+            "pretty XML must contain newlines, got: {xml}"
+        );
         assert!(xml.contains("pretty"), "expected 'pretty' in XML payload");
 
         dish.close().await.unwrap();
@@ -906,7 +975,11 @@ mod tests {
             TopicQos::default(),
         )
         .unwrap();
-        writer.write(&TestMsg { value: "poll_test".to_string() }).unwrap();
+        writer
+            .write(&TestMsg {
+                value: "poll_test".to_string(),
+            })
+            .unwrap();
 
         // Allow message to propagate
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1028,7 +1101,9 @@ mod tests {
             }
         }
 
-        let listener = Arc::new(CountingListener { count: AtomicU32::new(0) });
+        let listener = Arc::new(CountingListener {
+            count: AtomicU32::new(0),
+        });
         let listener_check = Arc::clone(&listener);
         let ld: Arc<dyn MessageListener<TestMsg>> = listener;
         reader.add_listener(ld).unwrap();
@@ -1042,8 +1117,16 @@ mod tests {
             TopicQos::default(),
         )
         .unwrap();
-        writer.write(&TestMsg { value: "cb_test".to_string() }).unwrap();
-        writer.write(&TestMsg { value: "cb_test2".to_string() }).unwrap();
+        writer
+            .write(&TestMsg {
+                value: "cb_test".to_string(),
+            })
+            .unwrap();
+        writer
+            .write(&TestMsg {
+                value: "cb_test2".to_string(),
+            })
+            .unwrap();
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
