@@ -31,7 +31,7 @@
   "hooks": { "PreToolUse": [{
     "matcher": "Bash",
     "hooks": [{ "type": "command",
-      "command": "rtk.exe hook claude"
+      "command": "rtk hook claude"
     }]
   }]}
 }

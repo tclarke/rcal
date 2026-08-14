@@ -15,6 +15,36 @@ use std::fmt;
 pub mod base;
 
 // ════════════════════════════════════════════════════════════════════════════
+// CalMessage / CalSubMessage
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Marker trait for CAL Message types — top-level, publishable messages.
+///
+/// Only types implementing `CalMessage` may be associated with a Client Topic
+/// (CERT CAL-005208), published via an `AbstractWriter`, or received via an
+/// `AbstractReader`.
+///
+/// Abstract message types (schema `abstract="true"`) must NOT implement this
+/// trait (CERT CAL-016035). Only concrete, instantiable message types are
+/// permitted.
+pub trait CalMessage: Send + Sync + 'static {
+    /// Returns the fully-qualified OMS message type name as defined in the
+    /// OMS Message Schema. Used to enforce one-type-per-topic association
+    /// (CERT CAL-005208).
+    ///
+    /// Example: `"uci.core.SystemStatusType"`
+    fn message_type_name() -> &'static str
+    where
+        Self: Sized;
+}
+
+/// Marker trait for CAL Sub-message types — complex nested field types.
+///
+/// Sub-messages cannot be independently published or subscribed to;
+/// they exist only within an enclosing `CalMessage` (§5.5).
+pub trait CalSubMessage: Send + Sync + 'static {}
+
+// ════════════════════════════════════════════════════════════════════════════
 // CalErrorKind
 // ════════════════════════════════════════════════════════════════════════════
 

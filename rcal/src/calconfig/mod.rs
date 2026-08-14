@@ -77,6 +77,17 @@ pub struct UUIDFactory {
     pub node: Option<mac_address::MacAddress>,
 }
 
+/// Serialization format used for CAL Messages on a transport.
+#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SerializationFormat {
+    /// Whitespace-compressed XML (default).
+    #[default]
+    Xml,
+    /// Indented, human-readable XML.
+    PrettyXml,
+}
+
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
 pub struct Transport {
@@ -84,6 +95,8 @@ pub struct Transport {
     #[serde(rename = "type")]
     pub type_: String,
     pub uri: String,
+    /// Serialization format for CAL Messages on this transport (default: `xml`).
+    pub format: SerializationFormat,
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]

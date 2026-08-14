@@ -43,8 +43,14 @@ async fn test_inproc_radio_dish_fanout() {
         dishes.push(dish);
     }
 
-    radio.send(radio_msg("news", "breaking")).await.expect("send failed");
-    radio.send(radio_msg("other", "dropped")).await.expect("send failed");
+    radio
+        .send(radio_msg("news", "breaking"))
+        .await
+        .expect("send failed");
+    radio
+        .send(radio_msg("other", "dropped"))
+        .await
+        .expect("send failed");
 
     for (i, dish) in dishes.iter().enumerate() {
         let (group, body) = recv_parts(dish).await;
@@ -53,7 +59,9 @@ async fn test_inproc_radio_dish_fanout() {
     }
 
     radio.close().await.unwrap();
-    for dish in dishes { dish.close().await.unwrap(); }
+    for dish in dishes {
+        dish.close().await.unwrap();
+    }
 }
 
 // ── tcp ───────────────────────────────────────────────────────────────────────
@@ -76,16 +84,23 @@ async fn test_tcp_radio_dish_fanout() {
     for _ in 0..3 {
         let dish = Socket::new(SocketType::Dish, Options::default());
         dish.join("status").await.expect("dish join failed");
-        dish.connect(format!("tcp://127.0.0.1:{port}").parse::<Endpoint>().unwrap())
-            .await
-            .expect("dish connect failed");
+        dish.connect(
+            format!("tcp://127.0.0.1:{port}")
+                .parse::<Endpoint>()
+                .unwrap(),
+        )
+        .await
+        .expect("dish connect failed");
         dishes.push(dish);
     }
 
     // Allow ZMTP handshakes to complete.
     sleep(Duration::from_millis(80)).await;
 
-    radio.send(radio_msg("status", "ok")).await.expect("send failed");
+    radio
+        .send(radio_msg("status", "ok"))
+        .await
+        .expect("send failed");
     sleep(SEND_SETTLE).await;
 
     for (i, dish) in dishes.iter().enumerate() {
@@ -95,7 +110,9 @@ async fn test_tcp_radio_dish_fanout() {
     }
 
     radio.close().await.unwrap();
-    for dish in dishes { dish.close().await.unwrap(); }
+    for dish in dishes {
+        dish.close().await.unwrap();
+    }
 }
 
 // ── udp ───────────────────────────────────────────────────────────────────────
@@ -138,8 +155,14 @@ async fn test_udp_radio_dish() {
 
     sleep(Duration::from_millis(20)).await;
 
-    radio.send(radio_msg("sensor", "37.2")).await.expect("send failed");
-    radio.send(radio_msg("other", "ignored")).await.expect("send failed");
+    radio
+        .send(radio_msg("sensor", "37.2"))
+        .await
+        .expect("send failed");
+    radio
+        .send(radio_msg("other", "ignored"))
+        .await
+        .expect("send failed");
     sleep(SEND_SETTLE).await;
 
     let (group, body) = recv_parts(&dish).await;
