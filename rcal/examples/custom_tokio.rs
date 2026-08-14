@@ -18,8 +18,8 @@ async fn main() {
     info!(my_logger, "custom_tokio example starting";
           "workers" => 4);
 
-    // `__rcal_config` and `my_logger` are injected by the macro.
-    let config = Arc::new(__rcal_config);
+    // `rcal_config` and `my_logger` are injected by the macro.
+    let config = Arc::new(rcal_config);
 
     let bus = match asb::get_asb("custom-example", "default", config, my_logger.clone()).await {
         Ok(b) => b,

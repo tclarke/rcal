@@ -5,7 +5,6 @@ use slog::{Drain, KV, Logger, o};
 use slog_async::Async;
 use slog_term::{FullFormat, PlainDecorator, TermDecorator};
 use std::fs::OpenOptions;
-use std::sync::Arc;
 
 // ── shared drain alias ────────────────────────────────────────────────────────
 
@@ -87,7 +86,7 @@ impl<W: std::io::Write + Send + Sync + 'static> Drain for LogfmtDrain<W> {
         let _ = record.kv().serialize(record, &mut ser);
         buf.push('\n');
         let mut w = self.writer.lock().unwrap();
-        let _ = w.write_all(buf.as_bytes());
+        w.write_all(buf.as_bytes()).ok();
         Ok(())
     }
 }
@@ -109,7 +108,7 @@ impl<'a> slog::Serializer for LogfmtSerializer<'a> {
 // ── Fanout drain ──────────────────────────────────────────────────────────────
 
 struct FanoutDrain {
-    drains: Arc<Vec<BoxDrain>>,
+    drains: Vec<BoxDrain>,
 }
 
 impl Drain for FanoutDrain {
@@ -218,7 +217,9 @@ fn build_sink(sink: &SinkConfig) -> Option<BoxDrain> {
             }
         },
         SinkType::File { path } => {
-            let file = OpenOptions::new().create(true).append(true).open(path).ok()?;
+            let file = OpenOptions::new().create(true).append(true).open(path)
+                .map_err(|e| eprintln!("rcal logging: failed to open log file '{}': {}", path, e))
+                .ok()?;
             make_drain_for_writer!(file)
         }
     }
@@ -236,8 +237,10 @@ pub fn build_logger(config: &LoggingConfig) -> Logger {
         return Logger::root(slog::Discard, o!());
     }
 
-    let fanned = FanoutDrain { drains: Arc::new(drains) };
-    Logger::root(fanned.fuse(), o!())
+    let default_level: slog::Level = config.default_level.into();
+    let fanned = FanoutDrain { drains };
+    let filtered = slog::LevelFilter::new(fanned, default_level).fuse();
+    Logger::root(filtered, o!())
 }
 
 /// Build a test logger: stdout, debug level.

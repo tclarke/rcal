@@ -141,13 +141,11 @@ pub fn rcal_main(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let init = quote! {
-        let __rcal_config_path = rcal::asb::get_asb_config_location(#config_expr)
-            .map_err(|e| { eprintln!("rcal config error: {}", e); std::process::exit(1) })
-            .unwrap();
-        let __rcal_config = rcal::calconfig::parse_config_from_file(&__rcal_config_path)
-            .map_err(|e| { eprintln!("rcal config parse error: {}", e); std::process::exit(1) })
-            .unwrap();
-        let #logger_ident = rcal::logging::build_logger(&__rcal_config.system.logging);
+        let rcal_config_path = rcal::asb::get_asb_config_location(#config_expr)
+            .unwrap_or_else(|e| { eprintln!("rcal config error: {}", e); std::process::exit(1) });
+        let rcal_config = rcal::calconfig::parse_config_from_file(&rcal_config_path)
+            .unwrap_or_else(|e| { eprintln!("rcal config parse error: {}", e); std::process::exit(1) });
+        let #logger_ident = rcal::logging::build_logger(&rcal_config.system.logging);
     };
 
     let original_stmts = func.block.stmts.clone();

@@ -15,8 +15,8 @@ use slog::{error, info, warn};
 async fn main() {
     info!(root_logger, "basic example starting");
 
-    // `__rcal_config` and `root_logger` are injected by the macro.
-    let config = Arc::new(__rcal_config);
+    // `rcal_config` and `root_logger` are injected by the macro.
+    let config = Arc::new(rcal_config);
 
     let bus = match asb::get_asb("basic-example", "default", config, root_logger.clone()).await {
         Ok(b) => b,
