@@ -49,7 +49,7 @@ fn serialize_message<M: serde::Serialize>(
 /// is not configured (CAL-005208).
 fn validate_topic_type<M: CalMessage>(
     config: &crate::calconfig::CalConfig,
-    service_id: &String,
+    service_id: &str,
     topic: &str,
 ) -> CalResult<()> {
     let Some(service) = config.get_service(service_id) else {
@@ -126,7 +126,7 @@ pub struct ZmqAsb {
     listeners: Vec<Arc<dyn AsbStatusListener>>,
 
     /// Signals all reader tasks to stop; sent on close() (CAL-016049).
-    shutdown_tx: Arc<tokio::sync::watch::Sender<bool>>,
+    shutdown_tx: Arc<tokio::sync::watch::Sender<()>>,
 
     /// Test-only gate: forwarding task acquires+drops this before each drain.
     /// Hold externally to freeze the task while flooding writes.
@@ -174,7 +174,7 @@ impl ZmqAsb {
             })?;
         }
 
-        let (shutdown_tx, _) = tokio::sync::watch::channel(false);
+        let (shutdown_tx, _) = tokio::sync::watch::channel(());
         let shutdown_tx = Arc::new(shutdown_tx);
 
         let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
@@ -328,7 +328,7 @@ impl AbstractServiceBus for ZmqAsb {
     fn close(&mut self) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::close()");
         // Signal all reader tasks to unblock any pending dish.recv() (CAL-016049).
-        let _ = self.shutdown_tx.send(true);
+        let _ = self.shutdown_tx.send(());
         // Dropping write_tx closes the channel; the background writer task exits.
         self.write_tx = None;
         Ok(())
