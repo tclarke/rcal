@@ -226,7 +226,7 @@ impl AbstractServiceBus for ZmqAsb {
     }
 
     fn asb_identifier(&self) -> &str {
-        &self.asb_id
+        ZMQ_ASB_ID
     }
 
     fn service_uuids(&self) -> CalResult<&ServiceUuids> {
