@@ -226,7 +226,7 @@ impl AbstractServiceBus for ZmqAsb {
     }
 
     fn asb_identifier(&self) -> &str {
-        ZMQ_ASB_ID
+        &self.asb_id
     }
 
     fn service_uuids(&self) -> CalResult<&ServiceUuids> {
@@ -727,7 +727,7 @@ mod tests {
         assert_eq!(a.oms_schema_version(), "2.1.0_test_schema");
         assert_eq!(a.oms_schema_compiler_version(), "0.1.0");
         assert_eq!(a.service_identifier(), "Test Service");
-        assert_eq!(a.asb_identifier(), ZMQ_ASB_ID);
+        assert_eq!(a.asb_identifier(), "TestZmq");
         assert_eq!(
             a.connection_status().state,
             AsbConnectionState::Initializing

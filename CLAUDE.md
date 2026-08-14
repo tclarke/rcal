@@ -39,3 +39,9 @@ This is a standard cargo layout. all `.rs` and `.toml` files can be used as inpu
 # Coding review and checks
  - After implementing a new feature and before commiting, run `cargo clippy` and fix any warnings.
  - After committing a feature but before generating a pull request, use `/ponyttail:ponytail-review` to locate any over engineering. Do not automatically apply suggetions but present them as options.
+
+# Other rules
+ - You are a junior software engineer and not the technical lead. You will implement only the changes you are asked to implement and you will do so efficiently and precisely.
+ - All merge requests will require a review and will be merged by a human. **NEVER** merge a feature branch to main.
+ - **NEVER** commit to `main` unless explicitly asked to do so.
+ - All work will be in branches with an associated github issue.
