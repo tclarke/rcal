@@ -93,6 +93,11 @@ pub struct ZmqAsb {
 
     /// Registered connection-status listeners.
     listeners: Vec<Arc<dyn AsbStatusListener>>,
+
+    /// Test-only gate: forwarding task acquires+drops this before each drain.
+    /// Hold externally to freeze the task while flooding writes.
+    #[cfg(test)]
+    write_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl ZmqAsb {
@@ -161,6 +166,8 @@ impl ZmqAsb {
             peer_uris: Vec::new(),
             serialization_format: tconfig.format.clone(),
             listeners: Vec::new(),
+            #[cfg(test)]
+            write_gate: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -175,6 +182,12 @@ impl ZmqAsb {
     /// are not picked up by existing readers.
     pub fn add_receive_peer(&mut self, uri: impl Into<String>) {
         self.peer_uris.push(uri.into());
+    }
+
+    /// Returns a clone of the write gate for test-controlled backpressure.
+    #[cfg(test)]
+    pub fn write_gate(&self) -> Arc<tokio::sync::Mutex<()>> {
+        Arc::clone(&self.write_gate)
     }
 
     /// Connect to the bus (future use: establish DISH subscriptions).
@@ -475,6 +488,8 @@ where
             .clone();
 
         let writer_max = qos.writer_buffer.map(|b| b.max_messages);
+        #[cfg(test)]
+        let write_gate_task = Arc::clone(&self.write_gate);
         let (direct_tx, writer_buf, writer_notify, writer_task) = if let Some(_max) = writer_max {
             let buf: Arc<Mutex<VecDeque<Message>>> = Arc::new(Mutex::new(VecDeque::new()));
             let notify = Arc::new(tokio::sync::Notify::new());
@@ -483,6 +498,10 @@ where
             let task = tokio::spawn(async move {
                 loop {
                     notify_task.notified().await;
+                    // ponytail: test-only gate; freezes drain until caller releases lock,
+                    // ensuring overflow logic in write() runs before drain. No-op in production.
+                    #[cfg(test)]
+                    drop(write_gate_task.lock().await);
                     let msgs: Vec<Message> = buf_task.lock().unwrap().drain(..).collect();
                     for m in msgs {
                         if tx.send(m).is_err() {
@@ -1432,6 +1451,11 @@ mod tests {
             .await
             .unwrap();
 
+        // Hold the gate before creating the writer so the forwarding task
+        // cannot drain writer_buf between our three write() calls.
+        let gate = asb.write_gate();
+        let _hold = gate.lock().await;
+
         let writer_qos = TopicQos {
             writer_buffer: Some(super::super::MessageBuffer { max_messages: 2 }),
             ..TopicQos::default()
@@ -1451,21 +1475,25 @@ mod tests {
         .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        // Write 3 messages into a buffer of max 2; "a" (oldest) must be dropped
+        // Gate held: forwarding task blocks before each drain.
+        // write("c") overflows cap-2 buffer, dropping "a" (oldest). buf=[b,c].
         writer.write(&TestMsg { value: "a".into() }).unwrap();
         writer.write(&TestMsg { value: "b".into() }).unwrap();
         writer.write(&TestMsg { value: "c".into() }).unwrap();
+
+        drop(_hold); // forwarding task unblocks, drains [b, c] to RADIO
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let received: Vec<_> = std::iter::from_fn(|| reader.read_no_wait().unwrap())
-            .map(|m| m.value.clone())
-            .collect();
-        // At most 2 messages should have been forwarded; "a" must not appear
-        assert!(
-            !received.contains(&"a".to_string()),
+        let m1 = reader.read_no_wait().unwrap();
+        let m2 = reader.read_no_wait().unwrap();
+        let m3 = reader.read_no_wait().unwrap();
+        assert_eq!(
+            m1.as_deref().map(|m| m.value.as_str()),
+            Some("b"),
             "oldest message must be dropped by writer buffer"
         );
-        assert!(received.len() <= 2, "at most max_messages forwarded");
+        assert_eq!(m2.as_deref().map(|m| m.value.as_str()), Some("c"));
+        assert!(m3.is_none(), "only max_messages forwarded");
 
         asb.close().unwrap();
     }

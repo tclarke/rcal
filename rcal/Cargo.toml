@@ -27,3 +27,7 @@ harness = true
 [[test]]
 name = "zmq_asb_system"
 harness = true
+
+[[test]]
+name = "zmq_qos"
+harness = true
