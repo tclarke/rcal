@@ -275,6 +275,9 @@ impl AbstractServiceBus for ZmqAsb {
 // ZmqWriter
 // ════════════════════════════════════════════════════════════════════════════
 
+/// Poll-mode queue shared between the receive task and [`ZmqReader`].
+type PollState<M> = Arc<(Mutex<VecDeque<(Instant, Arc<M>)>>, Condvar)>;
+
 /// ZMQ-backed [`AbstractWriter`]: serializes messages and sends via the shared
 /// RADIO socket background task.
 pub struct ZmqWriter<M: CalMessage> {
@@ -349,7 +352,7 @@ pub struct ZmqReader<M: CalMessage> {
     topic: String,
     listeners: Arc<Mutex<Vec<Arc<dyn MessageListener<M>>>>>,
     /// Shared queue + condvar for poll-mode delivery with expiration support.
-    poll_state: Arc<(Mutex<VecDeque<(Instant, Arc<M>)>>, Condvar)>,
+    poll_state: PollState<M>,
     /// Set false by the receive task on exit; wakes any blocked read().
     task_alive: Arc<AtomicBool>,
     expiration: Option<Duration>,
@@ -392,7 +395,7 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
         loop {
             // Expire buffered messages older than max_age (CAL-005437)
             if let Some(max_age) = self.expiration {
-                while queue.front().map_or(false, |(t, _)| t.elapsed() > max_age) {
+                while queue.front().is_some_and(|(t, _)| t.elapsed() > max_age) {
                     queue.pop_front();
                 }
             }
@@ -400,7 +403,10 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
                 return Ok(Some(msg));
             }
             if !self.task_alive.load(Ordering::Acquire) {
-                return Err(CalError::new(CalErrorKind::AsbFailed, "reader task has stopped"));
+                return Err(CalError::new(
+                    CalErrorKind::AsbFailed,
+                    "reader task has stopped",
+                ));
             }
             let remaining = deadline.map(|d| d.saturating_duration_since(Instant::now()));
             match remaining {
@@ -429,7 +435,7 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
         let (lock, _) = &*self.poll_state;
         let mut queue = lock.lock().unwrap();
         if let Some(max_age) = self.expiration {
-            while queue.front().map_or(false, |(t, _)| t.elapsed() > max_age) {
+            while queue.front().is_some_and(|(t, _)| t.elapsed() > max_age) {
                 queue.pop_front();
             }
         }
@@ -528,7 +534,7 @@ where
         let expiration_dur = qos.expiration.map(|e| e.max_age);
         let reader_max = qos.reader_buffer.map(|b| b.max_messages);
 
-        let poll_state: Arc<(Mutex<VecDeque<(Instant, Arc<M>)>>, Condvar)> =
+        let poll_state: PollState<M> =
             Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
         let task_alive = Arc::new(AtomicBool::new(true));
 
@@ -557,12 +563,11 @@ where
                 let payload = raw.part_bytes(1).unwrap_or_default();
                 if let Ok(m) = deserialize_message::<M>(&payload) {
                     // TimeBasedFilter: drop messages within min_separation (CAL-005431)
-                    if let Some(ref f) = time_filter {
-                        if let Some(last) = last_accepted {
-                            if last.elapsed() < f.min_separation {
-                                continue;
-                            }
-                        }
+                    if let Some(ref f) = time_filter
+                        && let Some(last) = last_accepted
+                        && last.elapsed() < f.min_separation
+                    {
+                        continue;
                     }
                     last_accepted = Some(Instant::now());
 
@@ -1291,12 +1296,9 @@ mod tests {
             }),
             ..TopicQos::default()
         };
-        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
-            &mut asb,
-            "test.topic",
-            qos,
-        )
-        .unwrap();
+        let mut reader =
+            <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(&mut asb, "test.topic", qos)
+                .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
@@ -1307,14 +1309,25 @@ mod tests {
         .unwrap();
 
         // Send two messages back-to-back; second should be filtered
-        writer.write(&TestMsg { value: "first".into() }).unwrap();
-        writer.write(&TestMsg { value: "second".into() }).unwrap();
+        writer
+            .write(&TestMsg {
+                value: "first".into(),
+            })
+            .unwrap();
+        writer
+            .write(&TestMsg {
+                value: "second".into(),
+            })
+            .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let m1 = reader.read_no_wait().unwrap();
         let m2 = reader.read_no_wait().unwrap();
         assert!(m1.is_some(), "first message must pass filter");
-        assert!(m2.is_none(), "second message must be dropped by time filter");
+        assert!(
+            m2.is_none(),
+            "second message must be dropped by time filter"
+        );
 
         asb.close().unwrap();
     }
@@ -1337,12 +1350,9 @@ mod tests {
             }),
             ..TopicQos::default()
         };
-        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
-            &mut asb,
-            "test.topic",
-            qos,
-        )
-        .unwrap();
+        let mut reader =
+            <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(&mut asb, "test.topic", qos)
+                .unwrap();
         tokio::time::sleep(Duration::from_millis(30)).await;
 
         let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
@@ -1351,7 +1361,11 @@ mod tests {
             TopicQos::default(),
         )
         .unwrap();
-        writer.write(&TestMsg { value: "expire_me".into() }).unwrap();
+        writer
+            .write(&TestMsg {
+                value: "expire_me".into(),
+            })
+            .unwrap();
         // Let the message arrive in the buffer, then age past max_age
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -1377,12 +1391,9 @@ mod tests {
             reader_buffer: Some(super::super::MessageBuffer { max_messages: 2 }),
             ..TopicQos::default()
         };
-        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
-            &mut asb,
-            "test.topic",
-            qos,
-        )
-        .unwrap();
+        let mut reader =
+            <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(&mut asb, "test.topic", qos)
+                .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
@@ -1450,10 +1461,12 @@ mod tests {
             .map(|m| m.value.clone())
             .collect();
         // At most 2 messages should have been forwarded; "a" must not appear
-        assert!(!received.contains(&"a".to_string()), "oldest message must be dropped by writer buffer");
+        assert!(
+            !received.contains(&"a".to_string()),
+            "oldest message must be dropped by writer buffer"
+        );
         assert!(received.len() <= 2, "at most max_messages forwarded");
 
         asb.close().unwrap();
     }
-
 }
