@@ -15,6 +15,7 @@
 use crate::calconfig::CalConfig;
 use crate::uci::base::ServiceUuids;
 use crate::uci::{CalError, CalErrorKind, CalResult};
+use crate::uci::CalMessage;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::env;
@@ -22,6 +23,7 @@ use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 mod zmq;
 use zmq::{ZMQ_ASB_ID, ZmqAsb};
@@ -247,7 +249,9 @@ pub trait AsbStatusListener: Send + Sync {
     /// (CERT CAL-016366).
     ///
     /// Must not block indefinitely; doing so delays subsequent notifications.
-    fn on_status_change(&mut self, status: &AsbStatus);
+    /// Implementations that require internal mutation must use interior
+    /// mutability (e.g. `Mutex`, `AtomicXxx`).
+    fn on_status_change(&self, status: &AsbStatus);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -307,16 +311,16 @@ pub trait AbstractServiceBus: Send + Sync {
     /// (Table 5.9-2: `addListener()` in `Failed` → Error).
     fn register_status_listener(
         &mut self,
-        listener: Arc<Mutex<dyn AsbStatusListener>>,
+        listener: Arc<dyn AsbStatusListener>,
     ) -> CalResult<()>;
 
     /// Unregisters a previously registered ASB status listener.
     ///
-    /// After this returns, `on_status_change` will no longer be invoked.
-    /// No-op if the listener is not registered.
+    /// Identified by `Arc` pointer equality. No-op if the listener is not
+    /// registered.
     fn unregister_status_listener(
         &mut self,
-        listener: Arc<Mutex<dyn AsbStatusListener>>,
+        listener: &Arc<dyn AsbStatusListener>,
     ) -> CalResult<()>;
 
     // ── Lifecycle ─────────────────────────────────────────────────────────
@@ -327,6 +331,185 @@ pub trait AbstractServiceBus: Send + Sync {
     /// registered listeners will not receive further callbacks, and blocked
     /// `read()` calls are released with an error.
     fn close(&mut self) -> CalResult<()>;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MessageListener
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Callback interface for receiving CAL Messages on a subscribed topic.
+///
+/// Register with [`AbstractReader::add_listener`]. Remove with
+/// [`AbstractReader::remove_listener`] (CERT CAL-005396).
+///
+/// # CAL-005392 — single shared reference
+/// Each registered listener receives the **same** `Arc<M>` exactly once per
+/// received message. The inner `M` is immutable for the full duration of the
+/// handler invocation (CERT CAL-016046).
+///
+/// # Thread safety
+/// The CAL may dispatch `on_message` from an internal receive thread.
+/// Implementations must be `Send + Sync`. If internal mutation is required,
+/// use interior mutability (`Mutex`, `AtomicXxx`, etc.).
+///
+/// # CERT coverage
+/// CAL-005379, CAL-005391, CAL-005392, CAL-005396, CAL-016045, CAL-016046
+pub trait MessageListener<M: CalMessage>: Send + Sync {
+    /// Called once per received message instance (CERT CAL-005392).
+    ///
+    /// Must not block indefinitely — the CAL removes the message from its
+    /// internal buffer only after **all** registered listeners' `on_message`
+    /// calls return (CERT CAL-016045).
+    fn on_message(&self, message: &Arc<M>);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AbstractWriter
+// ════════════════════════════════════════════════════════════════════════════
+
+/// A topic-bound CAL message publisher (CERT CAL-005368).
+///
+/// Obtained via [`AbstractServiceBusExt::create_writer`] (CERT CAL-005364).
+///
+/// # Error conditions on `write()`
+/// - `CalErrorKind::TopicUnavailable` — topic connection unavailable (CAL-005369)
+/// - `CalErrorKind::ResourcesUnavailable` — platform resources exhausted (CAL-016043)
+/// - `CalErrorKind::InvalidState` — ASB state prohibits writes (Table 5.9-2)
+///
+/// # CERT coverage
+/// CAL-005364, CAL-005368, CAL-005369, CAL-016043
+pub trait AbstractWriter<M: CalMessage>: Send + Sync {
+    /// The Client Topic string this writer is bound to (CERT CAL-005368).
+    fn topic(&self) -> &str;
+
+    /// Publishes `message` on the bound Client Topic.
+    ///
+    /// Returns `Err(TopicUnavailable)` if the topic is unreachable
+    /// (CERT CAL-005369), `Err(ResourcesUnavailable)` if transport resources
+    /// are exhausted (CERT CAL-016043), or `Err(InvalidState)` if the current
+    /// ASB state prohibits writes (Table 5.9-2).
+    fn write(&mut self, message: &M) -> CalResult<()>;
+
+    /// Shuts down this writer and releases all associated resources.
+    ///
+    /// `Box<Self>` consuming receiver prevents use-after-close at the type
+    /// level, consistent with [`AbstractServiceBus::close`].
+    fn close(self: Box<Self>) -> CalResult<()>;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AbstractReader
+// ════════════════════════════════════════════════════════════════════════════
+
+/// A topic-bound CAL message subscriber (CERT CAL-005378).
+///
+/// Obtained via [`AbstractServiceBusExt::create_reader`] (CERT CAL-005374).
+/// The topic connection and message buffering are established at creation
+/// time, before this call returns (CERT CAL-005394, CAL-016044).
+///
+/// # Callback vs polling — mutually exclusive (CAL-016050)
+///
+/// **Callback mode**: register one or more [`MessageListener`]s via
+/// `add_listener`. Each received message is dispatched to all listeners
+/// exactly once, then removed from the buffer (CAL-016045).
+/// Calling `read` or `read_no_wait` while any listener is registered returns
+/// `Err(OperationNotPermitted)` (CAL-016050).
+///
+/// **Polling mode**: call `read` or `read_no_wait` with no listeners
+/// registered. Each call removes the message from the buffer (CAL-016052).
+///
+/// # CERT coverage
+/// CAL-005374, CAL-005378, CAL-005379, CAL-005380, CAL-005391, CAL-005392,
+/// CAL-005394, CAL-005396, CAL-016044, CAL-016045, CAL-016046, CAL-016049,
+/// CAL-016050, CAL-016052
+pub trait AbstractReader<M: CalMessage>: Send + Sync {
+    /// The Client Topic string this reader is bound to (CERT CAL-005378).
+    fn topic(&self) -> &str;
+
+    // ── Callback interface ────────────────────────────────────────────────
+
+    /// Registers a message listener (CERT CAL-005391).
+    ///
+    /// Zero or more listeners may be registered. Each received message
+    /// is dispatched to every listener exactly once (CERT CAL-005392).
+    /// Once any listener is registered, `read` and `read_no_wait` return
+    /// `Err(OperationNotPermitted)` (CERT CAL-016050).
+    fn add_listener(&mut self, listener: Arc<dyn MessageListener<M>>) -> CalResult<()>;
+
+    /// Unregisters a previously registered listener (CERT CAL-005396).
+    ///
+    /// Identified by `Arc` pointer equality. No-op if not registered.
+    fn remove_listener(&mut self, listener: &Arc<dyn MessageListener<M>>) -> CalResult<()>;
+
+    // ── Polling interface ─────────────────────────────────────────────────
+
+    /// Blocking read — waits until a message arrives or the call is released.
+    ///
+    /// Blocks until:
+    /// 1. A message arrives — returns `Ok(Arc<M>)`, message removed from buffer (CAL-016052).
+    /// 2. `timeout` elapses — returns `Ok(None)`.
+    /// 3. This reader is closed — returns `Err(InvalidState)`.
+    /// 4. The ASB enters `Failed` — returns `Err(AsbFailed)`.
+    ///
+    /// `timeout: None` blocks indefinitely until a message or a close event.
+    ///
+    /// Returns `Err(OperationNotPermitted)` if any listener is registered
+    /// (CERT CAL-016050).
+    ///
+    /// # CERT coverage
+    /// CAL-016049, CAL-016050, CAL-016052
+    fn read(&mut self, timeout: Option<Duration>) -> CalResult<Option<Arc<M>>>;
+
+    /// Non-blocking read — returns a buffered message if one is available.
+    ///
+    /// - `Ok(Some(msg))` — message available; removed from buffer (CAL-016052).
+    /// - `Ok(None)` — buffer empty.
+    /// - `Err(OperationNotPermitted)` — listeners registered (CAL-016050).
+    /// - `Err(InvalidState)` — ASB state prohibits reads (Table 5.9-2).
+    /// - `Err(AsbFailed)` — ASB has permanently failed.
+    ///
+    /// # CERT coverage
+    /// CAL-005380, CAL-016050, CAL-016052
+    fn read_no_wait(&mut self) -> CalResult<Option<Arc<M>>>;
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────
+
+    /// Shuts down this reader and releases all associated resources.
+    ///
+    /// After `close()` returns, registered listeners receive no further
+    /// callbacks and any blocked `read` call returns `Err(InvalidState)`.
+    ///
+    /// `Box<Self>` consuming receiver prevents use-after-close.
+    fn close(self: Box<Self>) -> CalResult<()>;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AbstractServiceBusExt
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Extension trait adding typed factory methods to [`AbstractServiceBus`].
+///
+/// Separated so that `AbstractServiceBus` remains object-safe —
+/// `dyn AbstractServiceBus` can still be stored in `Arc<Mutex<...>>`.
+/// Factory methods are called through a concrete or generic reference.
+///
+/// # CERT coverage
+/// CAL-005364 (`create_writer`), CAL-005374 (`create_reader`)
+pub trait AbstractServiceBusExt<M: CalMessage>: AbstractServiceBus {
+    /// Creates a [`AbstractWriter`] bound to `topic` (CERT CAL-005364).
+    ///
+    /// Returns `Err(TopicUnavailable)` if `topic` is not a valid Client Topic
+    /// for this service (CERT CAL-005368, CAL-005369).
+    fn create_writer(&mut self, topic: &str) -> CalResult<Box<dyn AbstractWriter<M>>>;
+
+    /// Creates an [`AbstractReader`] bound to `topic` (CERT CAL-005374).
+    ///
+    /// The topic connection and message buffering are established before this
+    /// returns (CERT CAL-005394, CAL-016044).
+    ///
+    /// Returns `Err(TopicUnavailable)` if `topic` is not a valid Client Topic
+    /// (CERT CAL-005378).
+    fn create_reader(&mut self, topic: &str) -> CalResult<Box<dyn AbstractReader<M>>>;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -416,6 +599,25 @@ pub async fn get_asb(
 // ════════════════════════════════════════════════════════════════════════════
 // Unit tests
 // ════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod trait_object_safety {
+    use super::*;
+    use crate::uci::CalMessage;
+
+    struct Ping;
+    impl CalMessage for Ping {
+        fn message_type_name() -> &'static str { "test.Ping" }
+    }
+
+    // Compile-only assertions — fail at definition site if any trait is not object-safe.
+    #[allow(dead_code)]
+    type _W = Box<dyn AbstractWriter<Ping>>;
+    #[allow(dead_code)]
+    type _R = Box<dyn AbstractReader<Ping>>;
+    #[allow(dead_code)]
+    type _L = Arc<dyn MessageListener<Ping>>;
+}
 
 #[cfg(test)]
 mod tests {

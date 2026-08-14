@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 use slog::{Logger, trace};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use omq_tokio::{Endpoint, Options, Socket, SocketType};
 
@@ -40,7 +40,7 @@ pub struct ZmqAsb {
     transport_uri: String,
 
     /// Registered connection-status listeners.
-    listeners: Vec<Arc<Mutex<dyn AsbStatusListener>>>,
+    listeners: Vec<Arc<dyn AsbStatusListener>>,
 }
 
 impl ZmqAsb {
@@ -118,7 +118,7 @@ impl ZmqAsb {
         self.status.state = state;
         self.status.description = description.into();
         for listener in &self.listeners {
-            listener.lock().unwrap().on_status_change(&self.status);
+            listener.on_status_change(&self.status);
         }
         Ok(())
     }
@@ -159,7 +159,7 @@ impl AbstractServiceBus for ZmqAsb {
 
     fn register_status_listener(
         &mut self,
-        listener: Arc<Mutex<dyn AsbStatusListener>>,
+        listener: Arc<dyn AsbStatusListener>,
     ) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::register_status_listener()");
 
@@ -170,18 +170,18 @@ impl AbstractServiceBus for ZmqAsb {
             ));
         }
 
-        listener.lock().unwrap().on_status_change(&self.status);
+        listener.on_status_change(&self.status);
         self.listeners.push(listener);
         Ok(())
     }
 
     fn unregister_status_listener(
         &mut self,
-        listener: Arc<Mutex<dyn AsbStatusListener>>,
+        listener: &Arc<dyn AsbStatusListener>,
     ) -> CalResult<()> {
         trace!(self.logger, "ZmqAsb::unregister_status_listener()");
 
-        if let Some(index) = self.listeners.iter().position(|l| Arc::ptr_eq(l, &listener)) {
+        if let Some(index) = self.listeners.iter().position(|l| Arc::ptr_eq(l, listener)) {
             self.listeners.swap_remove(index);
             Ok(())
         } else {
@@ -251,7 +251,7 @@ mod tests {
     use omq_tokio::endpoint::Host;
     use rcal_macros::init_test_logger;
     use std::net::{IpAddr, Ipv4Addr};
-    use std::sync::atomic::{AtomicI32, AtomicU16, Ordering};
+    use std::sync::{atomic::{AtomicI32, AtomicU16, Ordering}, Mutex};
     use std::time::Duration;
 
     static NEXT_PORT: AtomicU16 = AtomicU16::new(55600);
@@ -415,7 +415,7 @@ mod tests {
     }
 
     impl AsbStatusListener for TestStatusListener {
-        fn on_status_change(&mut self, status: &AsbStatus) {
+        fn on_status_change(&self, status: &AsbStatus) {
             self.count.fetch_add(1, Ordering::SeqCst);
             *self.last_state.lock().unwrap() = status.state;
         }
@@ -428,45 +428,47 @@ mod tests {
         let logger = init_test_logger!();
         let mut a = make_bus(logger).await;
 
-        let l1 = Arc::new(Mutex::new(TestStatusListener::new()));
-        let l2 = Arc::new(Mutex::new(TestStatusListener::new()));
+        let l1 = Arc::new(TestStatusListener::new());
+        let l2 = Arc::new(TestStatusListener::new());
+        let l1d: Arc<dyn AsbStatusListener> = l1.clone();
+        let l2d: Arc<dyn AsbStatusListener> = l2.clone();
 
         assert_eq!(a.listeners.len(), 0);
         a.update_status(AsbConnectionState::Normal, "").unwrap();
-        assert_eq!(l1.lock().unwrap().call_count(), 0);
-        assert_eq!(l2.lock().unwrap().call_count(), 0);
+        assert_eq!(l1.call_count(), 0);
+        assert_eq!(l2.call_count(), 0);
 
-        a.register_status_listener(l1.clone()).unwrap();
+        a.register_status_listener(l1d.clone()).unwrap();
         assert_eq!(a.listeners.len(), 1);
-        assert_eq!(l1.lock().unwrap().call_count(), 1, "immediate callback on register");
-        assert_eq!(l1.lock().unwrap().last_state(), AsbConnectionState::Normal);
-        assert_eq!(l2.lock().unwrap().call_count(), 0);
+        assert_eq!(l1.call_count(), 1, "immediate callback on register");
+        assert_eq!(l1.last_state(), AsbConnectionState::Normal);
+        assert_eq!(l2.call_count(), 0);
 
         a.update_status(AsbConnectionState::Degraded, "degraded").unwrap();
-        assert_eq!(l1.lock().unwrap().call_count(), 2);
-        assert_eq!(l1.lock().unwrap().last_state(), AsbConnectionState::Degraded);
-        assert_eq!(l2.lock().unwrap().call_count(), 0);
+        assert_eq!(l1.call_count(), 2);
+        assert_eq!(l1.last_state(), AsbConnectionState::Degraded);
+        assert_eq!(l2.call_count(), 0);
 
-        a.register_status_listener(l2.clone()).unwrap();
+        a.register_status_listener(l2d.clone()).unwrap();
         assert_eq!(a.listeners.len(), 2);
-        assert_eq!(l1.lock().unwrap().call_count(), 2);
-        assert_eq!(l2.lock().unwrap().call_count(), 1, "immediate callback on register");
-        assert_eq!(l2.lock().unwrap().last_state(), AsbConnectionState::Degraded);
+        assert_eq!(l1.call_count(), 2);
+        assert_eq!(l2.call_count(), 1, "immediate callback on register");
+        assert_eq!(l2.last_state(), AsbConnectionState::Degraded);
 
         a.update_status(AsbConnectionState::Normal, "recovered").unwrap();
-        assert_eq!(l1.lock().unwrap().call_count(), 3);
-        assert_eq!(l1.lock().unwrap().last_state(), AsbConnectionState::Normal);
-        assert_eq!(l2.lock().unwrap().call_count(), 2);
-        assert_eq!(l2.lock().unwrap().last_state(), AsbConnectionState::Normal);
+        assert_eq!(l1.call_count(), 3);
+        assert_eq!(l1.last_state(), AsbConnectionState::Normal);
+        assert_eq!(l2.call_count(), 2);
+        assert_eq!(l2.last_state(), AsbConnectionState::Normal);
 
-        a.unregister_status_listener(l1.clone()).unwrap();
+        a.unregister_status_listener(&l1d).unwrap();
         assert_eq!(a.listeners.len(), 1);
 
         a.update_status(AsbConnectionState::Failed, "terminal").unwrap();
-        assert_eq!(l1.lock().unwrap().call_count(), 3, "l1 must not be called after unregister");
-        assert_eq!(l1.lock().unwrap().last_state(), AsbConnectionState::Normal);
-        assert_eq!(l2.lock().unwrap().call_count(), 3);
-        assert_eq!(l2.lock().unwrap().last_state(), AsbConnectionState::Failed);
+        assert_eq!(l1.call_count(), 3, "l1 must not be called after unregister");
+        assert_eq!(l1.last_state(), AsbConnectionState::Normal);
+        assert_eq!(l2.call_count(), 3);
+        assert_eq!(l2.last_state(), AsbConnectionState::Failed);
         drop(a);
     }
 
@@ -475,9 +477,9 @@ mod tests {
         let logger = init_test_logger!();
         let mut a = make_bus(logger).await;
 
-        let l = Arc::new(Mutex::new(TestStatusListener::new()));
-        a.register_status_listener(l.clone()).unwrap();
-        let result = a.register_status_listener(l.clone());
+        let ld: Arc<dyn AsbStatusListener> = Arc::new(TestStatusListener::new());
+        a.register_status_listener(ld.clone()).unwrap();
+        let result = a.register_status_listener(ld.clone());
         assert!(result.is_err(), "registering the same Arc twice must return Err");
     }
 
@@ -486,8 +488,8 @@ mod tests {
         let logger = init_test_logger!();
         let mut a = make_bus(logger).await;
 
-        let l = Arc::new(Mutex::new(TestStatusListener::new()));
-        let result = a.unregister_status_listener(l);
+        let ld: Arc<dyn AsbStatusListener> = Arc::new(TestStatusListener::new());
+        let result = a.unregister_status_listener(&ld);
         assert!(result.is_err(), "unregistering an unknown listener must return Err");
     }
 
