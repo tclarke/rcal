@@ -21,7 +21,7 @@
 
 pub use uuid::timestamp::context::ContextV1;
 
-use crate::calconfig::{CAL_CONFIG, UUIDFactoryType};
+use crate::calconfig::{UUIDFactory, UUIDFactoryType};
 use crate::uci::{CalError, CalErrorKind, CalResult};
 use std::fmt;
 use uuid::{Uuid, Variant as UuidVariant, Version as UuidVersion};
@@ -183,22 +183,23 @@ impl UUID {
         Self(Uuid::nil())
     }
 
-    /// Generate a new UUID using the configured type.
-    /// This is configured via the configuration section "UUIDFactoryType"
-    pub fn generate() -> Self {
-        let config = CAL_CONFIG.lock().unwrap();
-        match config.uuidfactory.type_ {
+    /// Generate a new UUID using the configured factory type.
+    ///
+    /// The `factory` is the `uuidfactory` section of the caller's `CalConfig`.
+    pub fn generate(factory: &UUIDFactory) -> Self {
+        match factory.type_ {
             UUIDFactoryType::Random => Self::generate_v4(),
             UUIDFactoryType::TimeBased => {
                 let ctx = ContextV1::new_random();
                 let ts = UuidTimestamp::now(&ctx);
-                if let Some(node) = config.uuidfactory.node {
+                if let Some(node) = factory.node {
                     Self::generate_v1(ts, &node.bytes())
                 } else {
-                    Self::generate_v1(
-                        ts,
-                        &mac_address::get_mac_address().unwrap().unwrap().bytes(),
-                    )
+                    let mac = mac_address::get_mac_address()
+                        .ok()
+                        .flatten()
+                        .unwrap_or(mac_address::MacAddress::new([0; 6]));
+                    Self::generate_v1(ts, &mac.bytes())
                 }
             }
         }
@@ -428,29 +429,23 @@ pub struct ServiceUuids {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::calconfig::UUIDFactoryType;
+    use crate::calconfig::{UUIDFactory, UUIDFactoryType};
     use rcal_macros::init_test_logger;
     use slog::debug;
 
     #[init_test_logger]
     #[test]
     fn test_uuid_factory() {
-        debug!(logger, "Default (random): {}", UUID::generate());
-        {
-            let mut config = CAL_CONFIG.lock().unwrap();
-            config.uuidfactory.type_ = UUIDFactoryType::TimeBased;
-            debug!(logger, "Change to time based");
-        }
-        debug!(logger, "TimeBased: {}", UUID::generate());
-        {
-            let mut config = CAL_CONFIG.lock().unwrap();
-            config.uuidfactory.node = mac_address::get_mac_address().unwrap();
-            debug!(
-                logger,
-                "Time based with local node {}",
-                mac_address::get_mac_address().unwrap().unwrap()
-            );
-        }
-        debug!(logger, "TimeBased: {}", UUID::generate());
+        let random_factory = UUIDFactory::default();
+        debug!(logger, "Default (random): {}", UUID::generate(&random_factory));
+
+        let tb_factory = UUIDFactory { type_: UUIDFactoryType::TimeBased, ..Default::default() };
+        debug!(logger, "Change to time based");
+        debug!(logger, "TimeBased: {}", UUID::generate(&tb_factory));
+
+        let node = mac_address::get_mac_address().expect("test requires a MAC address").expect("test requires a MAC address");
+        debug!(logger, "Time based with local node {}", node);
+        let tb_node_factory = UUIDFactory { type_: UUIDFactoryType::TimeBased, node: Some(node), ..Default::default() };
+        debug!(logger, "TimeBased: {}", UUID::generate(&tb_node_factory));
     }
 }
