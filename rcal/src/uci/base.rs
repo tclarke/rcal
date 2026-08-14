@@ -198,7 +198,7 @@ impl UUID {
                     let mac = mac_address::get_mac_address()
                         .ok()
                         .flatten()
-                        .unwrap_or_else(|| mac_address::MacAddress::new([0, 0, 0, 0, 0, 0]));
+                        .unwrap_or(mac_address::MacAddress::new([0; 6]));
                     Self::generate_v1(ts, &mac.bytes())
                 }
             }
@@ -443,9 +443,9 @@ mod tests {
         debug!(logger, "Change to time based");
         debug!(logger, "TimeBased: {}", UUID::generate(&tb_factory));
 
-        let node = mac_address::get_mac_address().expect("test requires a MAC address");
-        debug!(logger, "Time based with local node {}", node.unwrap());
-        let tb_node_factory = UUIDFactory { type_: UUIDFactoryType::TimeBased, node, ..Default::default() };
+        let node = mac_address::get_mac_address().expect("test requires a MAC address").expect("test requires a MAC address");
+        debug!(logger, "Time based with local node {}", node);
+        let tb_node_factory = UUIDFactory { type_: UUIDFactoryType::TimeBased, node: Some(node), ..Default::default() };
         debug!(logger, "TimeBased: {}", UUID::generate(&tb_node_factory));
     }
 }
