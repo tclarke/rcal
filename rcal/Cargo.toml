@@ -23,3 +23,7 @@ quick-xml = { version = "0.37", features = ["serialize"] }
 [[test]]
 name = "zmq_radio_dish"
 harness = true
+
+[[test]]
+name = "zmq_asb_system"
+harness = true

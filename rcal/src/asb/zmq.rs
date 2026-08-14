@@ -79,8 +79,13 @@ pub struct ZmqAsb {
     /// Shared, read-only CAL configuration.
     config: Arc<CalConfig>,
 
-    /// Transport URI — readers' DISH sockets connect here.
+    /// Transport URI — this ASB's RADIO binds here.
     transport_uri: String,
+
+    /// Remote RADIO URIs that readers' DISH sockets should connect to.
+    /// Empty means readers connect to `transport_uri` (single-process use).
+    /// Populate with [`add_receive_peer`] for multi-process topologies.
+    peer_uris: Vec<String>,
 
     /// Serialization format for messages on this transport.
     serialization_format: SerializationFormat,
@@ -152,9 +157,23 @@ impl ZmqAsb {
             logger,
             config,
             transport_uri,
+            peer_uris: Vec::new(),
             serialization_format: tconfig.format.clone(),
             listeners: Vec::new(),
         })
+    }
+
+    /// Registers a remote RADIO URI whose messages this ASB should receive.
+    ///
+    /// Readers created via [`AbstractServiceBusExt::create_reader`] will
+    /// connect their DISH sockets to every registered peer URI.  If no peers
+    /// are registered the DISH connects to this ASB's own `transport_uri`,
+    /// which is the correct behaviour for single-process tests.
+    ///
+    /// Call before the first `create_reader`; peers added after reader creation
+    /// are not picked up by existing readers.
+    pub fn add_receive_peer(&mut self, uri: impl Into<String>) {
+        self.peer_uris.push(uri.into());
     }
 
     /// Connect to the bus (future use: establish DISH subscriptions).
@@ -421,13 +440,22 @@ where
         topic: &str,
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractReader<M>>> {
-        // Parse URI now for fast-fail on invalid config (no network I/O).
-        let ep: Endpoint = self.transport_uri.parse().map_err(|e| {
-            CalError::new(
-                CalErrorKind::InitializationFailure,
-                format!("invalid transport URI: {e}"),
-            )
-        })?;
+        // Build the list of RADIO URIs for this reader's DISH to connect to.
+        // If no peers are registered, connect to our own RADIO (single-process use).
+        let connect_uris: Vec<String> = if self.peer_uris.is_empty() {
+            vec![self.transport_uri.clone()]
+        } else {
+            self.peer_uris.clone()
+        };
+        // Fast-fail on invalid URIs before spawning anything.
+        for uri in &connect_uris {
+            uri.parse::<Endpoint>().map_err(|e| {
+                CalError::new(
+                    CalErrorKind::InitializationFailure,
+                    format!("invalid transport URI '{uri}': {e}"),
+                )
+            })?;
+        }
 
         let (poll_tx, poll_rx) = std::sync::mpsc::channel::<Arc<M>>();
         let listeners: Arc<Mutex<Vec<Arc<dyn MessageListener<M>>>>> =
@@ -438,8 +466,13 @@ where
 
         let task = tokio::spawn(async move {
             let dish = Socket::new(SocketType::Dish, Options::default());
-            // Connection errors here are silent; polling will block/timeout.
-            let _ = dish.connect(ep).await;
+            // Connect to every registered peer RADIO. Connection errors are
+            // silent; polling will block/timeout if none succeed.
+            for uri in &connect_uris {
+                if let Ok(ep) = uri.parse::<Endpoint>() {
+                    let _ = dish.connect(ep).await;
+                }
+            }
             let _ = dish.join(topic_str).await;
 
             while let Ok(raw) = dish.recv().await {
@@ -1138,4 +1171,5 @@ mod tests {
 
         asb.close().unwrap();
     }
+
 }

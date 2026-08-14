@@ -25,7 +25,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-mod zmq;
+pub mod zmq;
 use zmq::{ZMQ_ASB_ID, ZmqAsb};
 
 // ════════════════════════════════════════════════════════════════════════════
