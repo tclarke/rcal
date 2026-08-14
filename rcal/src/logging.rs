@@ -147,80 +147,54 @@ fn build_sink(sink: &SinkConfig) -> Option<BoxDrain> {
 
     macro_rules! make_async_drain {
         ($drain:expr) => {{
-            let fused = $drain.fuse();
-            let async_drain = Async::new(fused).build().fuse();
+            let async_drain = Async::new($drain.fuse()).build().fuse();
             let filtered = slog::LevelFilter::new(async_drain, level).fuse();
-            let boxed: BoxDrain = Box::new(filtered);
-            with_filter(boxed, sink.subsystems.clone())
+            with_filter(Box::new(filtered), sink.subsystems.clone())
         }};
     }
 
-    macro_rules! make_drain_for_writer {
-        ($writer:expr) => {
-            match sink.format {
+    match &sink.sink_type {
+        SinkType::Stdout | SinkType::Stderr => {
+            let stderr = matches!(sink.sink_type, SinkType::Stderr);
+            Some(match sink.format {
                 LogFormat::Pretty => {
-                    // Files get plaintext even when "pretty" is requested
-                    let d = FullFormat::new(PlainDecorator::new($writer)).build();
-                    Some(make_async_drain!(d))
+                    let dec = if stderr {
+                        TermDecorator::new().stderr().build()
+                    } else {
+                        TermDecorator::new().stdout().build()
+                    };
+                    make_async_drain!(FullFormat::new(dec).build())
                 }
                 LogFormat::Basic => {
-                    let d = FullFormat::new(PlainDecorator::new($writer)).build();
-                    Some(make_async_drain!(d))
+                    let w: Box<dyn std::io::Write + Send + Sync> =
+                        if stderr { Box::new(std::io::stderr()) } else { Box::new(std::io::stdout()) };
+                    make_async_drain!(FullFormat::new(PlainDecorator::new(w)).build())
                 }
                 LogFormat::Logfmt => {
-                    let d = LogfmtDrain { writer: std::sync::Mutex::new($writer) };
-                    Some(make_async_drain!(d))
+                    let w: Box<dyn std::io::Write + Send + Sync> =
+                        if stderr { Box::new(std::io::stderr()) } else { Box::new(std::io::stdout()) };
+                    make_async_drain!(LogfmtDrain { writer: std::sync::Mutex::new(w) })
                 }
                 LogFormat::Json => {
-                    let d = slog_json::Json::default($writer);
-                    Some(make_async_drain!(d))
+                    let w: Box<dyn std::io::Write + Send + Sync> =
+                        if stderr { Box::new(std::io::stderr()) } else { Box::new(std::io::stdout()) };
+                    make_async_drain!(slog_json::Json::default(w))
                 }
-            }
-        };
-    }
-
-    match &sink.sink_type {
-        SinkType::Stdout => match sink.format {
-            LogFormat::Pretty => {
-                let d = FullFormat::new(TermDecorator::new().stdout().build()).build();
-                Some(make_async_drain!(d))
-            }
-            LogFormat::Basic => {
-                let d = FullFormat::new(PlainDecorator::new(std::io::stdout())).build();
-                Some(make_async_drain!(d))
-            }
-            LogFormat::Logfmt => {
-                let d = LogfmtDrain { writer: std::sync::Mutex::new(std::io::stdout()) };
-                Some(make_async_drain!(d))
-            }
-            LogFormat::Json => {
-                let d = slog_json::Json::default(std::io::stdout());
-                Some(make_async_drain!(d))
-            }
-        },
-        SinkType::Stderr => match sink.format {
-            LogFormat::Pretty => {
-                let d = FullFormat::new(TermDecorator::new().stderr().build()).build();
-                Some(make_async_drain!(d))
-            }
-            LogFormat::Basic => {
-                let d = FullFormat::new(PlainDecorator::new(std::io::stderr())).build();
-                Some(make_async_drain!(d))
-            }
-            LogFormat::Logfmt => {
-                let d = LogfmtDrain { writer: std::sync::Mutex::new(std::io::stderr()) };
-                Some(make_async_drain!(d))
-            }
-            LogFormat::Json => {
-                let d = slog_json::Json::default(std::io::stderr());
-                Some(make_async_drain!(d))
-            }
-        },
+            })
+        }
         SinkType::File { path } => {
             let file = OpenOptions::new().create(true).append(true).open(path)
                 .map_err(|e| eprintln!("rcal logging: failed to open log file '{}': {}", path, e))
                 .ok()?;
-            make_drain_for_writer!(file)
+            Some(match sink.format {
+                LogFormat::Pretty | LogFormat::Basic => {
+                    make_async_drain!(FullFormat::new(PlainDecorator::new(file)).build())
+                }
+                LogFormat::Logfmt => {
+                    make_async_drain!(LogfmtDrain { writer: std::sync::Mutex::new(file) })
+                }
+                LogFormat::Json => make_async_drain!(slog_json::Json::default(file)),
+            })
         }
     }
 }

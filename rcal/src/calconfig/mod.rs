@@ -119,20 +119,11 @@ impl Default for SinkConfig {
 }
 
 /// Logging configuration stored under `[system.logging]`.
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default)]
 #[serde(default)]
 pub struct LoggingConfig {
     pub default_level: LogLevel,
     pub sink: Vec<SinkConfig>,
-}
-
-impl Default for LoggingConfig {
-    fn default() -> Self {
-        Self {
-            default_level: LogLevel::Warn,
-            sink: Vec::new(),
-        }
-    }
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
