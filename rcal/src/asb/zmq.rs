@@ -335,8 +335,19 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
     }
 
     fn close(self: Box<Self>) -> CalResult<()> {
+        if let Some(buf) = &self.writer_buf {
+            let remaining = buf.lock().unwrap().len();
+            if remaining > 0 {
+                if let Some(task) = self.writer_task {
+                    task.abort();
+                }
+                return Err(CalError::new(
+                    CalErrorKind::AsbFailed,
+                    format!("close: {remaining} buffered messages dropped"),
+                ));
+            }
+        }
         if let Some(task) = self.writer_task {
-            // ponytail: abort forwarding task; unflushed messages in writer_buf are dropped
             task.abort();
         }
         Ok(())
@@ -1494,6 +1505,38 @@ mod tests {
         );
         assert_eq!(m2.as_deref().map(|m| m.value.as_str()), Some("c"));
         assert!(m3.is_none(), "only max_messages forwarded");
+
+        asb.close().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_writer_close_errors_on_unflushed() {
+        let logger = init_test_logger!();
+        let port = next_port();
+        let config = test_config_on_ports(&[port]);
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        let gate = asb.write_gate();
+        let _hold = gate.lock().await; // freeze the forwarding task
+
+        let writer_qos = TopicQos {
+            writer_buffer: Some(super::super::MessageBuffer { max_messages: 10 }),
+            ..TopicQos::default()
+        };
+        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+            &mut asb,
+            "test.topic",
+            writer_qos,
+        )
+        .unwrap();
+
+        writer.write(&TestMsg { value: "pending".into() }).unwrap();
+        // Gate still held: forwarding task has not drained; close must error.
+        let result = writer.close();
+        assert!(result.is_err(), "close must error when buffer is non-empty");
 
         asb.close().unwrap();
     }
