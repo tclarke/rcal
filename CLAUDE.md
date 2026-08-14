@@ -35,3 +35,7 @@ This is a standard cargo layout. all `.rs` and `.toml` files can be used as inpu
  - Purely abstract interfaces do not need unit tests unless you are explicitly directed to add them.
  - Always use modules based on the C++ namespaces in the "CERT C++"
  - Additional modules may be added for Rust specific tools, interfaces, and implementations. For example, the abstract service bus (ASB) interfaces will be in the `uci::base` module but ASB implementations can be in `uci::asb` or `asb` modules.
+
+# Coding review and checks
+ - After implementing a new feature and before commiting, run `cargo clippy` and fix any warnings.
+ - After committing a feature but before generating a pull request, use `/ponyttail:ponytail-review` to locate any over engineering. Do not automatically apply suggetions but present them as options.
