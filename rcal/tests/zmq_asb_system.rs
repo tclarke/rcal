@@ -7,14 +7,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rcal::asb::zmq::ZmqAsb;
-use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, MessageListener, TopicQos};
 use rcal::uci::CalMessage;
+use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, MessageListener, TopicQos};
 use rcal_macros::init_test_logger;
 
 // ── shared port allocator ─────────────────────────────────────────────────────
 
-static NEXT_PORT: std::sync::atomic::AtomicU16 =
-    std::sync::atomic::AtomicU16::new(56200);
+static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(56200);
 
 fn next_port() -> u16 {
     NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
@@ -84,29 +83,41 @@ async fn test_three_clients_shared_bus() {
     let mut bus = make_bus("Sys", next_port(), logger).await;
 
     let mut a_writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
-        &mut bus, "data", TopicQos::default(),
+        &mut bus,
+        "data",
+        TopicQos::default(),
     )
     .unwrap();
 
     let mut b_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus, "data", TopicQos::default(),
+        &mut bus,
+        "data",
+        TopicQos::default(),
     )
     .unwrap();
     let mut b_writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
-        &mut bus, "status", TopicQos::default(),
+        &mut bus,
+        "status",
+        TopicQos::default(),
     )
     .unwrap();
 
     let c_data_log: Arc<Mutex<Vec<i32>>> = Arc::new(Mutex::new(Vec::new()));
     let mut c_data_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus, "data", TopicQos::default(),
+        &mut bus,
+        "data",
+        TopicQos::default(),
     )
     .unwrap();
     c_data_reader
-        .add_listener(Arc::new(CollectListener { received: Arc::clone(&c_data_log) }))
+        .add_listener(Arc::new(CollectListener {
+            received: Arc::clone(&c_data_log),
+        }))
         .unwrap();
     let mut c_status_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus, "status", TopicQos::default(),
+        &mut bus,
+        "status",
+        TopicQos::default(),
     )
     .unwrap();
 
@@ -124,7 +135,11 @@ async fn test_three_clients_shared_bus() {
     assert_eq!([b1.value, b2.value, b3.value], [10, 20, 30], "B poll order");
     assert!(b_reader.read_no_wait().unwrap().is_none());
 
-    assert_eq!(*c_data_log.lock().unwrap(), [10, 20, 30], "C callback values");
+    assert_eq!(
+        *c_data_log.lock().unwrap(),
+        [10, 20, 30],
+        "C callback values"
+    );
 
     b_writer.write(&IntMsg { value: 1 }).unwrap();
     b_writer.write(&IntMsg { value: 2 }).unwrap();
@@ -167,29 +182,41 @@ async fn test_three_clients_separate_radios() {
     bus_c.add_receive_peer(format!("tcp://127.0.0.1:{port_b}"));
 
     let mut a_writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
-        &mut bus_a, "data", TopicQos::default(),
+        &mut bus_a,
+        "data",
+        TopicQos::default(),
     )
     .unwrap();
 
     let mut b_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus_b, "data", TopicQos::default(),
+        &mut bus_b,
+        "data",
+        TopicQos::default(),
     )
     .unwrap();
     let mut b_writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
-        &mut bus_b, "status", TopicQos::default(),
+        &mut bus_b,
+        "status",
+        TopicQos::default(),
     )
     .unwrap();
 
     let c_data_log: Arc<Mutex<Vec<i32>>> = Arc::new(Mutex::new(Vec::new()));
     let mut c_data_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus_c, "data", TopicQos::default(),
+        &mut bus_c,
+        "data",
+        TopicQos::default(),
     )
     .unwrap();
     c_data_reader
-        .add_listener(Arc::new(CollectListener { received: Arc::clone(&c_data_log) }))
+        .add_listener(Arc::new(CollectListener {
+            received: Arc::clone(&c_data_log),
+        }))
         .unwrap();
     let mut c_status_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus_c, "status", TopicQos::default(),
+        &mut bus_c,
+        "status",
+        TopicQos::default(),
     )
     .unwrap();
 
@@ -207,7 +234,11 @@ async fn test_three_clients_separate_radios() {
     assert_eq!([b1.value, b2.value, b3.value], [10, 20, 30], "B poll order");
     assert!(b_reader.read_no_wait().unwrap().is_none());
 
-    assert_eq!(*c_data_log.lock().unwrap(), [10, 20, 30], "C callback values");
+    assert_eq!(
+        *c_data_log.lock().unwrap(),
+        [10, 20, 30],
+        "C callback values"
+    );
 
     b_writer.write(&IntMsg { value: 1 }).unwrap();
     b_writer.write(&IntMsg { value: 2 }).unwrap();
