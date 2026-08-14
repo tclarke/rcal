@@ -44,6 +44,38 @@ fn serialize_message<M: serde::Serialize>(
     }
 }
 
+/// Validates that message type `M` matches the topic's registered type in
+/// the service config, if one is configured. No-op when the service or topic
+/// is not configured (CAL-005208).
+fn validate_topic_type<M: CalMessage>(
+    config: &crate::calconfig::CalConfig,
+    service_id: &str,
+    topic: &str,
+) -> CalResult<()> {
+    use crate::uci::CalErrorKind;
+    let Some(service) = config.get_service(&service_id.to_string()) else {
+        return Ok(());
+    };
+    let Some(topic_cfg) = service.topic.iter().find(|t| t.id == topic) else {
+        return Ok(());
+    };
+    let Some(registered_type) = &topic_cfg.type_ else {
+        return Ok(());
+    };
+    if registered_type != M::message_type_name() {
+        return Err(CalError::new(
+            CalErrorKind::TopicUnavailable,
+            format!(
+                "Topic '{}' is registered for type '{}' but got '{}' (CAL-005208)",
+                topic,
+                registered_type,
+                M::message_type_name()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn deserialize_message<M: serde::de::DeserializeOwned>(xml: &[u8]) -> CalResult<M> {
     let xml_str = std::str::from_utf8(xml)
         .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
@@ -503,6 +535,7 @@ where
         topic: &str,
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractWriter<M>>> {
+        validate_topic_type::<M>(&self.config, &self.service_id, topic)?;
         let tx = self
             .write_tx
             .as_ref()
@@ -563,6 +596,7 @@ where
         topic: &str,
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractReader<M>>> {
+        validate_topic_type::<M>(&self.config, &self.service_id, topic)?;
         // Build the list of RADIO URIs for this reader's DISH to connect to.
         // If no peers are registered, connect to our own RADIO (single-process use).
         let connect_uris: Vec<String> = if self.peer_uris.is_empty() {
@@ -1043,6 +1077,80 @@ mod tests {
                 "transition Failed → {next:?} must be rejected"
             );
         }
+    }
+
+    // ── Topic-type enforcement (CAL-005208) ──────────────────────────────
+
+    fn test_config_with_topic_type(port: u16, topic: &str, type_name: &str) -> Arc<CalConfig> {
+        use crate::calconfig;
+        use crate::uci::base::UUID;
+        const BASE_UUID: &str = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b";
+        let ns = UUID::parse_str(BASE_UUID).unwrap();
+        let sys_uuid = UUID::generate_v3(&ns, port.to_string().as_bytes());
+        let toml = format!(
+            "[system]\nid = \"TestSystem\"\nlabel = \"OMS Test System\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n\n\
+             [[transport]]\nid = \"TestZmq\"\ntype = \"zmq\"\nuri = \"tcp://127.0.0.1:{port}\"\n\n\
+             [[service]]\nid = \"Test Service\"\ntransport = \"TestZmq\"\n\n\
+             [[service.topic]]\nid = \"{topic}\"\ntype = \"{type_name}\"\n"
+        );
+        Arc::new(calconfig::parse_config(&toml).unwrap())
+    }
+
+    #[init_test_logger]
+    #[tokio::test]
+    async fn test_create_writer_wrong_type_returns_err() {
+        let port = next_port();
+        let config = test_config_with_topic_type(port, "test.topic", "some.OtherMsg");
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        let result = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+            &mut asb,
+            "test.topic",
+            TopicQos::default(),
+        );
+        assert!(result.is_err(), "create_writer must fail on type mismatch (CAL-005208)");
+    }
+
+    #[init_test_logger]
+    #[tokio::test]
+    async fn test_create_reader_wrong_type_returns_err() {
+        let port = next_port();
+        let config = test_config_with_topic_type(port, "test.topic", "some.OtherMsg");
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        let result = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+            &mut asb,
+            "test.topic",
+            TopicQos::default(),
+        );
+        assert!(result.is_err(), "create_reader must fail on type mismatch (CAL-005208)");
+    }
+
+    #[init_test_logger]
+    #[tokio::test]
+    async fn test_create_writer_correct_type_succeeds() {
+        let port = next_port();
+        let config = test_config_with_topic_type(port, "test.topic", "test.TestMsg");
+        let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
+        let mut asb = ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
+
+        assert!(
+            <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+                &mut asb,
+                "test.topic",
+                TopicQos::default(),
+            )
+            .is_ok(),
+            "create_writer must succeed when type matches"
+        );
     }
 
     // ── Writer tests ──────────────────────────────────────────────────────
