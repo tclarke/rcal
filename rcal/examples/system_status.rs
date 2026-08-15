@@ -13,7 +13,7 @@ fn main() {
 }
 
 #[cfg(rcal_has_xsd)]
-use rcal::uci::types::system_status_type::SystemStatusType;
+use rcal::uci::types::SystemStatus;
 
 #[cfg(rcal_has_xsd)]
 const TOPIC: &str = "SystemStatus";
@@ -28,31 +28,32 @@ async fn main() {
     use std::time::Duration;
 
     use rcal::asb::zmq::ZmqAsb;
-    use rcal::asb::{AbstractServiceBusCreateMessage, AbstractServiceBusExt, TopicQos};
+    use rcal::asb::{AbstractServiceBus, AbstractServiceBusCreateMessage, AbstractServiceBusExt, TopicQos};
     use slog::info;
 
     let config = Arc::new(rcal_config);
     let transport_id = config
         .system
         .default_transport
-        .as_deref()
-        .unwrap_or("default");
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
     let tconfig = config
-        .get_transport(transport_id)
-        .unwrap_or_else(|| panic!("transport '{transport_id}' not in config"));
+        .get_transport(&transport_id)
+        .unwrap_or_else(|| panic!("transport '{transport_id}' not in config"))
+        .clone();
 
     let mut bus =
-        ZmqAsb::new("SystemStatusExample", transport_id, root_logger.clone(), config, tconfig)
+        ZmqAsb::new("SystemStatusExample", transport_id, root_logger.clone(), config, &tconfig)
             .await
             .expect("ASB init failed");
 
-    let mut writer = bus
-        .create_writer::<SystemStatusType>(TOPIC, TopicQos::default())
-        .expect("create_writer failed");
+    let mut writer =
+        <ZmqAsb as AbstractServiceBusExt<SystemStatus>>::create_writer(&mut bus, TOPIC, TopicQos::default())
+            .expect("create_writer failed");
 
     // Create message once; mutate each iteration.
     let mut msg = bus
-        .create_message::<SystemStatusType>()
+        .create_message::<SystemStatus>()
         .expect("create_message failed");
 
     for i in 0..ITERATIONS {

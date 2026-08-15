@@ -273,7 +273,11 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
             SimpleTypeKind::Restriction(base) => gen_type_alias(&st.name, base),
         };
         fs::write(out_dir.join(&file_name), code).unwrap();
-        mod_entries.push(format!("/// Generated module for XSD type `{}`.\npub mod {};", st.name, snake(&st.name)));
+        let mod_name = snake(&st.name);
+        mod_entries.push(format!(
+            "/// Generated module for XSD type `{}`.\npub mod {mod_name};\npub use {mod_name}::*;",
+            st.name
+        ));
     }
 
     // Invert: complex-type name → element name (for CalMessage impl on the struct)
@@ -291,17 +295,20 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         let file_name = format!("{}.rs", snake(&ct.name));
         let code = gen_struct(ct, &simple_type_map, &type_to_element, schema.namespace.as_deref());
         fs::write(out_dir.join(&file_name), code).unwrap();
-        mod_entries.push(format!("/// Generated module for XSD type `{}`.\npub mod {};", ct.name, snake(&ct.name)));
+        let mod_name = snake(&ct.name);
+        mod_entries.push(format!(
+            "/// Generated module for XSD type `{}`.\npub mod {mod_name};\npub use {mod_name}::*;",
+            ct.name
+        ));
     }
 
     // Generate element type aliases
     for el in &schema.elements {
         let type_local = el.type_.rfind(':').map(|i| &el.type_[i + 1..]).unwrap_or(&el.type_);
-        let type_module = snake(type_local);
         let type_pascal = pascal(type_local);
         let el_module = snake(&el.name);
         let el_pascal = pascal(&el.name);
-        let type_path = format!("crate::uci::types::{type_module}::{type_pascal}");
+        let type_path = format!("crate::uci::types::{type_pascal}");
         let type_name_fq = format!("{}.{type_local}", ns_prefix);
         let code = format!(
             "// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n\
@@ -323,7 +330,10 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
             el_name = el.name,
         );
         fs::write(out_dir.join(format!("{el_module}.rs")), code).unwrap();
-        mod_entries.push(format!("/// Generated module for XSD element `{}`.\npub mod {el_module};", el.name));
+        mod_entries.push(format!(
+            "/// Generated module for XSD element `{}`.\npub mod {el_module};\npub use {el_module}::*;",
+            el.name
+        ));
     }
 
     // Write mod.rs
@@ -567,6 +577,6 @@ fn qualify_type(type_local: &str, base_type: &str) -> String {
     if base_type != type_local {
         return base_type.to_string();
     }
-    // User-defined complex or enum type: qualify by module
-    format!("crate::uci::types::{}::{}", snake(type_local), pascal(type_local))
+    // User-defined complex or enum type: flat path in uci::types
+    format!("crate::uci::types::{}", pascal(type_local))
 }
