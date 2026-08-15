@@ -183,14 +183,13 @@ fn parse_xsd_file(
                             {
                                 schema.elements.push(Element { name, type_ });
                             }
-                        } else if let Some(ct) = current_complex.as_mut() {
-                            if let (Some(name), Some(type_)) =
+                        } else if let Some(ct) = current_complex.as_mut()
+                            && let (Some(name), Some(type_)) =
                                 (attr(e, "name"), attr(e, "type"))
-                            {
-                                let optional =
-                                    attr(e, "minOccurs").map(|v| v == "0").unwrap_or(false);
-                                ct.fields.push(Field { name, type_, optional });
-                            }
+                        {
+                            let optional =
+                                attr(e, "minOccurs").map(|v| v == "0").unwrap_or(false);
+                            ct.fields.push(Field { name, type_, optional });
                         }
                     }
                     _ => {}
