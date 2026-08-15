@@ -30,10 +30,11 @@ fn main() {
 
     println!("cargo:rerun-if-changed={xsd_path}");
 
+    let xsd_path = PathBuf::from(&xsd_path);
     let xsd_content = fs::read_to_string(&xsd_path)
-        .unwrap_or_else(|e| panic!("Cannot read RCAL_XSD_PATH={xsd_path}: {e}"));
+        .unwrap_or_else(|e| panic!("Cannot read RCAL_XSD_PATH={}: {e}", xsd_path.display()));
 
-    let schema = parse_xsd(&xsd_content);
+    let schema = parse_xsd_file(&xsd_path, &xsd_content, &mut std::collections::HashSet::new());
 
     let schema_version = std::env::var("RCAL_SCHEMA_VERSION").unwrap_or_else(|_| {
         schema.version.clone().unwrap_or_else(|| "unknown".to_string())
@@ -92,7 +93,17 @@ struct Element {
 // XSD parser
 // ════════════════════════════════════════════════════════════════════════════
 
-fn parse_xsd(content: &str) -> Schema {
+/// Parse an XSD file, resolving `xs:include` relative to `xsd_path`'s directory.
+/// `seen` prevents infinite inclusion loops.
+fn parse_xsd_file(
+    xsd_path: &Path,
+    content: &str,
+    seen: &mut std::collections::HashSet<PathBuf>,
+) -> Schema {
+    let canonical = xsd_path.canonicalize().unwrap_or_else(|_| xsd_path.to_path_buf());
+    seen.insert(canonical);
+    let base_dir = xsd_path.parent().unwrap_or(Path::new("."));
+
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
 
@@ -111,6 +122,29 @@ fn parse_xsd(content: &str) -> Schema {
                         schema.version = attr(e, "version");
                         schema.namespace = attr(e, "targetNamespace");
                     }
+                    "include" => {
+                        if let Some(loc) = attr(e, "schemaLocation") {
+                            let inc_path = base_dir.join(&loc);
+                            let canonical_inc =
+                                inc_path.canonicalize().unwrap_or_else(|_| inc_path.clone());
+                            if seen.contains(&canonical_inc) {
+                                continue;
+                            }
+                            let inc_content = fs::read_to_string(&inc_path).unwrap_or_else(|e| {
+                                panic!(
+                                    "xs:include '{}' not found (included from '{}'): {e}",
+                                    inc_path.display(),
+                                    xsd_path.display()
+                                )
+                            });
+                            println!("cargo:rerun-if-changed={}", inc_path.display());
+                            let inc_schema =
+                                parse_xsd_file(&inc_path, &inc_content, seen);
+                            schema.simple_types.extend(inc_schema.simple_types);
+                            schema.complex_types.extend(inc_schema.complex_types);
+                            schema.elements.extend(inc_schema.elements);
+                        }
+                    }
                     "simpleType" => {
                         if let Some(name) = attr(e, "name") {
                             current_simple = Some(SimpleType {
@@ -121,10 +155,10 @@ fn parse_xsd(content: &str) -> Schema {
                     }
                     "complexType" => {
                         if let Some(name) = attr(e, "name") {
-                            let abstract_ = attr(e, "abstract")
-                                .map(|v| v == "true")
-                                .unwrap_or(false);
-                            current_complex = Some(ComplexType { name, abstract_, fields: vec![] });
+                            let abstract_ =
+                                attr(e, "abstract").map(|v| v == "true").unwrap_or(false);
+                            current_complex =
+                                Some(ComplexType { name, abstract_, fields: vec![] });
                         }
                     }
                     "restriction" => {
@@ -132,7 +166,8 @@ fn parse_xsd(content: &str) -> Schema {
                         restriction_base = attr(e, "base");
                     }
                     "enumeration" => {
-                        if let (Some(st), Some(val)) = (current_simple.as_mut(), attr(e, "value"))
+                        if let (Some(st), Some(val)) =
+                            (current_simple.as_mut(), attr(e, "value"))
                         {
                             if let SimpleTypeKind::Enum(ref mut vals) = st.kind {
                                 vals.push(val);
@@ -142,7 +177,6 @@ fn parse_xsd(content: &str) -> Schema {
                         }
                     }
                     "element" => {
-                        // Top-level element (direct child of schema) has no parent complex type
                         if current_complex.is_none() && current_simple.is_none() {
                             if let (Some(name), Some(type_)) =
                                 (attr(e, "name"), attr(e, "type"))
@@ -150,13 +184,11 @@ fn parse_xsd(content: &str) -> Schema {
                                 schema.elements.push(Element { name, type_ });
                             }
                         } else if let Some(ct) = current_complex.as_mut() {
-                            // Field inside a complexType
                             if let (Some(name), Some(type_)) =
                                 (attr(e, "name"), attr(e, "type"))
                             {
-                                let optional = attr(e, "minOccurs")
-                                    .map(|v| v == "0")
-                                    .unwrap_or(false);
+                                let optional =
+                                    attr(e, "minOccurs").map(|v| v == "0").unwrap_or(false);
                                 ct.fields.push(Field { name, type_, optional });
                             }
                         }
@@ -169,7 +201,6 @@ fn parse_xsd(content: &str) -> Schema {
                 match local.as_str() {
                     "simpleType" => {
                         if let Some(mut st) = current_simple.take() {
-                            // If we saw a restriction but no enumerations, record base type
                             if in_restriction
                                 && let SimpleTypeKind::Restriction(_) = &st.kind
                                 && let Some(base) = restriction_base.take()
@@ -187,13 +218,13 @@ fn parse_xsd(content: &str) -> Schema {
                         }
                     }
                     "restriction" => {
-                        in_restriction = false;
+                        // Keep in_restriction/restriction_base until End("simpleType") resets them
                     }
                     _ => {}
                 }
             }
             Ok(Event::Eof) => break,
-            Err(e) => panic!("XSD parse error: {e}"),
+            Err(e) => panic!("XSD parse error in '{}': {e}", xsd_path.display()),
             _ => {}
         }
     }
@@ -243,7 +274,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
             SimpleTypeKind::Restriction(base) => gen_type_alias(&st.name, base),
         };
         fs::write(out_dir.join(&file_name), code).unwrap();
-        mod_entries.push(format!("pub mod {};", snake(&st.name)));
+        mod_entries.push(format!("/// Generated module for XSD type `{}`.\npub mod {};", st.name, snake(&st.name)));
     }
 
     // Invert: complex-type name → element name (for CalMessage impl on the struct)
@@ -261,39 +292,80 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         let file_name = format!("{}.rs", snake(&ct.name));
         let code = gen_struct(ct, &simple_type_map, &type_to_element, schema.namespace.as_deref());
         fs::write(out_dir.join(&file_name), code).unwrap();
-        mod_entries.push(format!("pub mod {};", snake(&ct.name)));
+        mod_entries.push(format!("/// Generated module for XSD type `{}`.\npub mod {};", ct.name, snake(&ct.name)));
     }
 
     // Generate element type aliases
     for el in &schema.elements {
         let type_local = el.type_.rfind(':').map(|i| &el.type_[i + 1..]).unwrap_or(&el.type_);
-        let module = snake(type_local);
-        let alias_line = format!(
-            "pub use crate::uci::types::{}::{} as {};",
-            module,
-            pascal(type_local),
-            pascal(&el.name)
+        let type_module = snake(type_local);
+        let type_pascal = pascal(type_local);
+        let el_module = snake(&el.name);
+        let el_pascal = pascal(&el.name);
+        let type_path = format!("crate::uci::types::{type_module}::{type_pascal}");
+        let type_name_fq = format!("{}.{type_local}", ns_prefix);
+        let code = format!(
+            "// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n\
+             /// XSD element `{el_name}`. Wraps [`{type_pascal}`]({type_path}).\n\
+             #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n\
+             #[serde(transparent)]\n\
+             pub struct {el_pascal}(pub {type_path});\n\n\
+             impl std::ops::Deref for {el_pascal} {{\n\
+             \x20   type Target = {type_path};\n\
+             \x20   fn deref(&self) -> &Self::Target {{ &self.0 }}\n\
+             }}\n\n\
+             impl std::ops::DerefMut for {el_pascal} {{\n\
+             \x20   fn deref_mut(&mut self) -> &mut Self::Target {{ &mut self.0 }}\n\
+             }}\n\n\
+             impl crate::uci::CalMessage for {el_pascal} {{\n\
+             \x20   fn message_type_name() -> &'static str {{ \"{type_name_fq}\" }}\n\
+             \x20   fn cal_create() -> Self {{ Self({type_path}::_cal_create()) }}\n\
+             }}\n",
+            el_name = el.name,
         );
-        // Append to the mod.rs as a re-export rather than a separate file
-        mod_entries.push(alias_line);
+        fs::write(out_dir.join(format!("{el_module}.rs")), code).unwrap();
+        mod_entries.push(format!("/// Generated module for XSD element `{}`.\npub mod {el_module};", el.name));
     }
 
     // Write mod.rs
-    let mod_content = mod_entries.join("\n") + "\n";
+    let mod_content = format!(
+        "// @generated — do not edit.\n\n{}\n",
+        mod_entries.join("\n")
+    );
     fs::write(out_dir.join("mod.rs"), mod_content).unwrap();
 }
 
 fn gen_enum(name: &str, vals: &[String], _ns_prefix: &str) -> String {
     let pascal_name = pascal(name);
-    let default_variant = vals.first().map(|v| enum_variant(v)).unwrap_or_default();
+
+    // Deduplicate variant names: same Rust identifier may map to multiple XSD values.
+    // Keep first occurrence; subsequent duplicates get a numeric suffix.
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let variants: Vec<(String, &str)> = vals
+        .iter()
+        .map(|v| {
+            let base = enum_variant(v);
+            let count = seen.entry(base.clone()).or_insert(0);
+            *count += 1;
+            let variant = if *count == 1 {
+                base
+            } else {
+                format!("{base}{}", *count)
+            };
+            (variant, v.as_str())
+        })
+        .collect();
+
+    let default_variant = variants.first().map(|(v, _)| v.as_str()).unwrap_or("").to_string();
 
     let mut out = String::new();
+    out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n");
+    out.push_str(&format!("/// XSD simpleType `{name}`.\n"));
     out.push_str("#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]\n");
     out.push_str(&format!("#[serde(rename = \"{pascal_name}\")]\n"));
     out.push_str(&format!("pub enum {pascal_name} {{\n"));
-    for v in vals {
-        let variant = enum_variant(v);
-        out.push_str(&format!("    #[serde(rename = \"{v}\")]\n    {variant},\n"));
+    for (variant, orig) in &variants {
+        out.push_str(&format!("    /// `{orig}` variant.\n    #[serde(rename = \"{orig}\")]\n    {variant},\n"));
     }
     out.push_str("}\n\n");
     out.push_str(&format!("impl Default for {pascal_name} {{\n"));
@@ -305,7 +377,7 @@ fn gen_enum(name: &str, vals: &[String], _ns_prefix: &str) -> String {
 fn gen_type_alias(name: &str, base: &str) -> String {
     let pascal_name = pascal(name);
     let rust_type = xsd_to_rust(base);
-    format!("pub type {pascal_name} = {rust_type};\n")
+    format!("// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n/// XSD simpleType `{name}`.\npub type {pascal_name} = {rust_type};\n")
 }
 
 fn gen_struct(
@@ -340,13 +412,15 @@ fn gen_struct(
                 rust_type
             };
 
+            let optional_tag = if f.optional { " (optional)" } else { "" };
+            let doc = format!("    /// XSD element `{}`{optional_tag}.\n", f.name);
             let serde_rename = format!("    #[serde(rename = \"{}\")]\n", f.name);
             let maybe_skip = if f.optional {
                 "    #[serde(skip_serializing_if = \"Option::is_none\")]\n"
             } else {
                 ""
             };
-            format!("{serde_rename}{maybe_skip}    pub {field_name}: {full_type},\n")
+            format!("{doc}{serde_rename}{maybe_skip}    pub {field_name}: {full_type},\n")
         })
         .collect();
 
@@ -365,9 +439,11 @@ fn gen_struct(
         })
         .collect();
 
-    let ns = namespace.unwrap_or("");
+    let _ns = namespace.unwrap_or("");
 
     let mut out = String::new();
+    out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n");
+    out.push_str(&format!("/// XSD complexType `{}`.\n", ct.name));
     out.push_str("#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n");
     out.push_str(&format!("#[serde(rename = \"{pascal_name}\")]\n"));
     out.push_str(&format!("pub struct {pascal_name} {{\n"));
@@ -376,14 +452,13 @@ fn gen_struct(
     if ct.abstract_ {
         out.push_str("}\n\n");
         out.push_str(&format!("impl crate::uci::CalSubMessage for {pascal_name} {{}}\n"));
-    } else if let Some(_element_name) = type_to_element.get(ct.name.as_str()) {
-        let type_name_fq = format!("{ns}.{}", ct.name);
+    } else if type_to_element.contains_key(ct.name.as_str()) {
+        // Top-level element maps to this type; CalMessage goes on the element newtype, not here.
         out.push_str("    #[serde(skip)]\n");
         out.push_str("    _priv: crate::uci::sealed::Token,\n");
         out.push_str("}\n\n");
-        out.push_str(&format!("impl crate::uci::CalMessage for {pascal_name} {{\n"));
-        out.push_str(&format!("    fn message_type_name() -> &'static str {{ \"{type_name_fq}\" }}\n"));
-        out.push_str("    fn cal_create() -> Self {\n");
+        out.push_str(&format!("impl {pascal_name} {{\n"));
+        out.push_str("    pub(crate) fn _cal_create() -> Self {\n");
         out.push_str("        Self {\n");
         out.push_str(&field_defaults);
         out.push_str("            _priv: crate::uci::sealed::Token(()),\n");
@@ -410,6 +485,14 @@ fn pascal(s: &str) -> String {
     local.to_string()
 }
 
+const RUST_KEYWORDS: &[&str] = &[
+    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn",
+    "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
+    "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe",
+    "use", "where", "while", "async", "await", "dyn", "abstract", "become", "box", "do",
+    "final", "macro", "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
+];
+
 fn snake(s: &str) -> String {
     let local = s.rfind(':').map(|i| &s[i + 1..]).unwrap_or(s);
     let mut out = String::new();
@@ -426,18 +509,21 @@ fn snake(s: &str) -> String {
             prev_upper = false;
         }
     }
+    if RUST_KEYWORDS.contains(&out.as_str()) {
+        out.push('_');
+    }
     out
 }
 
 fn enum_variant(s: &str) -> String {
-    // OPERATIONAL → Operational, DEGRADED → Degraded
     let mut chars = s.chars();
     match chars.next() {
         None => String::new(),
-        Some(first) => {
-            first.to_uppercase().collect::<String>()
-                + &chars.as_str().to_lowercase()
+        Some(first) if first.is_ascii_digit() => {
+            // Prefix digit-starting values so the identifier is valid
+            format!("V{}{}", first, chars.as_str().to_lowercase())
         }
+        Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
     }
 }
 
