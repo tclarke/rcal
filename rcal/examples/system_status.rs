@@ -22,7 +22,7 @@ const TOPIC: &str = "SystemStatus";
 const ITERATIONS: usize = 10;
 
 #[cfg(rcal_has_xsd)]
-#[rcal_macros::rcal_main]
+#[rcal_macros::rcal_main(config = "examples/CALConfig.toml")]
 async fn main() {
     use std::sync::Arc;
     use std::time::Duration;

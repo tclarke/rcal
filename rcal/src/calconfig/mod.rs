@@ -46,8 +46,8 @@ impl fmt::Display for CalConfig {
 pub enum LogLevel {
     Trace,
     Debug,
-    Info,
     #[default]
+    Info,
     Warn,
     Error,
 }

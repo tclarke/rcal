@@ -5,14 +5,14 @@
 //! worker thread count).
 //!
 //! Run:
-//!   RCAL_CONFIG=CALConfig.toml cargo run --example custom_tokio
+//!   cargo run --example custom_tokio
 
 use std::sync::Arc;
 
 use rcal::asb;
 use slog::{error, info, warn};
 
-#[rcal_macros::rcal_main(tokio_main = false, logger = "my_logger")]
+#[rcal_macros::rcal_main(tokio_main = false, logger = "my_logger", config = "examples/CALConfig.toml")]
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     info!(my_logger, "custom_tokio example starting";
