@@ -273,11 +273,11 @@ impl AbstractServiceBus for ZmqAsb {
     }
 
     fn oms_schema_version(&self) -> &str {
-        "2.1.0_test_schema"
+        env!("RCAL_SCHEMA_VERSION")
     }
 
     fn oms_schema_compiler_version(&self) -> &str {
-        "0.1.0"
+        env!("RCAL_OMS_COMPILER_VERSION")
     }
 
     fn connection_status(&self) -> &AsbStatus {
@@ -799,6 +799,9 @@ mod tests {
         fn message_type_name() -> &'static str {
             "test.TestMsg"
         }
+        fn cal_create() -> Self {
+            Self { value: String::new() }
+        }
     }
 
     // ── Basic construction ────────────────────────────────────────────────
@@ -807,8 +810,8 @@ mod tests {
     #[tokio::test]
     async fn test_check_creation() {
         let a = make_bus(logger).await;
-        assert_eq!(a.oms_schema_version(), "2.1.0_test_schema");
-        assert_eq!(a.oms_schema_compiler_version(), "0.1.0");
+        assert_eq!(a.oms_schema_version(), env!("RCAL_SCHEMA_VERSION"));
+        assert_eq!(a.oms_schema_compiler_version(), env!("RCAL_OMS_COMPILER_VERSION"));
         assert_eq!(a.service_identifier(), "Test Service");
         assert_eq!(a.asb_identifier(), "TestZmq");
         assert_eq!(

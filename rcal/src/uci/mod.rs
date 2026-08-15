@@ -13,6 +13,21 @@
 use std::fmt;
 
 pub mod base;
+/// Generated UCI message types, produced from an XSD by the build script.
+pub mod types;
+
+// ════════════════════════════════════════════════════════════════════════════
+// Sealed constructor token
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Crate-private construction token embedded in generated message structs.
+///
+/// Users of the library can see struct fields but cannot construct a message
+/// struct directly — only `AbstractServiceBus::create_message` may do so.
+pub mod sealed {
+    /// Opaque token that prevents direct construction of generated message structs.
+    pub struct Token(pub(crate) ());
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // CalMessage / CalSubMessage
@@ -34,6 +49,15 @@ pub trait CalMessage: Send + Sync + 'static {
     ///
     /// Example: `"uci.core.SystemStatusType"`
     fn message_type_name() -> &'static str
+    where
+        Self: Sized;
+
+    /// Creates a default-initialised instance of this message type.
+    ///
+    /// Not part of the public API — use
+    /// [`AbstractServiceBusCreateMessage::create_message`] instead.
+    #[doc(hidden)]
+    fn cal_create() -> Self
     where
         Self: Sized;
 }

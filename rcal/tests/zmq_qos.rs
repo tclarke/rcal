@@ -35,7 +35,7 @@ fn test_config(port: u16) -> Arc<rcal::calconfig::CalConfig> {
 
 async fn make_bus(label: &str, port: u16, logger: slog::Logger) -> ZmqAsb {
     let config = test_config(port);
-    let tconfig = config.get_transport(&"T".to_string()).unwrap();
+    let tconfig = config.get_transport("T").unwrap();
     ZmqAsb::new(label, "T", logger, config.clone(), tconfig)
         .await
         .unwrap()
@@ -51,6 +51,9 @@ struct QosMsg {
 impl CalMessage for QosMsg {
     fn message_type_name() -> &'static str {
         "test.QosMsg"
+    }
+    fn cal_create() -> Self {
+        Self { value: String::new() }
     }
 }
 
