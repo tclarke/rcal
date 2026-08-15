@@ -707,8 +707,8 @@ mod trait_object_safety {
 
     struct Ping;
     impl CalMessage for Ping {
-        fn message_type_name() -> &'static str {
-            "test.Ping"
+        fn message_type_name() -> crate::QName {
+            "test.Ping".into()
         }
         fn cal_create() -> Self {
             Self

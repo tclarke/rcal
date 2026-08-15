@@ -61,7 +61,7 @@ fn validate_topic_type<M: CalMessage>(
     let Some(registered_type) = &topic_cfg.type_ else {
         return Ok(());
     };
-    if registered_type != M::message_type_name() {
+    if M::message_type_name() != registered_type.as_str() {
         return Err(CalError::new(
             CalErrorKind::TopicUnavailable,
             format!(
@@ -796,8 +796,8 @@ mod tests {
     }
 
     impl CalMessage for TestMsg {
-        fn message_type_name() -> &'static str {
-            "test.TestMsg"
+        fn message_type_name() -> crate::QName {
+            "test.TestMsg".into()
         }
         fn cal_create() -> Self {
             Self { value: String::new() }

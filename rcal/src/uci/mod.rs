@@ -26,6 +26,7 @@ pub mod types;
 /// struct directly — only `AbstractServiceBus::create_message` may do so.
 pub mod sealed {
     /// Opaque token that prevents direct construction of generated message structs.
+    #[derive(Debug, Clone, Default)]
     pub struct Token(pub(crate) ());
 }
 
@@ -47,8 +48,12 @@ pub trait CalMessage: Send + Sync + 'static {
     /// OMS Message Schema. Used to enforce one-type-per-topic association
     /// (CERT CAL-005208).
     ///
-    /// Example: `"uci.core.SystemStatusType"`
-    fn message_type_name() -> &'static str
+    /// The returned [`QName`](crate::QName) carries the namespace URI and local
+    /// name; its `Display` form is the shortest resolvable representation as
+    /// determined when the code was generated (bare local name for the default
+    /// namespace, `prefix:local` for mapped namespaces, Clark notation as a
+    /// last resort).
+    fn message_type_name() -> crate::QName
     where
         Self: Sized;
 
