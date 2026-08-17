@@ -355,7 +355,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         fs::write(out_dir.join(&file_name), code).unwrap();
         let mod_name = snake(&st.name);
         mod_entries.push(format!(
-            "/// Generated module for XSD type `{}`.\\npub mod {mod_name};\\npub use {mod_name}::*;",
+            "/// Generated module for XSD type `{}`.\npub mod {mod_name};\npub use {mod_name}::*;",
             st.name
         ));
     }
@@ -378,7 +378,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         fs::write(out_dir.join(&file_name), code).unwrap();
         let mod_name = snake(&ct.name);
         mod_entries.push(format!(
-            "/// Generated module for XSD type `{}`.\\npub mod {mod_name};\\npub use {mod_name}::*;",
+            "/// Generated module for XSD type `{}`.\npub mod {mod_name};\npub use {mod_name}::*;",
             ct.name
         ));
     }
@@ -418,7 +418,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         );
         fs::write(out_dir.join(format!("{el_module}.rs")), code).unwrap();
         mod_entries.push(format!(
-            "/// Generated module for XSD element `{}`.\\npub mod {el_module};\\npub use {el_module}::*;",
+            "/// Generated module for XSD element `{}`.\npub mod {el_module};\npub use {el_module}::*;",
             el.name
         ));
     }
@@ -530,7 +530,7 @@ fn gen_struct(
     let mut out = String::new();
     out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n");
     out.push_str(&format!("/// XSD complexType `{}`.\n", ct.name));
-    let derives = if ct.abstract_ || is_element_backed {
+    let derives = if is_element_backed {
         "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n"
     } else {
         "#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]\n"

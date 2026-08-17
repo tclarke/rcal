@@ -6,6 +6,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rcal::QName;
 use rcal::asb::zmq::ZmqAsb;
 use rcal::uci::CalMessage;
 use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, MessageListener, TopicQos};
@@ -49,8 +50,8 @@ struct IntMsg {
 }
 
 impl CalMessage for IntMsg {
-    fn message_type_name() -> &'static str {
-        "test.IntMsg"
+    fn message_type_name() -> QName {
+        QName::new(Some("test"), "IntMsg")
     }
     fn cal_create() -> Self {
         Self { value: 0 }

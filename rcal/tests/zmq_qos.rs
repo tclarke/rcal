@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use rcal::QName;
 use rcal::asb::zmq::ZmqAsb;
 use rcal::uci::CalMessage;
 use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, TopicQos};
@@ -49,8 +50,8 @@ struct QosMsg {
 }
 
 impl CalMessage for QosMsg {
-    fn message_type_name() -> &'static str {
-        "test.QosMsg"
+    fn message_type_name() -> rcal::QName {
+        QName::new(Some("test"), "QosMsg")
     }
     fn cal_create() -> Self {
         Self { value: String::new() }
