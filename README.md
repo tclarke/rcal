@@ -15,9 +15,21 @@ of the design work in Planning mode. I'll often have to make some changes to the
 If you want to use claude code with this codebase I'd suggest at least the setup below.
 
 == Quickstart
-TODO: add some quickstart instructions to get started. Also add links to the documentation and examples.
+Just add as a dependency and build. This will generate from the UCI 2.5.0 schema. If you have a custom schema
+that removes unneeded types and elements or adds non-standard types and elements, set the `RCAL_SCHEMA_PATH`
+environment variable when you build. You can set this in your environment or create a `.cargo/config.toml`
+file with:
+```toml
+[env]
+RCAL_SCHEMA_VERSION="/path/to/schema.xsd"
+````
 
-== Setting up claude
+The `RCAL_SCHEMA_VERSION` will be set to the basename of the schema file. If you want a different version
+string, you can also set this in `config.toml`.
+
+See the `examples/` folder for usage.
+
+= Setting up claude
 - install rtk  -- This drastically reduces token use by stripping unnecessary output from external commands
 - install ripgrep  -- Required for some of the plugin capabilities
 - Install caveman  -- Cavement automatically has Claude use "caveman" speach with is highly compressed and functional. It removes pleasantries, fluff, etc. and produces output that has high signal to noise

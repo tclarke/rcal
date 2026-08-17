@@ -22,6 +22,7 @@ quick-xml = { version = "0.37", features = ["serialize"] }
 
 [build-dependencies]
 quick-xml = { version = "0.37" }
+glob = "0.3.4"
 
 [[example]]
 name = "system_status"

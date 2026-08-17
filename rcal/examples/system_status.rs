@@ -13,7 +13,7 @@ fn main() {
 }
 
 #[cfg(rcal_has_xsd)]
-use rcal::uci::types::SystemStatus;
+use rcal::uci::types::SystemStatus_;
 
 #[cfg(rcal_has_xsd)]
 const TOPIC: &str = "SystemStatus";
@@ -48,20 +48,19 @@ async fn main() {
             .expect("ASB init failed");
 
     let mut writer =
-        <ZmqAsb as AbstractServiceBusExt<SystemStatus>>::create_writer(&mut bus, TOPIC, TopicQos::default())
+        <ZmqAsb as AbstractServiceBusExt<SystemStatus_>>::create_writer(&mut bus, TOPIC, TopicQos::default())
             .expect("create_writer failed");
 
     // Create message once; mutate each iteration.
     let mut msg = bus
-        .create_message::<SystemStatus>()
+        .create_message::<SystemStatus_>()
         .expect("create_message failed");
 
+    use rcal::uci::types::{SystemStatusMT, SystemStatusMDT, SystemStateEnum};
+
     for i in 0..ITERATIONS {
-        msg.timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as i64;
-        msg.severity = i as u32;
+        *msg.message_data_mut().system_state_mut() =
+            if i % 2 == 0 { SystemStateEnum::Operational } else { SystemStateEnum::Degraded };
 
         writer.write(&msg).expect("write failed");
         info!(root_logger, "sent"; "iteration" => i + 1, "of" => ITERATIONS);

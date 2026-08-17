@@ -28,14 +28,16 @@ pub const ZMQ_ASB_ID: &str = "zmq";
 
 fn serialize_message<M: serde::Serialize>(
     msg: &M,
+    root: &str,
     format: &SerializationFormat,
 ) -> CalResult<String> {
     match format {
-        SerializationFormat::Xml => quick_xml::se::to_string(msg)
+        SerializationFormat::Xml => quick_xml::se::to_string_with_root(root, msg)
             .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string())),
         SerializationFormat::PrettyXml => {
             let mut buf = String::new();
-            let mut ser = quick_xml::se::Serializer::new(&mut buf);
+            let mut ser = quick_xml::se::Serializer::with_root(&mut buf, Some(root))
+                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
             ser.indent(' ', 4);
             msg.serialize(ser)
                 .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
@@ -363,7 +365,7 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
 
     fn write(&mut self, message: &M) -> CalResult<()> {
         trace!(self.logger, "ZmqWriter::write()"; "topic" => &self.topic);
-        let xml = serialize_message(message, &self.format)?;
+        let xml = serialize_message(message, &self.topic, &self.format)?;
         // RADIO/DISH: part[0] = group (topic for DISH filtering), part[1] = payload
         let msg = Message::multipart([self.topic.clone(), xml]);
         match &self.writer_buf {

@@ -7,40 +7,71 @@ use quick_xml::reader::Reader;
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(rcal_has_xsd)");
-    println!("cargo:rerun-if-env-changed=RCAL_XSD_PATH");
-    println!("cargo:rerun-if-env-changed=RCAL_SCHEMA_VERSION");
-    println!("cargo:rerun-if-env-changed=RCAL_OMS_COMPILER_VERSION");
+    println!("cargo::rerun-if-env-changed=RCAL_XSD_PATH");
+    println!("cargo::rerun-if-env-changed=RCAL_SCHEMA_VERSION");
+    println!("cargo::rerun-if-env-changed=RCAL_OMS_COMPILER_VERSION");
 
-    let compiler_version = std::env::var("RCAL_OMS_COMPILER_VERSION")
-        .unwrap_or_else(|_| "rcal-build/0.1".to_string());
-    println!("cargo:rustc-env=RCAL_OMS_COMPILER_VERSION={compiler_version}");
+    eprintln!("Starting generation step");
+    if let Some(compiler_version) = option_env!("RCAL_OMS_COMPILER_VERSION") {
+        println!("cargo::rustc-env=RCAL_OMS_COMPILER_VERSION={compiler_version}");
+        eprintln!("OMS compiler version={compiler_version}");
+    } else {
+        let compiler_version = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        println!("cargo::rustc-env=RCAL_OMS_COMPILER_VERSION={compiler_version}");
+        eprintln!("OMS compiler version={compiler_version}");
+    }
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let types_dir = out_dir.join("uci_types");
     fs::create_dir_all(&types_dir).unwrap();
+    eprintln!("OUT_DIR={}", &out_dir.to_str().unwrap());
 
-    let Some(xsd_path) = std::env::var("RCAL_XSD_PATH").ok() else {
-        // No XSD configured — emit empty module and unknown version.
-        println!("cargo:rustc-env=RCAL_SCHEMA_VERSION=unknown");
-        fs::write(types_dir.join("mod.rs"), "").unwrap();
-        return;
+    let xsd_path = match option_env!("RCAL_XSD_PATH") {
+        Some(p) => p.to_string(),
+        None => {
+            use glob::glob;
+
+            let pattern = "schema/UCI_MessageDefinitions_*.xsd";
+            let mut files: Vec<String> = glob(pattern)
+                .expect("invalid glob pattern")
+                .filter_map(Result::ok)
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            files.sort_by(|a, b| b.cmp(a));
+            let Some(v) = files.first() else {
+                println!("cargo::error=Unable to find a valid schema files {:?}", files);
+                return;
+            };
+            v.to_string()
+        }
     };
+    eprintln!("XSD path={}", &xsd_path);
 
-    println!("cargo:rustc-cfg=rcal_has_xsd");
-
-    println!("cargo:rerun-if-changed={xsd_path}");
+    println!("cargo::rustc-cfg=rcal_has_xsd");
 
     let xsd_path = PathBuf::from(&xsd_path);
-    let xsd_content = fs::read_to_string(&xsd_path)
-        .unwrap_or_else(|e| panic!("Cannot read RCAL_XSD_PATH={}: {e}", xsd_path.display()));
+    let xsd_content = match fs::read_to_string(&xsd_path) {
+        Ok(content) => content,
+        Err(e) => {
+            println!("cargo::error=Cannot read RCAL_XSD_PATH={}: {e}", &xsd_path.to_str().unwrap());
+            return;
+        }
+    };
+
+    println!("cargo::rerun-if-changed={}", &xsd_path.to_str().unwrap());
 
     let schema = parse_xsd_file(&xsd_path, &xsd_content, &mut std::collections::HashSet::new());
 
-    let schema_version = std::env::var("RCAL_SCHEMA_VERSION").unwrap_or_else(|_| {
-        schema.version.clone().unwrap_or_else(|| "unknown".to_string())
-    });
-    println!("cargo:rustc-env=RCAL_SCHEMA_VERSION={schema_version}");
+    if let Some(schema_version) = option_env!("RCAL_SCHEMA_VERSION") {
+        println!("cargo::rustc-env=RCAL_SCHEMA_VERSION={schema_version}");
+        eprintln!("Schema version={schema_version}");
+    } else {
+        let schema_version = format!("UCI_{}", schema.version.as_ref().unwrap());
+        println!("cargo::rustc-env=RCAL_SCHEMA_VERSION={schema_version}");
+        eprintln!("Schema version={schema_version}");
+    }
 
+    eprintln!("Generating");
     generate_types(&schema, &types_dir);
 }
 
@@ -133,6 +164,7 @@ enum SimpleTypeKind {
 struct ComplexType {
     name: String,
     abstract_: bool,
+    extension_base: Option<String>,
     fields: Vec<Field>,
 }
 
@@ -208,7 +240,7 @@ fn parse_xsd_file(
                                     xsd_path.display()
                                 )
                             });
-                            println!("cargo:rerun-if-changed={}", inc_path.display());
+                            println!("cargo::rerun-if-changed={}", inc_path.display());
                             let inc_schema = parse_xsd_file(&inc_path, &inc_content, seen);
                             // Merge namespace declarations from included schema.
                             for (p, u) in &inc_schema.resolver.prefix_to_uri {
@@ -233,8 +265,17 @@ fn parse_xsd_file(
                         if let Some(name) = attr(e, "name") {
                             let abstract_ =
                                 attr(e, "abstract").map(|v| v == "true").unwrap_or(false);
-                            current_complex =
-                                Some(ComplexType { name, abstract_, fields: vec![] });
+                            current_complex = Some(ComplexType {
+                                name,
+                                abstract_,
+                                extension_base: None,
+                                fields: vec![],
+                            });
+                        }
+                    }
+                    "extension" => {
+                        if let Some(ct) = current_complex.as_mut() {
+                            ct.extension_base = attr(e, "base");
                         }
                     }
                     "restriction" => {
@@ -346,7 +387,9 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         .collect();
 
     // Generate simple types
+    eprintln!("Generating simple types");
     for st in &schema.simple_types {
+        eprintln!("- {}", &st.name);
         let file_name = format!("{}.rs", snake(&st.name));
         let code = match &st.kind {
             SimpleTypeKind::Enum(vals) => gen_enum(&st.name, vals),
@@ -371,10 +414,31 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         })
         .collect();
 
-    // Generate complex types
+    // Build complex-type lookup for inheritance delegation
+    let complex_type_map: HashMap<&str, &ComplexType> = schema
+        .complex_types
+        .iter()
+        .map(|ct| (ct.name.as_str(), ct))
+        .collect();
+
+    // Pure-extension complex types (no own fields) are emitted as type aliases (no `_` suffix).
+    // Add them to simple_type_map so field_rust_type resolves them without appending `_`.
+    let mut simple_type_map = simple_type_map;
     for ct in &schema.complex_types {
+        if ct.fields.is_empty() && ct.extension_base.is_some() {
+            let pascal_name = pascal(&ct.name);
+            simple_type_map
+                .entry(ct.name.as_str())
+                .or_insert_with(|| format!("crate::uci::types::{pascal_name}"));
+        }
+    }
+
+    // Generate complex types
+    eprintln!("Generating complex types");
+    for ct in &schema.complex_types {
+        eprintln!("- {}", &ct.name);
         let file_name = format!("{}.rs", snake(&ct.name));
-        let code = gen_struct(ct, &simple_type_map, &type_to_element, resolver);
+        let code = gen_struct(ct, &simple_type_map, &type_to_element, resolver, &complex_type_map);
         fs::write(out_dir.join(&file_name), code).unwrap();
         let mod_name = snake(&ct.name);
         mod_entries.push(format!(
@@ -384,12 +448,14 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
     }
 
     // Generate element newtype wrappers
+    eprintln!("Generating elements");
     for el in &schema.elements {
+        eprintln!("- {}", &el.name);
         let (type_ns, type_local) = resolver.resolve_pair(&el.type_);
         let type_pascal = pascal(&type_local);
         let el_module = snake(&el.name);
         let el_pascal = pascal(&el.name);
-        let type_path = format!("crate::uci::types::{type_pascal}");
+        let type_path_concrete = format!("crate::uci::types::{type_pascal}_");
         let display = resolver.format_display(type_ns.as_deref(), &type_local);
         let ns_arg = match &type_ns {
             Some(ns) => format!("Some(\"{ns}\")"),
@@ -397,22 +463,22 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         };
         let code = format!(
             "// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n\
-             /// XSD element `{el_name}`. Wraps [`{type_pascal}`]({type_path}).\n\
+             /// XSD element `{el_name}`. Wraps [`{type_pascal}_`]({type_path_concrete}).\n\
              #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n\
              #[serde(transparent)]\n\
-             pub struct {el_pascal}(pub {type_path});\n\n\
-             impl std::ops::Deref for {el_pascal} {{\n\
-             \x20   type Target = {type_path};\n\
+             pub struct {el_pascal}_(pub {type_path_concrete});\n\n\
+             impl std::ops::Deref for {el_pascal}_ {{\n\
+             \x20   type Target = {type_path_concrete};\n\
              \x20   fn deref(&self) -> &Self::Target {{ &self.0 }}\n\
              }}\n\n\
-             impl std::ops::DerefMut for {el_pascal} {{\n\
+             impl std::ops::DerefMut for {el_pascal}_ {{\n\
              \x20   fn deref_mut(&mut self) -> &mut Self::Target {{ &mut self.0 }}\n\
              }}\n\n\
-             impl crate::uci::CalMessage for {el_pascal} {{\n\
+             impl crate::uci::CalMessage for {el_pascal}_ {{\n\
              \x20   fn message_type_name() -> crate::QName {{\n\
              \x20       crate::QName::with_display({ns_arg}, \"{type_local}\", \"{display}\")\n\
              \x20   }}\n\
-             \x20   fn cal_create() -> Self {{ Self({type_path}::_cal_create()) }}\n\
+             \x20   fn cal_create() -> Self {{ Self({type_path_concrete}::_cal_create()) }}\n\
              }}\n",
             el_name = el.name,
         );
@@ -429,6 +495,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         mod_entries.join("\n")
     );
     fs::write(out_dir.join("mod.rs"), mod_content).unwrap();
+    eprintln!("Generating types :: Done");
 }
 
 fn gen_enum(name: &str, vals: &[String]) -> String {
@@ -475,30 +542,125 @@ fn gen_type_alias(name: &str, base: &str, resolver: &XsdResolver) -> String {
     format!("// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n/// XSD simpleType `{name}`.\npub type {pascal_name} = {rust_type};\n")
 }
 
+fn resolve_base_rust_type(base: &str, simple_map: &HashMap<&str, String>, resolver: &XsdResolver) -> String {
+    let (ns, local) = resolver.resolve_pair(base);
+    if let Some(resolved) = simple_map.get(local.as_str()) {
+        resolved.clone()
+    } else {
+        xsd_to_rust_concrete(ns.as_deref(), &local)
+    }
+}
+
+fn field_rust_type(f: &Field, simple_map: &HashMap<&str, String>, resolver: &XsdResolver) -> String {
+    let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
+    let base = if let Some(resolved) = simple_map.get(type_local.as_str()) {
+        resolved.clone()
+    } else {
+        xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
+    };
+    if f.optional { format!("Option<{base}>") } else { base }
+}
+
+/// Collect the inheritance chain: [(local_name, &ComplexType)] from immediate base upward.
+fn base_chain<'a>(
+    ct: &'a ComplexType,
+    complex_map: &'a HashMap<&str, &'a ComplexType>,
+) -> Vec<(&'a str, &'a ComplexType)> {
+    let mut chain = Vec::new();
+    let mut current = ct;
+    while let Some(base_ref) = &current.extension_base {
+        let local = base_ref.rfind(':').map(|i| &base_ref[i + 1..]).unwrap_or(base_ref.as_str());
+        match complex_map.get(local) {
+            Some(base_ct) => {
+                chain.push((local, *base_ct));
+                current = base_ct;
+            }
+            None => break,
+        }
+    }
+    chain
+}
+
 fn gen_struct(
     ct: &ComplexType,
     simple_map: &HashMap<&str, String>,
     type_to_element: &HashMap<&str, &str>,
     resolver: &XsdResolver,
+    complex_map: &HashMap<&str, &ComplexType>,
 ) -> String {
     let pascal_name = pascal(&ct.name);
 
-    let fields: String = ct
+    // Extension with no additional fields → type alias; no trait needed.
+    if ct.fields.is_empty() {
+        if let Some(base) = &ct.extension_base {
+            let rust_type = resolve_base_rust_type(base, simple_map, resolver);
+            return format!(
+                "// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n\
+                 /// XSD complexType `{}` (extension of `{}`).\n\
+                 pub type {pascal_name} = {rust_type};\n",
+                ct.name, base,
+            );
+        }
+    }
+
+    let chain = base_chain(ct, complex_map);
+    let immediate_base_local = chain.first().map(|(n, _)| *n);
+
+    // Supertrait clause for the generated trait.
+    let supertrait = match immediate_base_local {
+        Some(base_local) => {
+            let base_pascal = pascal(base_local);
+            format!(": crate::uci::types::{base_pascal} ")
+        }
+        None => String::new(),
+    };
+
+    // --- Trait methods ---
+    let mut trait_methods = String::new();
+    for f in &ct.fields {
+        let field_name = snake(&f.name);
+        let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
+        let rust_type = if let Some(resolved) = simple_map.get(type_local.as_str()) {
+            resolved.clone()
+        } else {
+            xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
+        };
+        if f.optional {
+            trait_methods.push_str(&format!(
+                "    /// Returns the optional XSD element `{elem}`.\n\
+                 \x20   fn {field_name}(&self) -> Option<&{rust_type}>;\n\
+                 \x20   /// Returns a mutable reference to the optional XSD element `{elem}`.\n\
+                 \x20   fn {field_name}_mut(&mut self) -> Option<&mut {rust_type}>;\n",
+                elem = f.name,
+            ));
+        } else {
+            trait_methods.push_str(&format!(
+                "    /// Returns the XSD element `{elem}`.\n\
+                 \x20   fn {field_name}(&self) -> &{rust_type};\n\
+                 \x20   /// Returns a mutable reference to the XSD element `{elem}`.\n\
+                 \x20   fn {field_name}_mut(&mut self) -> &mut {rust_type};\n",
+                elem = f.name,
+            ));
+        }
+    }
+
+    // --- Struct fields (private) ---
+    let base_field_str = ct.extension_base.as_deref().map(|base| {
+        let rust_type = resolve_base_rust_type(base, simple_map, resolver);
+        format!("    #[serde(flatten)]\n    base: {rust_type},\n")
+    }).unwrap_or_default();
+    let base_default_str = if ct.extension_base.is_some() {
+        "            base: Default::default(),\n".to_string()
+    } else {
+        String::new()
+    };
+
+    let struct_fields: String = ct
         .fields
         .iter()
         .map(|f| {
             let field_name = snake(&f.name);
-            let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
-            let rust_type = if let Some(resolved) = simple_map.get(type_local.as_str()) {
-                resolved.clone()
-            } else {
-                xsd_to_rust(type_ns.as_deref(), &type_local)
-            };
-            let full_type = if f.optional {
-                format!("Option<{rust_type}>")
-            } else {
-                rust_type
-            };
+            let full_type = field_rust_type(f, simple_map, resolver);
             let optional_tag = if f.optional { " (optional)" } else { "" };
             let doc = format!("    /// XSD element `{}`{optional_tag}.\n", f.name);
             let serde_rename = format!("    #[serde(rename = \"{}\")]\n", f.name);
@@ -507,7 +669,7 @@ fn gen_struct(
             } else {
                 ""
             };
-            format!("{doc}{serde_rename}{maybe_skip}    pub {field_name}: {full_type},\n")
+            format!("{doc}{serde_rename}{maybe_skip}    {field_name}: {full_type},\n")
         })
         .collect();
 
@@ -516,12 +678,69 @@ fn gen_struct(
         .iter()
         .map(|f| {
             let field_name = snake(&f.name);
-            let default_val = if f.optional {
-                "None".to_string()
-            } else {
-                "Default::default()".to_string()
-            };
+            let default_val = if f.optional { "None".to_string() } else { "Default::default()".to_string() };
             format!("            {field_name}: {default_val},\n")
+        })
+        .collect();
+
+    // --- Own trait impl bodies ---
+    let own_trait_impl: String = ct
+        .fields
+        .iter()
+        .map(|f| {
+            let field_name = snake(&f.name);
+            let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
+            let rust_type = if let Some(resolved) = simple_map.get(type_local.as_str()) {
+                resolved.clone()
+            } else {
+                xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
+            };
+            if f.optional {
+                format!(
+                    "    fn {field_name}(&self) -> Option<&{rust_type}> {{ self.{field_name}.as_ref() }}\n\
+                     fn {field_name}_mut(&mut self) -> Option<&mut {rust_type}> {{ self.{field_name}.as_mut() }}\n"
+                )
+            } else {
+                format!(
+                    "    fn {field_name}(&self) -> &{rust_type} {{ &self.{field_name} }}\n\
+                     fn {field_name}_mut(&mut self) -> &mut {rust_type} {{ &mut self.{field_name} }}\n"
+                )
+            }
+        })
+        .collect();
+
+    // --- Ancestor delegation impls ---
+    // For each ancestor in the chain, implement their trait by delegating to self.base.
+    // self.base transitively implements further-ancestor traits, so delegation is always one hop.
+    let ancestor_impls: String = chain
+        .iter()
+        .map(|(ancestor_local, ancestor_ct)| {
+            let ancestor_pascal = pascal(ancestor_local);
+            let methods: String = ancestor_ct
+                .fields
+                .iter()
+                .map(|f| {
+                    let field_name = snake(&f.name);
+                    let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
+                    let rust_type = if let Some(resolved) = simple_map.get(type_local.as_str()) {
+                        resolved.clone()
+                    } else {
+                        xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
+                    };
+                    if f.optional {
+                        format!(
+                            "    fn {field_name}(&self) -> Option<&{rust_type}> {{ self.base.{field_name}() }}\n\
+                             fn {field_name}_mut(&mut self) -> Option<&mut {rust_type}> {{ self.base.{field_name}_mut() }}\n"
+                        )
+                    } else {
+                        format!(
+                            "    fn {field_name}(&self) -> &{rust_type} {{ self.base.{field_name}() }}\n\
+                             fn {field_name}_mut(&mut self) -> &mut {rust_type} {{ self.base.{field_name}_mut() }}\n"
+                        )
+                    }
+                })
+                .collect();
+            format!("impl crate::uci::types::{ancestor_pascal} for {pascal_name}_ {{\n{methods}}}\n\n")
         })
         .collect();
 
@@ -529,6 +748,14 @@ fn gen_struct(
 
     let mut out = String::new();
     out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n");
+
+    // Trait
+    out.push_str(&format!("/// Accessor trait for XSD complexType `{}`.\n", ct.name));
+    out.push_str(&format!("pub trait {pascal_name} {supertrait}{{\n"));
+    out.push_str(&trait_methods);
+    out.push_str("}\n\n");
+
+    // Struct
     out.push_str(&format!("/// XSD complexType `{}`.\n", ct.name));
     let derives = if is_element_backed {
         "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n"
@@ -537,28 +764,41 @@ fn gen_struct(
     };
     out.push_str(derives);
     out.push_str(&format!("#[serde(rename = \"{pascal_name}\")]\n"));
-    out.push_str(&format!("pub struct {pascal_name} {{\n"));
-    out.push_str(&fields);
-
-    if ct.abstract_ {
-        out.push_str("}\n\n");
-        out.push_str(&format!("impl crate::uci::CalSubMessage for {pascal_name} {{}}\n"));
-    } else if is_element_backed {
+    out.push_str(&format!("pub struct {pascal_name}_ {{\n"));
+    out.push_str(&base_field_str);
+    out.push_str(&struct_fields);
+    if is_element_backed {
         out.push_str("    #[serde(skip)]\n");
         out.push_str("    _priv: crate::uci::sealed::Token,\n");
-        out.push_str("}\n\n");
-        out.push_str(&format!("impl {pascal_name} {{\n"));
+    }
+    out.push_str("}\n\n");
+
+    // _cal_create for element-backed types
+    if is_element_backed {
+        out.push_str(&format!("impl {pascal_name}_ {{\n"));
         out.push_str("    pub(crate) fn _cal_create() -> Self {\n");
         out.push_str("        Self {\n");
+        out.push_str(&base_default_str);
         out.push_str(&field_defaults);
         out.push_str("            _priv: crate::uci::sealed::Token(()),\n");
         out.push_str("        }\n");
         out.push_str("    }\n");
-        out.push_str("}\n");
-    } else {
         out.push_str("}\n\n");
-        out.push_str(&format!("impl crate::uci::CalSubMessage for {pascal_name} {{}}\n"));
     }
+
+    // Own trait impl
+    out.push_str(&format!("impl {pascal_name} for {pascal_name}_ {{\n"));
+    out.push_str(&own_trait_impl);
+    out.push_str("}\n\n");
+
+    // Ancestor delegation impls
+    out.push_str(&ancestor_impls);
+
+    // CalSubMessage marker
+    if ct.abstract_ || !is_element_backed {
+        out.push_str(&format!("impl crate::uci::CalSubMessage for {pascal_name}_ {{}}\n"));
+    }
+
     out
 }
 
@@ -583,16 +823,21 @@ fn snake(s: &str) -> String {
     let local = s.rfind(':').map(|i| &s[i + 1..]).unwrap_or(s);
     let mut out = String::new();
     let mut prev_upper = false;
+    let mut prev_under = false;
     for (i, c) in local.chars().enumerate() {
         if c.is_uppercase() {
-            if i > 0 && !prev_upper {
+            if i > 0 && !prev_upper && !prev_under {
                 out.push('_');
             }
             out.push(c.to_lowercase().next().unwrap());
             prev_upper = true;
+            prev_under = false;
+        } else if c == '_' {
+            prev_under = true;
         } else {
             out.push(c);
             prev_upper = false;
+            prev_under = false;
         }
     }
     if RUST_KEYWORDS.contains(&out.as_str()) {
@@ -642,3 +887,14 @@ fn xsd_to_rust(ns: Option<&str>, local: &str) -> String {
     }
     format!("crate::uci::types::{}", pascal(local))
 }
+
+/// Like `xsd_to_rust` but appends `_` for non-XS types (concrete struct name, not the trait).
+fn xsd_to_rust_concrete(ns: Option<&str>, local: &str) -> String {
+    const XS: &str = "http://www.w3.org/2001/XMLSchema";
+    if ns == Some(XS) {
+        xsd_to_rust(ns, local)
+    } else {
+        format!("crate::uci::types::{}_", pascal(local))
+    }
+}
+

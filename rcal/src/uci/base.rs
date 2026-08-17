@@ -186,13 +186,16 @@ impl UUID {
     /// Generate a new UUID using the configured factory type.
     ///
     /// The `factory` is the `uuidfactory` section of the caller's `CalConfig`.
-    pub fn generate(factory: &UUIDFactory) -> Self {
-        match factory.type_ {
+    /// If not specified, the default factory will be used.
+    pub fn generate(factory: Option<&UUIDFactory>) -> Self {
+        let def = UUIDFactory::default();
+        let f = factory.unwrap_or(&def);
+        match f.type_ {
             UUIDFactoryType::Random => Self::generate_v4(),
             UUIDFactoryType::TimeBased => {
                 let ctx = ContextV1::new_random();
                 let ts = UuidTimestamp::now(&ctx);
-                if let Some(node) = factory.node {
+                if let Some(node) = f.node {
                     Self::generate_v1(ts, &node.bytes())
                 } else {
                     let mac = mac_address::get_mac_address()
@@ -436,16 +439,19 @@ mod tests {
     #[init_test_logger]
     #[test]
     fn test_uuid_factory() {
+        debug!(logger, "Default (random): {}", UUID::generate(None));
+
         let random_factory = UUIDFactory::default();
-        debug!(logger, "Default (random): {}", UUID::generate(&random_factory));
+        debug!(logger, "Change to explicit random");
+        debug!(logger, "Random: {}", UUID::generate(Some(&random_factory)));
 
         let tb_factory = UUIDFactory { type_: UUIDFactoryType::TimeBased, ..Default::default() };
         debug!(logger, "Change to time based");
-        debug!(logger, "TimeBased: {}", UUID::generate(&tb_factory));
+        debug!(logger, "TimeBased: {}", UUID::generate(Some(&tb_factory)));
 
         let node = mac_address::get_mac_address().expect("test requires a MAC address").expect("test requires a MAC address");
         debug!(logger, "Time based with local node {}", node);
         let tb_node_factory = UUIDFactory { type_: UUIDFactoryType::TimeBased, node: Some(node), ..Default::default() };
-        debug!(logger, "TimeBased: {}", UUID::generate(&tb_node_factory));
+        debug!(logger, "TimeBased: {}", UUID::generate(Some(&tb_node_factory)));
     }
 }
