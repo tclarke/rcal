@@ -24,7 +24,7 @@ fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let types_dir = out_dir.join("uci_types");
     fs::create_dir_all(&types_dir).unwrap();
-    eprintln!("OUT_DIR={}", &out_dir.to_str().unwrap());
+    eprintln!("OUT_DIR={}", out_dir.display());
 
     let xsd_path = match option_env!("RCAL_XSD_PATH") {
         Some(p) => p.to_string(),
@@ -45,7 +45,7 @@ fn main() {
             v.to_string()
         }
     };
-    eprintln!("XSD path={}", &xsd_path);
+    eprintln!("XSD path={xsd_path}");
 
     println!("cargo::rustc-cfg=rcal_has_xsd");
 
@@ -53,12 +53,12 @@ fn main() {
     let xsd_content = match fs::read_to_string(&xsd_path) {
         Ok(content) => content,
         Err(e) => {
-            println!("cargo::error=Cannot read RCAL_XSD_PATH={}: {e}", &xsd_path.to_str().unwrap());
+            println!("cargo::error=Cannot read RCAL_XSD_PATH={}: {e}", xsd_path.display());
             return;
         }
     };
 
-    println!("cargo::rerun-if-changed={}", &xsd_path.to_str().unwrap());
+    println!("cargo::rerun-if-changed={}", xsd_path.display());
 
     let schema = parse_xsd_file(&xsd_path, &xsd_content, &mut std::collections::HashSet::new());
 
@@ -389,7 +389,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
     // Generate simple types
     eprintln!("Generating simple types");
     for st in &schema.simple_types {
-        eprintln!("- {}", &st.name);
+        eprintln!("- {}", st.name);
         let file_name = format!("{}.rs", snake(&st.name));
         let code = match &st.kind {
             SimpleTypeKind::Enum(vals) => gen_enum(&st.name, vals),
@@ -436,7 +436,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
     // Generate complex types
     eprintln!("Generating complex types");
     for ct in &schema.complex_types {
-        eprintln!("- {}", &ct.name);
+        eprintln!("- {}", ct.name);
         let file_name = format!("{}.rs", snake(&ct.name));
         let code = gen_struct(ct, &simple_type_map, &type_to_element, resolver, &complex_type_map);
         fs::write(out_dir.join(&file_name), code).unwrap();
@@ -450,7 +450,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
     // Generate element newtype wrappers
     eprintln!("Generating elements");
     for el in &schema.elements {
-        eprintln!("- {}", &el.name);
+        eprintln!("- {}", el.name);
         let (type_ns, type_local) = resolver.resolve_pair(&el.type_);
         let type_pascal = pascal(&type_local);
         let el_module = snake(&el.name);
@@ -517,21 +517,68 @@ fn gen_enum(name: &str, vals: &[String]) -> String {
         })
         .collect();
 
-    let default_variant = variants.first().map(|(v, _)| v.as_str()).unwrap_or("").to_string();
+    let _default_variant = variants.first().map(|(v, _)| v.as_str()).unwrap_or("").to_string();
+
+    // Match arms and variant-name list for the custom Deserialize impl.
+    let match_arms: String = variants
+        .iter()
+        .map(|(variant, orig)| format!("                    \"{orig}\" => Ok({pascal_name}::{variant}),\n"))
+        .collect();
+    let variant_names: Vec<String> = variants.iter().map(|(_, orig)| format!("\"{orig}\"")).collect();
+    let variant_names_str = variant_names.join(", ");
 
     let mut out = String::new();
     out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n");
     out.push_str(&format!("/// XSD simpleType `{name}`.\n"));
-    out.push_str("#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]\n");
+    // Derive Serialize + Default; Deserialize is hand-written below to handle
+    // quick_xml's $text map representation for element text content.
+    out.push_str("#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]\n");
     out.push_str(&format!("#[serde(rename = \"{pascal_name}\")]\n"));
     out.push_str(&format!("pub enum {pascal_name} {{\n"));
-    for (variant, orig) in &variants {
-        out.push_str(&format!("    /// `{orig}` variant.\n    #[serde(rename = \"{orig}\")]\n    {variant},\n"));
+    for (i, (variant, orig)) in variants.iter().enumerate() {
+        let default_attr = if i == 0 { "    #[default]\n" } else { "" };
+        out.push_str(&format!("    /// `{orig}` variant.\n{default_attr}    #[serde(rename = \"{orig}\")]\n    {variant},\n"));
     }
     out.push_str("}\n\n");
-    out.push_str(&format!("impl Default for {pascal_name} {{\n"));
-    out.push_str(&format!("    fn default() -> Self {{ Self::{default_variant} }}\n"));
-    out.push_str("}\n");
+    // Custom Deserialize: quick_xml delivers element text as a map with "$text" key.
+    // This impl accepts both a plain string (JSON/other) and the $text-map form.
+    out.push_str(&format!(
+        "impl<'de> serde::Deserialize<'de> for {pascal_name} {{\n\
+         \x20   fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {{\n\
+         \x20       fn from_str<E: serde::de::Error>(v: &str) -> Result<{pascal_name}, E> {{\n\
+         \x20           match v {{\n\
+         {match_arms}\
+         \x20               other => Err(E::unknown_variant(other, &[{variant_names_str}])),\n\
+         \x20           }}\n\
+         \x20       }}\n\
+         \x20       struct Visitor_;\n\
+         \x20       impl<'de> serde::de::Visitor<'de> for Visitor_ {{\n\
+         \x20           type Value = {pascal_name};\n\
+         \x20           fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {{\n\
+         \x20               write!(f, \"a {pascal_name} variant\")\n\
+         \x20           }}\n\
+         \x20           fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {{\n\
+         \x20               from_str(v)\n\
+         \x20           }}\n\
+         \x20           fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {{\n\
+         \x20               // Drain all map entries; the closing XML tag must be consumed\n\
+         \x20               // before returning, or the parent map's cursor is left misaligned.\n\
+         \x20               let mut result = None;\n\
+         \x20               while let Some(key) = map.next_key::<std::borrow::Cow<str>>()? {{\n\
+         \x20                   if key == \"$text\" {{\n\
+         \x20                       let val: std::borrow::Cow<str> = map.next_value()?;\n\
+         \x20                       result = Some(from_str::<A::Error>(&val)?);\n\
+         \x20                   }} else {{\n\
+         \x20                       let _: serde::de::IgnoredAny = map.next_value()?;\n\
+         \x20                   }}\n\
+         \x20               }}\n\
+         \x20               result.ok_or_else(|| serde::de::Error::missing_field(\"$text\"))\n\
+         \x20           }}\n\
+         \x20       }}\n\
+         \x20       deserializer.deserialize_any(Visitor_)\n\
+         \x20   }}\n\
+         }}\n"
+    ));
     out
 }
 
@@ -591,16 +638,14 @@ fn gen_struct(
     let pascal_name = pascal(&ct.name);
 
     // Extension with no additional fields → type alias; no trait needed.
-    if ct.fields.is_empty() {
-        if let Some(base) = &ct.extension_base {
-            let rust_type = resolve_base_rust_type(base, simple_map, resolver);
-            return format!(
-                "// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n\
-                 /// XSD complexType `{}` (extension of `{}`).\n\
-                 pub type {pascal_name} = {rust_type};\n",
-                ct.name, base,
-            );
-        }
+    if ct.fields.is_empty() && let Some(base) = &ct.extension_base {
+        let rust_type = resolve_base_rust_type(base, simple_map, resolver);
+        return format!(
+            "// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n\
+             /// XSD complexType `{}` (extension of `{}`).\n\
+             pub type {pascal_name} = {rust_type};\n",
+            ct.name, base,
+        );
     }
 
     let chain = base_chain(ct, complex_map);
@@ -645,15 +690,36 @@ fn gen_struct(
     }
 
     // --- Struct fields (private) ---
-    let base_field_str = ct.extension_base.as_deref().map(|base| {
-        let rust_type = resolve_base_rust_type(base, simple_map, resolver);
-        format!("    #[serde(flatten)]\n    base: {rust_type},\n")
-    }).unwrap_or_default();
-    let base_default_str = if ct.extension_base.is_some() {
-        "            base: Default::default(),\n".to_string()
-    } else {
-        String::new()
-    };
+    // Ancestor fields are inlined directly (deepest-first) rather than using
+    // #[serde(flatten)], which quick_xml cannot deserialize reliably.
+    let inherited_fields_str: String = chain
+        .iter()
+        .rev()
+        .flat_map(|(_, ancestor_ct)| &ancestor_ct.fields)
+        .map(|f| {
+            let field_name = snake(&f.name);
+            let full_type = field_rust_type(f, simple_map, resolver);
+            let optional_tag = if f.optional { " (optional, inherited)" } else { " (inherited)" };
+            let doc = format!("    /// XSD element `{}`{optional_tag}.\n", f.name);
+            let serde_rename = format!("    #[serde(rename = \"{}\")]\n", f.name);
+            let maybe_skip = if f.optional {
+                "    #[serde(skip_serializing_if = \"Option::is_none\")]\n"
+            } else {
+                ""
+            };
+            format!("{doc}{serde_rename}{maybe_skip}    {field_name}: {full_type},\n")
+        })
+        .collect();
+    let inherited_defaults_str: String = chain
+        .iter()
+        .rev()
+        .flat_map(|(_, ancestor_ct)| &ancestor_ct.fields)
+        .map(|f| {
+            let field_name = snake(&f.name);
+            let default_val = if f.optional { "None".to_string() } else { "Default::default()".to_string() };
+            format!("            {field_name}: {default_val},\n")
+        })
+        .collect();
 
     let struct_fields: String = ct
         .fields
@@ -710,8 +776,7 @@ fn gen_struct(
         .collect();
 
     // --- Ancestor delegation impls ---
-    // For each ancestor in the chain, implement their trait by delegating to self.base.
-    // self.base transitively implements further-ancestor traits, so delegation is always one hop.
+    // Fields are inlined, so all ancestor traits are implemented by direct field access.
     let ancestor_impls: String = chain
         .iter()
         .map(|(ancestor_local, ancestor_ct)| {
@@ -729,13 +794,13 @@ fn gen_struct(
                     };
                     if f.optional {
                         format!(
-                            "    fn {field_name}(&self) -> Option<&{rust_type}> {{ self.base.{field_name}() }}\n\
-                             fn {field_name}_mut(&mut self) -> Option<&mut {rust_type}> {{ self.base.{field_name}_mut() }}\n"
+                            "    fn {field_name}(&self) -> Option<&{rust_type}> {{ self.{field_name}.as_ref() }}\n\
+                             fn {field_name}_mut(&mut self) -> Option<&mut {rust_type}> {{ self.{field_name}.as_mut() }}\n"
                         )
                     } else {
                         format!(
-                            "    fn {field_name}(&self) -> &{rust_type} {{ self.base.{field_name}() }}\n\
-                             fn {field_name}_mut(&mut self) -> &mut {rust_type} {{ self.base.{field_name}_mut() }}\n"
+                            "    fn {field_name}(&self) -> &{rust_type} {{ &self.{field_name} }}\n\
+                             fn {field_name}_mut(&mut self) -> &mut {rust_type} {{ &mut self.{field_name} }}\n"
                         )
                     }
                 })
@@ -765,7 +830,7 @@ fn gen_struct(
     out.push_str(derives);
     out.push_str(&format!("#[serde(rename = \"{pascal_name}\")]\n"));
     out.push_str(&format!("pub struct {pascal_name}_ {{\n"));
-    out.push_str(&base_field_str);
+    out.push_str(&inherited_fields_str);
     out.push_str(&struct_fields);
     if is_element_backed {
         out.push_str("    #[serde(skip)]\n");
@@ -778,7 +843,7 @@ fn gen_struct(
         out.push_str(&format!("impl {pascal_name}_ {{\n"));
         out.push_str("    pub(crate) fn _cal_create() -> Self {\n");
         out.push_str("        Self {\n");
-        out.push_str(&base_default_str);
+        out.push_str(&inherited_defaults_str);
         out.push_str(&field_defaults);
         out.push_str("            _priv: crate::uci::sealed::Token(()),\n");
         out.push_str("        }\n");

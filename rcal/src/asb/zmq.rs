@@ -640,6 +640,7 @@ where
         let topic_str = topic.to_string();
         let _format = self.serialization_format.clone(); // ponytail: deserialization is format-agnostic (XML only); extend if binary formats are added
         let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let reader_logger = self.logger.new(slog::o!("topic" => topic.to_string()));
 
         let task = tokio::spawn(async move {
             let dish = Socket::new(SocketType::Dish, Options::default());
@@ -663,36 +664,41 @@ where
                     _ = shutdown_rx.changed() => break,
                 };
                 let payload = raw.part_bytes(1).unwrap_or_default();
-                if let Ok(m) = deserialize_message::<M>(&payload) {
-                    // TimeBasedFilter: drop messages within min_separation (CAL-005431)
-                    if let Some(ref f) = time_filter
-                        && let Some(last) = last_accepted
-                        && last.elapsed() < f.min_separation
-                    {
+                let m = match deserialize_message::<M>(&payload) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        slog::warn!(reader_logger, "deserialize failed"; "error" => %e);
                         continue;
                     }
-                    last_accepted = Some(Instant::now());
+                };
+                // TimeBasedFilter: drop messages within min_separation (CAL-005431)
+                if let Some(ref f) = time_filter
+                    && let Some(last) = last_accepted
+                    && last.elapsed() < f.min_separation
+                {
+                    continue;
+                }
+                last_accepted = Some(Instant::now());
 
-                    let arc_m = Arc::new(m);
-                    let ls = listeners_task.lock().unwrap();
-                    if ls.is_empty() {
-                        // Polling mode: buffer in queue (CAL-016052)
-                        let (lock, cvar) = &*poll_state_task;
-                        let mut queue = lock.lock().unwrap();
-                        if let Some(max) = reader_max {
-                            while queue.len() >= max {
-                                queue.pop_front(); // drop oldest (CAL-015746)
-                            }
+                let arc_m = Arc::new(m);
+                let ls = listeners_task.lock().unwrap();
+                if ls.is_empty() {
+                    // Polling mode: buffer in queue (CAL-016052)
+                    let (lock, cvar) = &*poll_state_task;
+                    let mut queue = lock.lock().unwrap();
+                    if let Some(max) = reader_max {
+                        while queue.len() >= max {
+                            queue.pop_front(); // drop oldest (CAL-015746)
                         }
-                        queue.push_back((Instant::now(), Arc::clone(&arc_m)));
-                        cvar.notify_one();
-                    } else {
-                        // Callback mode: dispatch to all listeners (CAL-005392)
-                        for l in ls.iter() {
-                            l.on_message(&arc_m);
-                        }
-                        // CAL-016045: message not placed in poll buffer after dispatch
                     }
+                    queue.push_back((Instant::now(), Arc::clone(&arc_m)));
+                    cvar.notify_one();
+                } else {
+                    // Callback mode: dispatch to all listeners (CAL-005392)
+                    for l in ls.iter() {
+                        l.on_message(&arc_m);
+                    }
+                    // CAL-016045: message not placed in poll buffer after dispatch
                 }
             }
 

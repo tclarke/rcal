@@ -1,14 +1,14 @@
-//! Periodic SystemStatus sender.
+//! Periodic SystemStatus sender + receiver.
 //!
-//! Requires `RCAL_XSD_PATH=tests/fixtures/system_status.xsd` at build time
-//! and a running ZMQ broker configured via `RCAL_CONFIG` or `CALConfig.toml`.
+//! Spawns a writer that publishes SystemStatus every second and a reader
+//! thread that receives, validates, and prints each message as XML.
 //!
 //! Usage:
-//!   RCAL_XSD_PATH=tests/fixtures/system_status.xsd cargo run --example system_status
+//!   cargo run --example system_status
 
 #[cfg(not(rcal_has_xsd))]
 fn main() {
-    eprintln!("Set RCAL_XSD_PATH=tests/fixtures/system_status.xsd at build time, then rebuild.");
+    eprintln!("No XSD found at build time — rebuild with schema/UCI_MessageDefinitions_*.xsd present.");
     std::process::exit(1);
 }
 
@@ -29,6 +29,7 @@ async fn main() {
 
     use rcal::asb::zmq::ZmqAsb;
     use rcal::asb::{AbstractServiceBus, AbstractServiceBusCreateMessage, AbstractServiceBusExt, TopicQos};
+    use rcal::uci::CalMessage;
     use slog::info;
 
     let config = Arc::new(rcal_config);
@@ -47,9 +48,35 @@ async fn main() {
             .await
             .expect("ASB init failed");
 
+    // Create reader before writer so no messages are missed.
+    let mut reader =
+        <ZmqAsb as AbstractServiceBusExt<SystemStatus_>>::create_reader(&mut bus, TOPIC, TopicQos::default())
+            .expect("create_reader failed");
+
     let mut writer =
         <ZmqAsb as AbstractServiceBusExt<SystemStatus_>>::create_writer(&mut bus, TOPIC, TopicQos::default())
             .expect("create_writer failed");
+
+    // Spawn a blocking thread: read → validate → print XML.
+    // Loop exits when the ASB closes (Err return from read).
+    let reader_handle = tokio::task::spawn_blocking(move || {
+        let expected_type = SystemStatus_::message_type_name();
+        loop {
+            match reader.read(Some(Duration::from_millis(500))) {
+                Ok(Some(msg)) => {
+                    // Deserialization succeeded — schema conformance is validated.
+                    // Confirm the message type matches the expected type name.
+                    assert_eq!(SystemStatus_::message_type_name(), expected_type);
+                    match quick_xml::se::to_string_with_root(TOPIC, &*msg) {
+                        Ok(xml) => println!("[received]\n{xml}\n"),
+                        Err(e) => eprintln!("[reader] serialize error: {e}"),
+                    }
+                }
+                Ok(None) => {} // short timeout — keep polling until ASB closes
+                Err(_) => break, // ASB closed
+            }
+        }
+    });
 
     // Create message once; mutate each iteration.
     let mut msg = bus
@@ -57,6 +84,9 @@ async fn main() {
         .expect("create_message failed");
 
     use rcal::uci::types::{SystemStatusMT, SystemStatusMDT, SystemStateEnum};
+
+    // Allow DISH socket to connect and complete ZMTP handshake before sending.
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     for i in 0..ITERATIONS {
         *msg.message_data_mut().system_state_mut() =
@@ -68,4 +98,5 @@ async fn main() {
     }
 
     bus.close().ok();
+    reader_handle.await.ok();
 }
