@@ -65,7 +65,42 @@ pub trait CalMessage: Send + Sync + 'static {
     fn cal_create() -> Self
     where
         Self: Sized;
+
+    /// Validates this message against its XSD schema constraints.
+    ///
+    /// Returns `Ok(())` if all fields satisfy their schema constraints.
+    /// Returns `Err(ValidationError)` for the first failing field, with a
+    /// dot-separated path (e.g. `"SystemStatus.MessageHeader.SystemId"`) and
+    /// a human-readable reason.
+    ///
+    /// Generated element wrapper types override this with a full recursive
+    /// check. The default always returns `Ok(())`.
+    fn is_valid(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// ValidationError
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Describes a schema constraint violation found by [`CalMessage::is_valid`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationError {
+    /// Dot-separated path to the failing field,
+    /// e.g. `"SystemStatus.MessageHeader.SystemId"`.
+    pub path: String,
+    /// Human-readable failure reason, e.g. `"enum not set"`.
+    pub reason: String,
+}
+
+impl fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.path, self.reason)
+    }
+}
+
+impl std::error::Error for ValidationError {}
 
 /// Marker trait for CAL Sub-message types — complex nested field types.
 ///
@@ -130,6 +165,9 @@ pub enum CalErrorKind {
         /// Optional detail about the implementation error.
         kind: Option<CalImplementationErrorKind>,
     },
+
+    /// A message failed schema validation before being sent.
+    ValidationError(ValidationError),
 }
 
 impl fmt::Display for CalErrorKind {
@@ -160,6 +198,7 @@ impl fmt::Display for CalErrorKind {
             Self::ImplementationError {
                 kind: Some(CalImplementationErrorKind::ListenerError),
             } => write!(f, "Status listener error"),
+            Self::ValidationError(e) => write!(f, "Message validation failed: {e}"),
         }
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,13 +6,12 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 
 fn main() {
-    println!("cargo::rustc-check-cfg=cfg(rcal_has_xsd)");
     println!("cargo::rerun-if-env-changed=RCAL_XSD_PATH");
     println!("cargo::rerun-if-env-changed=RCAL_SCHEMA_VERSION");
     println!("cargo::rerun-if-env-changed=RCAL_OMS_COMPILER_VERSION");
 
     eprintln!("Starting generation step");
-    if let Some(compiler_version) = option_env!("RCAL_OMS_COMPILER_VERSION") {
+    if let Ok(compiler_version) = std::env::var("RCAL_OMS_COMPILER_VERSION") {
         println!("cargo::rustc-env=RCAL_OMS_COMPILER_VERSION={compiler_version}");
         eprintln!("OMS compiler version={compiler_version}");
     } else {
@@ -26,8 +25,8 @@ fn main() {
     fs::create_dir_all(&types_dir).unwrap();
     eprintln!("OUT_DIR={}", out_dir.display());
 
-    let xsd_path = match option_env!("RCAL_XSD_PATH") {
-        Some(p) => p.to_string(),
+    let xsd_path = match std::env::var("RCAL_XSD_PATH").ok() {
+        Some(p) => p,
         None => {
             use glob::glob;
 
@@ -47,8 +46,6 @@ fn main() {
     };
     eprintln!("XSD path={xsd_path}");
 
-    println!("cargo::rustc-cfg=rcal_has_xsd");
-
     let xsd_path = PathBuf::from(&xsd_path);
     let xsd_content = match fs::read_to_string(&xsd_path) {
         Ok(content) => content,
@@ -62,7 +59,7 @@ fn main() {
 
     let schema = parse_xsd_file(&xsd_path, &xsd_content, &mut std::collections::HashSet::new());
 
-    if let Some(schema_version) = option_env!("RCAL_SCHEMA_VERSION") {
+    if let Ok(schema_version) = std::env::var("RCAL_SCHEMA_VERSION") {
         println!("cargo::rustc-env=RCAL_SCHEMA_VERSION={schema_version}");
         eprintln!("Schema version={schema_version}");
     } else {
@@ -79,9 +76,6 @@ fn main() {
 // Build-time namespace resolver
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Build-script parallel of the library's `NamespaceResolver`.
-///
-/// Kept separate because build scripts compile independently of the crate.
 #[derive(Debug, Clone)]
 struct XsdResolver {
     default_ns: Option<String>,
@@ -107,7 +101,6 @@ impl XsdResolver {
         self.uri_to_prefix.insert(uri.to_string(), prefix.to_string());
     }
 
-    /// Resolve `prefix:local` or bare `local` to `(namespace_uri, local_name)`.
     fn resolve_pair(&self, name: &str) -> (Option<String>, String) {
         if let Some(colon) = name.find(':') {
             let prefix = &name[..colon];
@@ -119,8 +112,6 @@ impl XsdResolver {
         }
     }
 
-    /// Shortest display form: bare local for the default namespace,
-    /// `prefix:local` for mapped namespaces, Clark notation as last resort.
     fn format_display(&self, ns: Option<&str>, local: &str) -> String {
         match ns {
             None => local.to_string(),
@@ -147,17 +138,38 @@ struct Schema {
     elements: Vec<Element>,
 }
 
-
 #[derive(Debug)]
 struct SimpleType {
     name: String,
     kind: SimpleTypeKind,
 }
 
+/// XSD restriction facets for string and numeric types.
+#[derive(Debug, Default, Clone)]
+struct Facets {
+    length: Option<u32>,
+    min_length: Option<u32>,
+    max_length: Option<u32>,
+    pattern: Option<String>,
+    min_inclusive: Option<String>,
+    max_inclusive: Option<String>,
+}
+
+impl Facets {
+    fn is_empty(&self) -> bool {
+        self.length.is_none()
+            && self.min_length.is_none()
+            && self.max_length.is_none()
+            && self.pattern.is_none()
+            && self.min_inclusive.is_none()
+            && self.max_inclusive.is_none()
+    }
+}
+
 #[derive(Debug)]
 enum SimpleTypeKind {
     Enum(Vec<String>),
-    Restriction(String), // raw XSD base (e.g. "xs:double", "uci:DoubleNonNegativeType")
+    Restriction { base: String, facets: Facets },
 }
 
 #[derive(Debug)]
@@ -168,17 +180,38 @@ struct ComplexType {
     fields: Vec<Field>,
 }
 
+/// Maximum occurrences constraint on an XSD element.
+#[derive(Debug, PartialEq, Clone)]
+enum MaxOccurs {
+    Bounded(u32),
+    Unbounded,
+}
+
 #[derive(Debug)]
 struct Field {
     name: String,
-    type_: String, // raw XSD type reference
-    optional: bool,
+    type_: String,
+    min_occurs: u32,
+    max_occurs: MaxOccurs,
+}
+
+impl Field {
+    /// True when the field is represented as `Option<T>` (minOccurs=0, maxOccurs=1).
+    fn is_optional(&self) -> bool {
+        self.min_occurs == 0 && self.max_occurs == MaxOccurs::Bounded(1)
+    }
+
+    /// True when the field is represented as `Vec<T>` (maxOccurs > 1 or unbounded).
+    fn is_vec(&self) -> bool {
+        matches!(self.max_occurs, MaxOccurs::Unbounded)
+            || matches!(self.max_occurs, MaxOccurs::Bounded(n) if n > 1)
+    }
 }
 
 #[derive(Debug)]
 struct Element {
     name: String,
-    type_: String, // raw XSD type reference
+    type_: String,
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -202,6 +235,7 @@ fn parse_xsd_file(
     let mut current_complex: Option<ComplexType> = None;
     let mut in_restriction = false;
     let mut restriction_base: Option<String> = None;
+    let mut current_facets = Facets::default();
 
     loop {
         match reader.read_event() {
@@ -214,7 +248,6 @@ fn parse_xsd_file(
                         if let Some(ref ns) = schema.namespace {
                             schema.resolver.default_ns = Some(ns.clone());
                         }
-                        // Collect all xmlns:prefix declarations.
                         for a in e.attributes().filter_map(|a| a.ok()) {
                             let key = std::str::from_utf8(a.key.as_ref()).unwrap_or("");
                             if let Some(prefix) = key.strip_prefix("xmlns:") {
@@ -242,7 +275,6 @@ fn parse_xsd_file(
                             });
                             println!("cargo::rerun-if-changed={}", inc_path.display());
                             let inc_schema = parse_xsd_file(&inc_path, &inc_content, seen);
-                            // Merge namespace declarations from included schema.
                             for (p, u) in &inc_schema.resolver.prefix_to_uri {
                                 if !schema.resolver.prefix_to_uri.contains_key(p) {
                                     schema.resolver.add_prefix(p, u);
@@ -257,7 +289,10 @@ fn parse_xsd_file(
                         if let Some(name) = attr(e, "name") {
                             current_simple = Some(SimpleType {
                                 name,
-                                kind: SimpleTypeKind::Restriction("xs:string".into()),
+                                kind: SimpleTypeKind::Restriction {
+                                    base: "xs:string".into(),
+                                    facets: Facets::default(),
+                                },
                             });
                         }
                     }
@@ -281,6 +316,7 @@ fn parse_xsd_file(
                     "restriction" => {
                         in_restriction = true;
                         restriction_base = attr(e, "base");
+                        current_facets = Facets::default();
                     }
                     "enumeration" => {
                         if let (Some(st), Some(val)) =
@@ -293,7 +329,50 @@ fn parse_xsd_file(
                             }
                         }
                     }
+                    // XSD restriction facets
+                    "length" => {
+                        if in_restriction {
+                            current_facets.length =
+                                attr(e, "value").and_then(|v| v.parse().ok());
+                        }
+                    }
+                    "minLength" => {
+                        if in_restriction {
+                            current_facets.min_length =
+                                attr(e, "value").and_then(|v| v.parse().ok());
+                        }
+                    }
+                    "maxLength" => {
+                        if in_restriction {
+                            current_facets.max_length =
+                                attr(e, "value").and_then(|v| v.parse().ok());
+                        }
+                    }
+                    "pattern" => {
+                        if in_restriction {
+                            current_facets.pattern = attr(e, "value");
+                        }
+                    }
+                    "minInclusive" => {
+                        if in_restriction {
+                            current_facets.min_inclusive = attr(e, "value");
+                        }
+                    }
+                    "maxInclusive" => {
+                        if in_restriction {
+                            current_facets.max_inclusive = attr(e, "value");
+                        }
+                    }
                     "element" => {
+                        let min_occurs: u32 = attr(e, "minOccurs")
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(1);
+                        let max_occurs = match attr(e, "maxOccurs").as_deref() {
+                            Some("unbounded") => MaxOccurs::Unbounded,
+                            Some(n) => MaxOccurs::Bounded(n.parse().unwrap_or(1)),
+                            None => MaxOccurs::Bounded(1),
+                        };
+
                         if current_complex.is_none() && current_simple.is_none() {
                             if let (Some(name), Some(type_)) =
                                 (attr(e, "name"), attr(e, "type"))
@@ -304,9 +383,7 @@ fn parse_xsd_file(
                             && let (Some(name), Some(type_)) =
                                 (attr(e, "name"), attr(e, "type"))
                         {
-                            let optional =
-                                attr(e, "minOccurs").map(|v| v == "0").unwrap_or(false);
-                            ct.fields.push(Field { name, type_, optional });
+                            ct.fields.push(Field { name, type_, min_occurs, max_occurs });
                         }
                     }
                     _ => {}
@@ -318,23 +395,23 @@ fn parse_xsd_file(
                     "simpleType" => {
                         if let Some(mut st) = current_simple.take() {
                             if in_restriction
-                                && let SimpleTypeKind::Restriction(_) = &st.kind
-                                && let Some(base) = restriction_base.take()
+                                && let SimpleTypeKind::Restriction { ref mut base, ref mut facets } = st.kind
                             {
-                                st.kind = SimpleTypeKind::Restriction(base);
+                                if let Some(b) = restriction_base.take() {
+                                    *base = b;
+                                }
+                                *facets = current_facets.clone();
                             }
                             schema.simple_types.push(st);
                         }
                         in_restriction = false;
                         restriction_base = None;
+                        current_facets = Facets::default();
                     }
                     "complexType" => {
                         if let Some(ct) = current_complex.take() {
                             schema.complex_types.push(ct);
                         }
-                    }
-                    "restriction" => {
-                        // in_restriction/restriction_base reset at End("simpleType")
                     }
                     _ => {}
                 }
@@ -357,7 +434,8 @@ fn attr(e: &quick_xml::events::BytesStart, key: &str) -> Option<String> {
     e.attributes()
         .filter_map(|a| a.ok())
         .find(|a| local_name(a.key.as_ref()) == key)
-        .and_then(|a| std::str::from_utf8(a.value.as_ref()).ok().map(|s| s.to_string()))
+        // unescape_value decodes XML entity refs (e.g. &#x20; → ' ') so regex patterns are valid.
+        .and_then(|a| a.unescape_value().ok().map(|s| s.into_owned()))
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -377,12 +455,32 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
                 SimpleTypeKind::Enum(_) => {
                     format!("crate::uci::types::{}", pascal(&st.name))
                 }
-                SimpleTypeKind::Restriction(base) => {
+                SimpleTypeKind::Restriction { base, .. } => {
                     let (ns, local) = resolver.resolve_pair(base);
                     xsd_to_rust(ns.as_deref(), &local)
                 }
             };
             (st.name.as_str(), rust_ty)
+        })
+        .collect();
+
+    // Names of all enum simple types (for generating enum checks in is_valid).
+    let enum_names: HashSet<&str> = schema
+        .simple_types
+        .iter()
+        .filter(|st| matches!(st.kind, SimpleTypeKind::Enum(_)))
+        .map(|st| st.name.as_str())
+        .collect();
+
+    // Map: type local name → facets (for string/double constraint checks).
+    let facets_map: HashMap<&str, &Facets> = schema
+        .simple_types
+        .iter()
+        .filter_map(|st| match &st.kind {
+            SimpleTypeKind::Restriction { facets, .. } if !facets.is_empty() => {
+                Some((st.name.as_str(), facets))
+            }
+            _ => None,
         })
         .collect();
 
@@ -393,13 +491,14 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         let file_name = format!("{}.rs", snake(&st.name));
         let code = match &st.kind {
             SimpleTypeKind::Enum(vals) => gen_enum(&st.name, vals),
-            SimpleTypeKind::Restriction(base) => gen_type_alias(&st.name, base, resolver),
+            SimpleTypeKind::Restriction { base, facets: _ } => {
+                gen_type_alias(&st.name, base, resolver)
+            }
         };
         fs::write(out_dir.join(&file_name), code).unwrap();
         let mod_name = snake(&st.name);
         mod_entries.push(format!(
-            "/// Generated module for XSD type `{}`.\npub mod {mod_name};\npub use {mod_name}::*;",
-            st.name
+            "#[doc(hidden)]\npub mod {mod_name};\npub use {mod_name}::*;"
         ));
     }
 
@@ -421,8 +520,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         .map(|ct| (ct.name.as_str(), ct))
         .collect();
 
-    // Pure-extension complex types (no own fields) are emitted as type aliases (no `_` suffix).
-    // Add them to simple_type_map so field_rust_type resolves them without appending `_`.
+    // Pure-extension complex types (no own fields) are emitted as type aliases.
     let mut simple_type_map = simple_type_map;
     for ct in &schema.complex_types {
         if ct.fields.is_empty() && ct.extension_base.is_some() {
@@ -438,12 +536,19 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
     for ct in &schema.complex_types {
         eprintln!("- {}", ct.name);
         let file_name = format!("{}.rs", snake(&ct.name));
-        let code = gen_struct(ct, &simple_type_map, &type_to_element, resolver, &complex_type_map);
+        let code = gen_struct(
+            ct,
+            &simple_type_map,
+            &type_to_element,
+            resolver,
+            &complex_type_map,
+            &enum_names,
+            &facets_map,
+        );
         fs::write(out_dir.join(&file_name), code).unwrap();
         let mod_name = snake(&ct.name);
         mod_entries.push(format!(
-            "/// Generated module for XSD type `{}`.\npub mod {mod_name};\npub use {mod_name}::*;",
-            ct.name
+            "#[doc(hidden)]\npub mod {mod_name};\npub use {mod_name}::*;"
         ));
     }
 
@@ -479,13 +584,15 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
              \x20       crate::QName::with_display({ns_arg}, \"{type_local}\", \"{display}\")\n\
              \x20   }}\n\
              \x20   fn cal_create() -> Self {{ Self({type_path_concrete}::_cal_create()) }}\n\
+             \x20   fn is_valid(&self) -> Result<(), crate::uci::ValidationError> {{\n\
+             \x20       self.0.is_valid(\"{el_name}\")\n\
+             \x20   }}\n\
              }}\n",
             el_name = el.name,
         );
         fs::write(out_dir.join(format!("{el_module}.rs")), code).unwrap();
         mod_entries.push(format!(
-            "/// Generated module for XSD element `{}`.\npub mod {el_module};\npub use {el_module}::*;",
-            el.name
+            "#[doc(hidden)]\npub mod {el_module};\npub use {el_module}::*;"
         ));
     }
 
@@ -517,31 +624,27 @@ fn gen_enum(name: &str, vals: &[String]) -> String {
         })
         .collect();
 
-    let _default_variant = variants.first().map(|(v, _)| v.as_str()).unwrap_or("").to_string();
-
-    // Match arms and variant-name list for the custom Deserialize impl.
-    let match_arms: String = variants
+    let mut match_arms: String = format!("                    \"enumNotSet\" => Ok({pascal_name}::EnumNotSet),\n");
+    match_arms.push_str(&variants
         .iter()
         .map(|(variant, orig)| format!("                    \"{orig}\" => Ok({pascal_name}::{variant}),\n"))
-        .collect();
-    let variant_names: Vec<String> = variants.iter().map(|(_, orig)| format!("\"{orig}\"")).collect();
+        .collect::<String>());
+    let mut variant_names: Vec<String> = vec!["\"enumNotSet\"".to_string()];
+    variant_names.extend(variants.iter().map(|(_, orig)| format!("\"{orig}\"")));
     let variant_names_str = variant_names.join(", ");
 
     let mut out = String::new();
-    out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n");
+    out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types, non_snake_case, clippy::approx_constant, clippy::excessive_precision, clippy::wrong_self_convention)]\n\n");
     out.push_str(&format!("/// XSD simpleType `{name}`.\n"));
-    // Derive Serialize + Default; Deserialize is hand-written below to handle
-    // quick_xml's $text map representation for element text content.
     out.push_str("#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]\n");
     out.push_str(&format!("#[serde(rename = \"{pascal_name}\")]\n"));
     out.push_str(&format!("pub enum {pascal_name} {{\n"));
-    for (i, (variant, orig)) in variants.iter().enumerate() {
-        let default_attr = if i == 0 { "    #[default]\n" } else { "" };
-        out.push_str(&format!("    /// `{orig}` variant.\n{default_attr}    #[serde(rename = \"{orig}\")]\n    {variant},\n"));
+    out.push_str("    /// Unset/default sentinel.\n    #[default]\n    #[serde(rename = \"enumNotSet\")]\n    EnumNotSet,\n");
+    for (variant, orig) in &variants {
+        out.push_str(&format!("    /// `{orig}` variant.\n    #[serde(rename = \"{orig}\")]\n    {variant},\n"));
     }
     out.push_str("}\n\n");
-    // Custom Deserialize: quick_xml delivers element text as a map with "$text" key.
-    // This impl accepts both a plain string (JSON/other) and the $text-map form.
+    // Custom Deserialize impl
     out.push_str(&format!(
         "impl<'de> serde::Deserialize<'de> for {pascal_name} {{\n\
          \x20   fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {{\n\
@@ -561,8 +664,6 @@ fn gen_enum(name: &str, vals: &[String]) -> String {
          \x20               from_str(v)\n\
          \x20           }}\n\
          \x20           fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {{\n\
-         \x20               // Drain all map entries; the closing XML tag must be consumed\n\
-         \x20               // before returning, or the parent map's cursor is left misaligned.\n\
          \x20               let mut result = None;\n\
          \x20               while let Some(key) = map.next_key::<std::borrow::Cow<str>>()? {{\n\
          \x20                   if key == \"$text\" {{\n\
@@ -576,6 +677,21 @@ fn gen_enum(name: &str, vals: &[String]) -> String {
          \x20           }}\n\
          \x20       }}\n\
          \x20       deserializer.deserialize_any(Visitor_)\n\
+         \x20   }}\n\
+         }}\n\n"
+    ));
+    // is_valid
+    out.push_str(&format!(
+        "impl {pascal_name} {{\n\
+         \x20   /// Returns `Err` if this enum is still at the default `EnumNotSet` sentinel.\n\
+         \x20   pub fn is_valid(&self, path: &str) -> Result<(), crate::uci::ValidationError> {{\n\
+         \x20       if matches!(self, {pascal_name}::EnumNotSet) {{\n\
+         \x20           return Err(crate::uci::ValidationError {{\n\
+         \x20               path: path.to_owned(),\n\
+         \x20               reason: \"enum not set\".to_owned(),\n\
+         \x20           }});\n\
+         \x20       }}\n\
+         \x20       Ok(())\n\
          \x20   }}\n\
          }}\n"
     ));
@@ -605,10 +721,29 @@ fn field_rust_type(f: &Field, simple_map: &HashMap<&str, String>, resolver: &Xsd
     } else {
         xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
     };
-    if f.optional { format!("Option<{base}>") } else { base }
+    if f.is_vec() {
+        format!("Vec<{base}>")
+    } else if f.is_optional() {
+        format!("Option<{base}>")
+    } else {
+        base
+    }
+}
+
+/// Returns true when a ComplexType is emitted as a type alias (not a trait).
+///
+/// gen_struct early-returns a `type Foo = ...` alias when the type has no
+/// own fields and merely re-exports an extension base.  Such entries must be
+/// excluded from ancestor delegation chains because type aliases cannot be
+/// used as trait bounds.
+fn is_type_alias(ct: &ComplexType) -> bool {
+    ct.fields.is_empty() && ct.extension_base.is_some()
 }
 
 /// Collect the inheritance chain: [(local_name, &ComplexType)] from immediate base upward.
+///
+/// Ancestors that would be emitted as type aliases are skipped — they have no
+/// corresponding trait definition and cannot appear in `impl Foo for Bar`.
 fn base_chain<'a>(
     ct: &'a ComplexType,
     complex_map: &'a HashMap<&str, &'a ComplexType>,
@@ -619,7 +754,9 @@ fn base_chain<'a>(
         let local = base_ref.rfind(':').map(|i| &base_ref[i + 1..]).unwrap_or(base_ref.as_str());
         match complex_map.get(local) {
             Some(base_ct) => {
-                chain.push((local, *base_ct));
+                if !is_type_alias(base_ct) {
+                    chain.push((local, *base_ct));
+                }
                 current = base_ct;
             }
             None => break,
@@ -628,12 +765,259 @@ fn base_chain<'a>(
     chain
 }
 
+/// Generate the is_valid() check code for a single field.
+///
+/// Returns a (possibly empty) block of Rust statements to be placed inside
+/// the is_valid() body. Each statement returns early with Err on violation.
+fn gen_field_validation(
+    f: &Field,
+    simple_map: &HashMap<&str, String>,
+    resolver: &XsdResolver,
+    enum_names: &HashSet<&str>,
+    facets_map: &HashMap<&str, &Facets>,
+) -> String {
+    let field_name = snake(&f.name);
+    let xsd_name = &f.name;
+    let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
+
+    let rust_type = if let Some(resolved) = simple_map.get(type_local.as_str()) {
+        resolved.clone()
+    } else {
+        xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
+    };
+
+    // ── Vec fields ────────────────────────────────────────────────────────
+    if f.is_vec() {
+        let mut out = String::new();
+
+        // Length check: skip only when min=0 AND unbounded (no constraint at all).
+        let needs_len_check =
+            f.min_occurs > 0 || matches!(f.max_occurs, MaxOccurs::Bounded(_));
+        if needs_len_check {
+            let min = f.min_occurs;
+            // Use range-contains syntax to satisfy clippy::manual_range_contains.
+            let (cond, max_desc) = match (min > 0, &f.max_occurs) {
+                (true, MaxOccurs::Bounded(n)) => {
+                    (format!("!({min}..={n}).contains(&_n)"), n.to_string())
+                }
+                (true, MaxOccurs::Unbounded) => (format!("_n < {min}"), "unbounded".to_string()),
+                (false, MaxOccurs::Bounded(n)) => {
+                    (format!("_n > {n}"), n.to_string())
+                }
+                (false, MaxOccurs::Unbounded) => {
+                    unreachable!("needs_len_check requires min>0 or bounded max")
+                }
+            };
+            out.push_str(&format!(
+                "    {{\n\
+                 \x20       let _n = self.{field_name}.len();\n\
+                 \x20       if {cond} {{\n\
+                 \x20           return Err(crate::uci::ValidationError {{\n\
+                 \x20               path: format!(\"{{path}}.{xsd_name}\"),\n\
+                 \x20               reason: format!(\"incorrect number of elements: got {{_n}}, expected {min}..={max_desc}\"),\n\
+                 \x20           }});\n\
+                 \x20       }}\n\
+                 \x20   }}\n"
+            ));
+        }
+
+        // Recurse into Vec elements if they have their own is_valid().
+        if is_validatable_type(&rust_type, enum_names, &type_local) {
+            out.push_str(&format!(
+                "    for (_i, _item) in self.{field_name}.iter().enumerate() {{\n\
+                 \x20       _item.is_valid(&format!(\"{{path}}.{xsd_name}[{{_i}}]\"))?;\n\
+                 \x20   }}\n"
+            ));
+        }
+
+        return out;
+    }
+
+    let is_opt = f.is_optional();
+
+    // ── Enum fields ───────────────────────────────────────────────────────
+    if enum_names.contains(type_local.as_str()) {
+        return if is_opt {
+            format!(
+                "    if let Some(ref _v) = self.{field_name} {{\n\
+                 \x20       _v.is_valid(&format!(\"{{path}}.{xsd_name}\"))?;\n\
+                 \x20   }}\n"
+            )
+        } else {
+            format!(
+                "    self.{field_name}.is_valid(&format!(\"{{path}}.{xsd_name}\"))?;\n"
+            )
+        };
+    }
+
+    // ── Complex struct fields ─────────────────────────────────────────────
+    if rust_type.starts_with("crate::uci::types::") && rust_type.ends_with('_') {
+        return if is_opt {
+            format!(
+                "    if let Some(ref _v) = self.{field_name} {{\n\
+                 \x20       _v.is_valid(&format!(\"{{path}}.{xsd_name}\"))?;\n\
+                 \x20   }}\n"
+            )
+        } else {
+            format!(
+                "    self.{field_name}.is_valid(&format!(\"{{path}}.{xsd_name}\"))?;\n"
+            )
+        };
+    }
+
+    // ── xs:string with facets ─────────────────────────────────────────────
+    if rust_type == "crate::xs::XsString"
+        && let Some(facets) = facets_map.get(type_local.as_str())
+    {
+        let mut out = String::new();
+
+        // String length check
+        let eff_min = facets.length.or(facets.min_length).unwrap_or(0) as usize;
+        let eff_max = facets.length.or(facets.max_length).map(|v| v as usize);
+        let has_len_check = eff_min > 0 || eff_max.is_some();
+
+        if has_len_check {
+            // Use range-contains syntax to satisfy clippy::manual_range_contains.
+            let cond = match (eff_min > 0, eff_max) {
+                (true, Some(max)) => format!("!({eff_min}..={max}).contains(&_n)"),
+                (true, None) => format!("_n < {eff_min}"),
+                (false, Some(max)) => format!("_n > {max}"),
+                (false, None) => unreachable!("has_len_check requires min>0 or max set"),
+            };
+            if is_opt {
+                out.push_str(&format!(
+                    "    if let Some(ref _v) = self.{field_name} {{\n\
+                     \x20       let _n = _v.chars().count();\n\
+                     \x20       if {cond} {{\n\
+                     \x20           return Err(crate::uci::ValidationError {{\n\
+                     \x20               path: format!(\"{{path}}.{xsd_name}\"),\n\
+                     \x20               reason: \"string does not match constraints\".to_owned(),\n\
+                     \x20           }});\n\
+                     \x20       }}\n\
+                     \x20   }}\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "    {{\n\
+                     \x20       let _n = self.{field_name}.chars().count();\n\
+                     \x20       if {cond} {{\n\
+                     \x20           return Err(crate::uci::ValidationError {{\n\
+                     \x20               path: format!(\"{{path}}.{xsd_name}\"),\n\
+                     \x20               reason: \"string does not match constraints\".to_owned(),\n\
+                     \x20           }});\n\
+                     \x20       }}\n\
+                     \x20   }}\n"
+                ));
+            }
+        }
+
+        // Pattern check
+        if let Some(pattern) = &facets.pattern {
+            let static_name = format!("PATTERN_{}", snake(&f.name).to_uppercase());
+            let pattern_escaped = pattern.replace('\\', "\\\\").replace('"', "\\\"");
+            if is_opt {
+                out.push_str(&format!(
+                    "    if let Some(ref _v) = self.{field_name} {{\n\
+                     \x20       static {static_name}: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();\n\
+                     \x20       let _re = {static_name}.get_or_init(|| regex::Regex::new(\"{pattern_escaped}\").unwrap());\n\
+                     \x20       if !_re.is_match(_v) {{\n\
+                     \x20           return Err(crate::uci::ValidationError {{\n\
+                     \x20               path: format!(\"{{path}}.{xsd_name}\"),\n\
+                     \x20               reason: \"string does not match constraints\".to_owned(),\n\
+                     \x20           }});\n\
+                     \x20       }}\n\
+                     \x20   }}\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "    {{\n\
+                     \x20       static {static_name}: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();\n\
+                     \x20       let _re = {static_name}.get_or_init(|| regex::Regex::new(\"{pattern_escaped}\").unwrap());\n\
+                     \x20       if !_re.is_match(&self.{field_name}) {{\n\
+                     \x20           return Err(crate::uci::ValidationError {{\n\
+                     \x20               path: format!(\"{{path}}.{xsd_name}\"),\n\
+                     \x20               reason: \"string does not match constraints\".to_owned(),\n\
+                     \x20           }});\n\
+                     \x20       }}\n\
+                     \x20   }}\n"
+                ));
+            }
+        }
+
+        if !out.is_empty() {
+            return out;
+        }
+    }
+
+    // ── xs:double / xs:float with range facets ────────────────────────────
+    if (rust_type == "crate::xs::Double" || rust_type == "crate::xs::Float")
+        && let Some(facets) = facets_map.get(type_local.as_str())
+    {
+        let float_suffix = if rust_type == "crate::xs::Double" { "f64" } else { "f32" };
+        let has_min = facets.min_inclusive.is_some();
+        let has_max = facets.max_inclusive.is_some();
+        if has_min || has_max {
+            let min_val = facets.min_inclusive.as_deref().unwrap_or("0");
+            let max_val = facets.max_inclusive.as_deref().unwrap_or("0");
+            // Use range-contains to satisfy clippy::manual_range_contains.
+            // approx_constant / excessive_precision are suppressed at the file level.
+            let cond = match (has_min, has_max) {
+                (true, true) => format!("!({min_val}_{float_suffix}..={max_val}_{float_suffix}).contains(&_v)"),
+                (true, false) => format!("_v < {min_val}_{float_suffix}"),
+                (false, true) => format!("_v > {max_val}_{float_suffix}"),
+                (false, false) => unreachable!(),
+            };
+            let range_str = match (has_min, has_max) {
+                (true, true) => format!("[{min_val}, {max_val}]"),
+                (true, false) => format!("[{min_val}, ∞)"),
+                (false, true) => format!("(-∞, {max_val}]"),
+                (false, false) => unreachable!(),
+            };
+            return if is_opt {
+                // Combine let + range check to avoid collapsible_if.
+                format!(
+                    "    if let Some(_v) = self.{field_name}\n\
+                     \x20       && {cond}\n\
+                     \x20   {{\n\
+                     \x20       return Err(crate::uci::ValidationError {{\n\
+                     \x20           path: format!(\"{{path}}.{xsd_name}\"),\n\
+                     \x20           reason: \"double is outside allowed range {range_str}\".to_owned(),\n\
+                     \x20       }});\n\
+                     \x20   }}\n"
+                )
+            } else {
+                format!(
+                    "    {{\n\
+                     \x20       let _v = self.{field_name};\n\
+                     \x20       if {cond} {{\n\
+                     \x20           return Err(crate::uci::ValidationError {{\n\
+                     \x20               path: format!(\"{{path}}.{xsd_name}\"),\n\
+                     \x20               reason: \"double is outside allowed range {range_str}\".to_owned(),\n\
+                     \x20           }});\n\
+                     \x20       }}\n\
+                     \x20   }}\n"
+                )
+            };
+        }
+    }
+
+    String::new()
+}
+
+/// True if the given Rust type exposes an `is_valid(path: &str)` method.
+fn is_validatable_type(rust_type: &str, enum_names: &HashSet<&str>, type_local: &str) -> bool {
+    enum_names.contains(type_local)
+        || (rust_type.starts_with("crate::uci::types::") && rust_type.ends_with('_'))
+}
+
 fn gen_struct(
     ct: &ComplexType,
     simple_map: &HashMap<&str, String>,
     type_to_element: &HashMap<&str, &str>,
     resolver: &XsdResolver,
     complex_map: &HashMap<&str, &ComplexType>,
+    enum_names: &HashSet<&str>,
+    facets_map: &HashMap<&str, &Facets>,
 ) -> String {
     let pascal_name = pascal(&ct.name);
 
@@ -670,7 +1054,15 @@ fn gen_struct(
         } else {
             xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
         };
-        if f.optional {
+        if f.is_vec() {
+            trait_methods.push_str(&format!(
+                "    /// Returns the XSD element sequence `{elem}`.\n\
+                 \x20   fn {field_name}(&self) -> &[{rust_type}];\n\
+                 \x20   /// Returns a mutable reference to the XSD element sequence `{elem}`.\n\
+                 \x20   fn {field_name}_mut(&mut self) -> &mut Vec<{rust_type}>;\n",
+                elem = f.name,
+            ));
+        } else if f.is_optional() {
             trait_methods.push_str(&format!(
                 "    /// Returns the optional XSD element `{elem}`.\n\
                  \x20   fn {field_name}(&self) -> Option<&{rust_type}>;\n\
@@ -689,9 +1081,7 @@ fn gen_struct(
         }
     }
 
-    // --- Struct fields (private) ---
-    // Ancestor fields are inlined directly (deepest-first) rather than using
-    // #[serde(flatten)], which quick_xml cannot deserialize reliably.
+    // --- Struct fields ---
     let inherited_fields_str: String = chain
         .iter()
         .rev()
@@ -699,24 +1089,30 @@ fn gen_struct(
         .map(|f| {
             let field_name = snake(&f.name);
             let full_type = field_rust_type(f, simple_map, resolver);
-            let optional_tag = if f.optional { " (optional, inherited)" } else { " (inherited)" };
-            let doc = format!("    /// XSD element `{}`{optional_tag}.\n", f.name);
+            let tag = if f.is_vec() { " (sequence, inherited)" }
+                      else if f.is_optional() { " (optional, inherited)" }
+                      else { " (inherited)" };
+            let doc = format!("    /// XSD element `{}`{tag}.\n", f.name);
             let serde_rename = format!("    #[serde(rename = \"{}\")]\n", f.name);
-            let maybe_skip = if f.optional {
+            let maybe_skip = if f.is_optional() {
                 "    #[serde(skip_serializing_if = \"Option::is_none\")]\n"
+            } else if f.is_vec() {
+                "    #[serde(default, skip_serializing_if = \"Vec::is_empty\")]\n"
             } else {
                 ""
             };
             format!("{doc}{serde_rename}{maybe_skip}    {field_name}: {full_type},\n")
         })
         .collect();
+
     let inherited_defaults_str: String = chain
         .iter()
         .rev()
         .flat_map(|(_, ancestor_ct)| &ancestor_ct.fields)
         .map(|f| {
             let field_name = snake(&f.name);
-            let default_val = if f.optional { "None".to_string() } else { "Default::default()".to_string() };
+            let default_val = if f.is_optional() { "None".to_string() }
+                              else { "Default::default()".to_string() };
             format!("            {field_name}: {default_val},\n")
         })
         .collect();
@@ -727,11 +1123,15 @@ fn gen_struct(
         .map(|f| {
             let field_name = snake(&f.name);
             let full_type = field_rust_type(f, simple_map, resolver);
-            let optional_tag = if f.optional { " (optional)" } else { "" };
-            let doc = format!("    /// XSD element `{}`{optional_tag}.\n", f.name);
+            let tag = if f.is_vec() { " (sequence)" }
+                      else if f.is_optional() { " (optional)" }
+                      else { "" };
+            let doc = format!("    /// XSD element `{}`{tag}.\n", f.name);
             let serde_rename = format!("    #[serde(rename = \"{}\")]\n", f.name);
-            let maybe_skip = if f.optional {
+            let maybe_skip = if f.is_optional() {
                 "    #[serde(skip_serializing_if = \"Option::is_none\")]\n"
+            } else if f.is_vec() {
+                "    #[serde(default, skip_serializing_if = \"Vec::is_empty\")]\n"
             } else {
                 ""
             };
@@ -744,7 +1144,8 @@ fn gen_struct(
         .iter()
         .map(|f| {
             let field_name = snake(&f.name);
-            let default_val = if f.optional { "None".to_string() } else { "Default::default()".to_string() };
+            let default_val = if f.is_optional() { "None".to_string() }
+                              else { "Default::default()".to_string() };
             format!("            {field_name}: {default_val},\n")
         })
         .collect();
@@ -761,7 +1162,12 @@ fn gen_struct(
             } else {
                 xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
             };
-            if f.optional {
+            if f.is_vec() {
+                format!(
+                    "    fn {field_name}(&self) -> &[{rust_type}] {{ &self.{field_name} }}\n\
+                     fn {field_name}_mut(&mut self) -> &mut Vec<{rust_type}> {{ &mut self.{field_name} }}\n"
+                )
+            } else if f.is_optional() {
                 format!(
                     "    fn {field_name}(&self) -> Option<&{rust_type}> {{ self.{field_name}.as_ref() }}\n\
                      fn {field_name}_mut(&mut self) -> Option<&mut {rust_type}> {{ self.{field_name}.as_mut() }}\n"
@@ -776,7 +1182,6 @@ fn gen_struct(
         .collect();
 
     // --- Ancestor delegation impls ---
-    // Fields are inlined, so all ancestor traits are implemented by direct field access.
     let ancestor_impls: String = chain
         .iter()
         .map(|(ancestor_local, ancestor_ct)| {
@@ -792,7 +1197,12 @@ fn gen_struct(
                     } else {
                         xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
                     };
-                    if f.optional {
+                    if f.is_vec() {
+                        format!(
+                            "    fn {field_name}(&self) -> &[{rust_type}] {{ &self.{field_name} }}\n\
+                             fn {field_name}_mut(&mut self) -> &mut Vec<{rust_type}> {{ &mut self.{field_name} }}\n"
+                        )
+                    } else if f.is_optional() {
                         format!(
                             "    fn {field_name}(&self) -> Option<&{rust_type}> {{ self.{field_name}.as_ref() }}\n\
                              fn {field_name}_mut(&mut self) -> Option<&mut {rust_type}> {{ self.{field_name}.as_mut() }}\n"
@@ -811,8 +1221,22 @@ fn gen_struct(
 
     let is_element_backed = type_to_element.contains_key(ct.name.as_str());
 
+    // --- is_valid() body ---
+    // Collect checks for all fields (inherited first, then own).
+    let all_fields: Vec<&Field> = chain
+        .iter()
+        .rev()
+        .flat_map(|(_, ancestor_ct)| ancestor_ct.fields.iter())
+        .chain(ct.fields.iter())
+        .collect();
+
+    let validation_checks: String = all_fields
+        .iter()
+        .map(|f| gen_field_validation(f, simple_map, resolver, enum_names, facets_map))
+        .collect();
+
     let mut out = String::new();
-    out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n");
+    out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types, non_snake_case, clippy::approx_constant, clippy::excessive_precision, clippy::wrong_self_convention)]\n\n");
 
     // Trait
     out.push_str(&format!("/// Accessor trait for XSD complexType `{}`.\n", ct.name));
@@ -850,6 +1274,18 @@ fn gen_struct(
         out.push_str("    }\n");
         out.push_str("}\n\n");
     }
+
+    // is_valid()
+    let path_param = if validation_checks.is_empty() { "_path" } else { "path" };
+    out.push_str(&format!("impl {pascal_name}_ {{\n"));
+    out.push_str("    /// Validates all fields against their XSD schema constraints.\n");
+    out.push_str("    ///\n");
+    out.push_str("    /// `path` is the dot-separated path to this element, used in error messages.\n");
+    out.push_str(&format!("    pub fn is_valid(&self, {path_param}: &str) -> Result<(), crate::uci::ValidationError> {{\n"));
+    out.push_str(&validation_checks);
+    out.push_str("        Ok(())\n");
+    out.push_str("    }\n");
+    out.push_str("}\n\n");
 
     // Own trait impl
     out.push_str(&format!("impl {pascal_name} for {pascal_name}_ {{\n"));
@@ -922,10 +1358,6 @@ fn enum_variant(s: &str) -> String {
     }
 }
 
-/// Map a resolved XSD type `(namespace_uri, local_name)` to a Rust type expression.
-///
-/// `xs:*` primitives map to `crate::xs::*`; all other types resolve to
-/// `crate::uci::types::TypeName`.
 fn xsd_to_rust(ns: Option<&str>, local: &str) -> String {
     const XS: &str = "http://www.w3.org/2001/XMLSchema";
     if ns == Some(XS) {
@@ -953,7 +1385,6 @@ fn xsd_to_rust(ns: Option<&str>, local: &str) -> String {
     format!("crate::uci::types::{}", pascal(local))
 }
 
-/// Like `xsd_to_rust` but appends `_` for non-XS types (concrete struct name, not the trait).
 fn xsd_to_rust_concrete(ns: Option<&str>, local: &str) -> String {
     const XS: &str = "http://www.w3.org/2001/XMLSchema";
     if ns == Some(XS) {
@@ -962,4 +1393,3 @@ fn xsd_to_rust_concrete(ns: Option<&str>, local: &str) -> String {
         format!("crate::uci::types::{}_", pascal(local))
     }
 }
-

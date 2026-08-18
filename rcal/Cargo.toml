@@ -1,4 +1,4 @@
-workspace = { members = [ "rcal_macros" ] }
+workspace = { members = [ "rcal_macros" , "xsd-subset"] }
 
 [package]
 name = "rcal"
@@ -7,6 +7,7 @@ edition = "2024"
 
 [dependencies]
 lazy_static = "1.5.0"
+regex = "1"
 mac_address = { version = "1.1.8", features = ["serde"] }
 rcal_macros = { path = "./rcal_macros" }
 serde = { version = "1.0.229", features = ["derive"] }

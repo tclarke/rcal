@@ -6,22 +6,12 @@
 //! Usage:
 //!   cargo run --example system_status
 
-#[cfg(not(rcal_has_xsd))]
-fn main() {
-    eprintln!("No XSD found at build time — rebuild with schema/UCI_MessageDefinitions_*.xsd present.");
-    std::process::exit(1);
-}
-
-#[cfg(rcal_has_xsd)]
 use rcal::uci::types::SystemStatus_;
 
-#[cfg(rcal_has_xsd)]
 const TOPIC: &str = "SystemStatus";
 
-#[cfg(rcal_has_xsd)]
 const ITERATIONS: usize = 10;
 
-#[cfg(rcal_has_xsd)]
 #[rcal_macros::rcal_main(config = "examples/CALConfig.toml")]
 async fn main() {
     use std::sync::Arc;

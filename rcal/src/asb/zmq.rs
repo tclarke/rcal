@@ -365,6 +365,12 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
 
     fn write(&mut self, message: &M) -> CalResult<()> {
         trace!(self.logger, "ZmqWriter::write()"; "topic" => &self.topic);
+        message.is_valid().map_err(|e| {
+            crate::uci::CalError::new(
+                crate::uci::CalErrorKind::ValidationError(e),
+                "message failed schema validation",
+            )
+        })?;
         let xml = serialize_message(message, &self.topic, &self.format)?;
         // RADIO/DISH: part[0] = group (topic for DISH filtering), part[1] = payload
         let msg = Message::multipart([self.topic.clone(), xml]);
