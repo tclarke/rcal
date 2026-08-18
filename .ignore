@@ -1,0 +1,7 @@
+Cargo.lock
+target/**
+!target/*/build/
+!target/*/build/rcal*/
+!target/*/build/rcal*/out/
+!target/*/build/rcal*/out/uci_types/
+!target/*/build/rcal*/out/uci_types/**

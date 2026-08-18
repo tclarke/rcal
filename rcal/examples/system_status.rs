@@ -6,7 +6,18 @@
 //! Usage:
 //!   cargo run --example system_status
 
+use std::sync::Arc;
+use std::time::Duration;
+use std::ops::DerefMut;
+
+use slog::info;
+
+use rcal::asb::zmq::ZmqAsb;
+use rcal::asb::{AbstractServiceBus, AbstractServiceBusCreateMessage, AbstractServiceBusExt, TopicQos};
 use rcal::uci::types::SystemStatus_;
+use rcal::uci::base::UUID;
+use rcal::uci::CalMessage;
+use rcal::uci::types::{SystemStatusMT, SystemStatusMDT, SystemStateEnum, HeaderType, MessageType, ID_Type, ClassificationEnum, SecurityInformationType};
 
 const TOPIC: &str = "SystemStatus";
 
@@ -14,13 +25,6 @@ const ITERATIONS: usize = 10;
 
 #[rcal_macros::rcal_main(config = "examples/CALConfig.toml")]
 async fn main() {
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use rcal::asb::zmq::ZmqAsb;
-    use rcal::asb::{AbstractServiceBus, AbstractServiceBusCreateMessage, AbstractServiceBusExt, TopicQos};
-    use rcal::uci::CalMessage;
-    use slog::info;
 
     let config = Arc::new(rcal_config);
     let transport_id = config
@@ -73,7 +77,8 @@ async fn main() {
         .create_message::<SystemStatus_>()
         .expect("create_message failed");
 
-    use rcal::uci::types::{SystemStatusMT, SystemStatusMDT, SystemStateEnum};
+    msg.deref_mut().message_header_mut().system_id_mut().uuid_mut().clone_from(&UUID::generate(None));
+    msg.deref_mut().security_information_mut().classification_mut().clone_from(&ClassificationEnum::U);
 
     // Allow DISH socket to connect and complete ZMTP handshake before sending.
     tokio::time::sleep(Duration::from_millis(100)).await;

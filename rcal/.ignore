@@ -1,5 +1,0 @@
-Cargo.lock
-target/**
-!target/**/
-!target/**/uci_types/
-!target/**/uci_types/**

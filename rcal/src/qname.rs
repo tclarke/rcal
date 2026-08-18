@@ -13,7 +13,7 @@
 //!
 //! ## Display / shortest-form resolution
 //!
-//! [`QName::display`] returns the shortest string given a [`NamespaceResolver`]:
+//! [`QName::resolve`] returns the shortest string given a [`NamespaceResolver`]:
 //! - no prefix when the namespace matches the resolver's default namespace
 //! - `prefix:local` when the namespace maps to a known prefix
 //! - `{uri}local` Clark notation as a last resort

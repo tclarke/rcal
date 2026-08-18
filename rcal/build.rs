@@ -460,6 +460,11 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
                     xsd_to_rust(ns.as_deref(), &local)
                 }
             };
+            let rust_ty = if st.name == "UniversallyUniqueIdentifierType" {
+                "crate::uci::base::UUID".to_string()
+            } else {
+                rust_ty
+            };
             (st.name.as_str(), rust_ty)
         })
         .collect();
@@ -488,6 +493,10 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
     eprintln!("Generating simple types");
     for st in &schema.simple_types {
         eprintln!("- {}", st.name);
+        // UniversallyUniqueIdentifierType maps directly to crate::uci::base::UUID — no alias needed.
+        if st.name == "UniversallyUniqueIdentifierType" {
+            continue;
+        }
         let file_name = format!("{}.rs", snake(&st.name));
         let code = match &st.kind {
             SimpleTypeKind::Enum(vals) => gen_enum(&st.name, vals),
@@ -498,7 +507,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         fs::write(out_dir.join(&file_name), code).unwrap();
         let mod_name = snake(&st.name);
         mod_entries.push(format!(
-            "#[doc(hidden)]\npub mod {mod_name};\npub use {mod_name}::*;"
+            "#[doc(hidden)]\npub mod {mod_name};\n#[doc(inline)]\npub use {mod_name}::*;"
         ));
     }
 
@@ -548,7 +557,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         fs::write(out_dir.join(&file_name), code).unwrap();
         let mod_name = snake(&ct.name);
         mod_entries.push(format!(
-            "#[doc(hidden)]\npub mod {mod_name};\npub use {mod_name}::*;"
+            "#[doc(hidden)]\n#[allow(missing_docs)]\npub mod {mod_name};\n#[doc(inline)]\npub use {mod_name}::*;"
         ));
     }
 
@@ -585,14 +594,14 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
              \x20   }}\n\
              \x20   fn cal_create() -> Self {{ Self({type_path_concrete}::_cal_create()) }}\n\
              \x20   fn is_valid(&self) -> Result<(), crate::uci::ValidationError> {{\n\
-             \x20       self.0.is_valid(\"{el_name}\")\n\
+             \x20       self.0.is_valid_at(\"{el_name}\")\n\
              \x20   }}\n\
              }}\n",
             el_name = el.name,
         );
         fs::write(out_dir.join(format!("{el_module}.rs")), code).unwrap();
         mod_entries.push(format!(
-            "#[doc(hidden)]\npub mod {el_module};\npub use {el_module}::*;"
+            "#[doc(hidden)]\n#[allow(missing_docs)]\npub mod {el_module};\n#[doc(inline)]\npub use {el_module}::*;"
         ));
     }
 
@@ -684,7 +693,7 @@ fn gen_enum(name: &str, vals: &[String]) -> String {
     out.push_str(&format!(
         "impl {pascal_name} {{\n\
          \x20   /// Returns `Err` if this enum is still at the default `EnumNotSet` sentinel.\n\
-         \x20   pub fn is_valid(&self, path: &str) -> Result<(), crate::uci::ValidationError> {{\n\
+         \x20   pub fn is_valid_at(&self, path: &str) -> Result<(), crate::uci::ValidationError> {{\n\
          \x20       if matches!(self, {pascal_name}::EnumNotSet) {{\n\
          \x20           return Err(crate::uci::ValidationError {{\n\
          \x20               path: path.to_owned(),\n\
@@ -825,7 +834,7 @@ fn gen_field_validation(
         if is_validatable_type(&rust_type, enum_names, &type_local) {
             out.push_str(&format!(
                 "    for (_i, _item) in self.{field_name}.iter().enumerate() {{\n\
-                 \x20       _item.is_valid(&format!(\"{{path}}.{xsd_name}[{{_i}}]\"))?;\n\
+                 \x20       _item.is_valid_at(&format!(\"{{path}}.{xsd_name}[{{_i}}]\"))?;\n\
                  \x20   }}\n"
             ));
         }
@@ -840,12 +849,12 @@ fn gen_field_validation(
         return if is_opt {
             format!(
                 "    if let Some(ref _v) = self.{field_name} {{\n\
-                 \x20       _v.is_valid(&format!(\"{{path}}.{xsd_name}\"))?;\n\
+                 \x20       _v.is_valid_at(&format!(\"{{path}}.{xsd_name}\"))?;\n\
                  \x20   }}\n"
             )
         } else {
             format!(
-                "    self.{field_name}.is_valid(&format!(\"{{path}}.{xsd_name}\"))?;\n"
+                "    self.{field_name}.is_valid_at(&format!(\"{{path}}.{xsd_name}\"))?;\n"
             )
         };
     }
@@ -855,12 +864,12 @@ fn gen_field_validation(
         return if is_opt {
             format!(
                 "    if let Some(ref _v) = self.{field_name} {{\n\
-                 \x20       _v.is_valid(&format!(\"{{path}}.{xsd_name}\"))?;\n\
+                 \x20       _v.is_valid_at(&format!(\"{{path}}.{xsd_name}\"))?;\n\
                  \x20   }}\n"
             )
         } else {
             format!(
-                "    self.{field_name}.is_valid(&format!(\"{{path}}.{xsd_name}\"))?;\n"
+                "    self.{field_name}.is_valid_at(&format!(\"{{path}}.{xsd_name}\"))?;\n"
             )
         };
     }
@@ -1281,7 +1290,7 @@ fn gen_struct(
     out.push_str("    /// Validates all fields against their XSD schema constraints.\n");
     out.push_str("    ///\n");
     out.push_str("    /// `path` is the dot-separated path to this element, used in error messages.\n");
-    out.push_str(&format!("    pub fn is_valid(&self, {path_param}: &str) -> Result<(), crate::uci::ValidationError> {{\n"));
+    out.push_str(&format!("    pub fn is_valid_at(&self, {path_param}: &str) -> Result<(), crate::uci::ValidationError> {{\n"));
     out.push_str(&validation_checks);
     out.push_str("        Ok(())\n");
     out.push_str("    }\n");
