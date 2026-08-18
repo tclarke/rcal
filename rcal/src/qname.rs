@@ -83,7 +83,11 @@ impl QName {
             let ns = rest[..end].to_string();
             let local = rest[end + 1..].to_string();
             let display = s.to_string();
-            return Self { namespace: Some(ns), local, display };
+            return Self {
+                namespace: Some(ns),
+                local,
+                display,
+            };
         }
         if let Some(colon) = s.find(':') {
             // Prefixed form — URI unknown without a resolver.
@@ -102,10 +106,14 @@ impl QName {
     }
 
     /// The local part of the qualified name.
-    pub fn local(&self) -> &str { &self.local }
+    pub fn local(&self) -> &str {
+        &self.local
+    }
 
     /// The namespace URI, if one is known.
-    pub fn namespace(&self) -> Option<&str> { self.namespace.as_deref() }
+    pub fn namespace(&self) -> Option<&str> {
+        self.namespace.as_deref()
+    }
 
     /// The unambiguous Clark notation: `{uri}local` or bare `local` when there
     /// is no namespace.
@@ -134,27 +142,39 @@ impl fmt::Display for QName {
 }
 
 impl From<&str> for QName {
-    fn from(s: &str) -> Self { Self::parse(s) }
+    fn from(s: &str) -> Self {
+        Self::parse(s)
+    }
 }
 
 impl From<String> for QName {
-    fn from(s: String) -> Self { Self::parse(&s) }
+    fn from(s: String) -> Self {
+        Self::parse(&s)
+    }
 }
 
 impl From<QName> for String {
-    fn from(q: QName) -> Self { q.display }
+    fn from(q: QName) -> Self {
+        q.display
+    }
 }
 
 impl PartialEq<str> for QName {
-    fn eq(&self, other: &str) -> bool { self.display == other }
+    fn eq(&self, other: &str) -> bool {
+        self.display == other
+    }
 }
 
 impl PartialEq<&str> for QName {
-    fn eq(&self, other: &&str) -> bool { self.display == *other }
+    fn eq(&self, other: &&str) -> bool {
+        self.display == *other
+    }
 }
 
 impl PartialEq<String> for QName {
-    fn eq(&self, other: &String) -> bool { self.display == *other }
+    fn eq(&self, other: &String) -> bool {
+        self.display == *other
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -184,7 +204,9 @@ pub struct NamespaceResolver {
 }
 
 impl Default for NamespaceResolver {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NamespaceResolver {
@@ -220,7 +242,9 @@ impl NamespaceResolver {
     }
 
     /// The default namespace URI, if set.
-    pub fn default_ns(&self) -> Option<&str> { self.default_ns.as_deref() }
+    pub fn default_ns(&self) -> Option<&str> {
+        self.default_ns.as_deref()
+    }
 
     /// Find the prefix associated with a namespace URI.
     pub fn prefix_for_uri(&self, uri: &str) -> Option<&str> {
@@ -257,17 +281,29 @@ impl NamespaceResolver {
             let ns = rest[..end].to_string();
             let local = rest[end + 1..].to_string();
             let display = self.format(Some(&ns), &local);
-            return QName { namespace: Some(ns), local, display };
+            return QName {
+                namespace: Some(ns),
+                local,
+                display,
+            };
         }
         if let Some(colon) = name.find(':') {
             let prefix = &name[..colon];
             let local = &name[colon + 1..];
             let ns = self.uri_for_prefix(prefix).map(|s| s.to_string());
             let display = self.format(ns.as_deref(), local);
-            QName { namespace: ns, local: local.to_string(), display }
+            QName {
+                namespace: ns,
+                local: local.to_string(),
+                display,
+            }
         } else {
             let display = self.format(self.default_ns.as_deref(), name);
-            QName { namespace: self.default_ns.clone(), local: name.to_string(), display }
+            QName {
+                namespace: self.default_ns.clone(),
+                local: name.to_string(),
+                display,
+            }
         }
     }
 }

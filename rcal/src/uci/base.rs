@@ -445,13 +445,26 @@ mod tests {
         debug!(logger, "Change to explicit random");
         debug!(logger, "Random: {}", UUID::generate(Some(&random_factory)));
 
-        let tb_factory = UUIDFactory { type_: UUIDFactoryType::TimeBased, ..Default::default() };
+        let tb_factory = UUIDFactory {
+            type_: UUIDFactoryType::TimeBased,
+            ..Default::default()
+        };
         debug!(logger, "Change to time based");
         debug!(logger, "TimeBased: {}", UUID::generate(Some(&tb_factory)));
 
-        let node = mac_address::get_mac_address().expect("test requires a MAC address").expect("test requires a MAC address");
+        let node = mac_address::get_mac_address()
+            .expect("test requires a MAC address")
+            .expect("test requires a MAC address");
         debug!(logger, "Time based with local node {}", node);
-        let tb_node_factory = UUIDFactory { type_: UUIDFactoryType::TimeBased, node: Some(node), ..Default::default() };
-        debug!(logger, "TimeBased: {}", UUID::generate(Some(&tb_node_factory)));
+        let tb_node_factory = UUIDFactory {
+            type_: UUIDFactoryType::TimeBased,
+            node: Some(node),
+            ..Default::default()
+        };
+        debug!(
+            logger,
+            "TimeBased: {}",
+            UUID::generate(Some(&tb_node_factory))
+        );
     }
 }

@@ -86,7 +86,9 @@ pub enum SinkType {
     #[default]
     Stdout,
     Stderr,
-    File { path: String },
+    File {
+        path: String,
+    },
 }
 
 /// Configuration for one log sink.

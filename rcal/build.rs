@@ -38,7 +38,10 @@ fn main() {
                 .collect();
             files.sort_by(|a, b| b.cmp(a));
             let Some(v) = files.first() else {
-                println!("cargo::error=Unable to find a valid schema files {:?}", files);
+                println!(
+                    "cargo::error=Unable to find a valid schema files {:?}",
+                    files
+                );
                 return;
             };
             v.to_string()
@@ -50,14 +53,21 @@ fn main() {
     let xsd_content = match fs::read_to_string(&xsd_path) {
         Ok(content) => content,
         Err(e) => {
-            println!("cargo::error=Cannot read RCAL_XSD_PATH={}: {e}", xsd_path.display());
+            println!(
+                "cargo::error=Cannot read RCAL_XSD_PATH={}: {e}",
+                xsd_path.display()
+            );
             return;
         }
     };
 
     println!("cargo::rerun-if-changed={}", xsd_path.display());
 
-    let schema = parse_xsd_file(&xsd_path, &xsd_content, &mut std::collections::HashSet::new());
+    let schema = parse_xsd_file(
+        &xsd_path,
+        &xsd_content,
+        &mut std::collections::HashSet::new(),
+    );
 
     if let Ok(schema_version) = std::env::var("RCAL_SCHEMA_VERSION") {
         println!("cargo::rustc-env=RCAL_SCHEMA_VERSION={schema_version}");
@@ -97,8 +107,10 @@ impl Default for XsdResolver {
 
 impl XsdResolver {
     fn add_prefix(&mut self, prefix: &str, uri: &str) {
-        self.prefix_to_uri.insert(prefix.to_string(), uri.to_string());
-        self.uri_to_prefix.insert(uri.to_string(), prefix.to_string());
+        self.prefix_to_uri
+            .insert(prefix.to_string(), uri.to_string());
+        self.uri_to_prefix
+            .insert(uri.to_string(), prefix.to_string());
     }
 
     fn resolve_pair(&self, name: &str) -> (Option<String>, String) {
@@ -223,7 +235,9 @@ fn parse_xsd_file(
     content: &str,
     seen: &mut std::collections::HashSet<PathBuf>,
 ) -> Schema {
-    let canonical = xsd_path.canonicalize().unwrap_or_else(|_| xsd_path.to_path_buf());
+    let canonical = xsd_path
+        .canonicalize()
+        .unwrap_or_else(|_| xsd_path.to_path_buf());
     seen.insert(canonical);
     let base_dir = xsd_path.parent().unwrap_or(Path::new("."));
 
@@ -319,9 +333,7 @@ fn parse_xsd_file(
                         current_facets = Facets::default();
                     }
                     "enumeration" => {
-                        if let (Some(st), Some(val)) =
-                            (current_simple.as_mut(), attr(e, "value"))
-                        {
+                        if let (Some(st), Some(val)) = (current_simple.as_mut(), attr(e, "value")) {
                             if let SimpleTypeKind::Enum(ref mut vals) = st.kind {
                                 vals.push(val);
                             } else {
@@ -332,8 +344,7 @@ fn parse_xsd_file(
                     // XSD restriction facets
                     "length" => {
                         if in_restriction {
-                            current_facets.length =
-                                attr(e, "value").and_then(|v| v.parse().ok());
+                            current_facets.length = attr(e, "value").and_then(|v| v.parse().ok());
                         }
                     }
                     "minLength" => {
@@ -374,16 +385,18 @@ fn parse_xsd_file(
                         };
 
                         if current_complex.is_none() && current_simple.is_none() {
-                            if let (Some(name), Some(type_)) =
-                                (attr(e, "name"), attr(e, "type"))
-                            {
+                            if let (Some(name), Some(type_)) = (attr(e, "name"), attr(e, "type")) {
                                 schema.elements.push(Element { name, type_ });
                             }
                         } else if let Some(ct) = current_complex.as_mut()
-                            && let (Some(name), Some(type_)) =
-                                (attr(e, "name"), attr(e, "type"))
+                            && let (Some(name), Some(type_)) = (attr(e, "name"), attr(e, "type"))
                         {
-                            ct.fields.push(Field { name, type_, min_occurs, max_occurs });
+                            ct.fields.push(Field {
+                                name,
+                                type_,
+                                min_occurs,
+                                max_occurs,
+                            });
                         }
                     }
                     _ => {}
@@ -395,7 +408,10 @@ fn parse_xsd_file(
                     "simpleType" => {
                         if let Some(mut st) = current_simple.take() {
                             if in_restriction
-                                && let SimpleTypeKind::Restriction { ref mut base, ref mut facets } = st.kind
+                                && let SimpleTypeKind::Restriction {
+                                    ref mut base,
+                                    ref mut facets,
+                                } = st.kind
                             {
                                 if let Some(b) = restriction_base.take() {
                                     *base = b;
@@ -582,8 +598,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
             ns_struct_fields.push_str(
                 "            #[serde(rename = \"@xmlns\")]\n            xmlns: &'static str,\n",
             );
-            ns_struct_values
-                .push_str(&format!("            xmlns: \"{default_ns}\",\n"));
+            ns_struct_values.push_str(&format!("            xmlns: \"{default_ns}\",\n"));
         }
         ns_struct_fields.push_str(
             "            #[serde(rename = \"@xmlns:xsi\")]\n            xmlns_xsi: &'static str,\n",
@@ -593,8 +608,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         let mut sorted_prefixes: Vec<_> = resolver.prefix_to_uri.iter().collect();
         sorted_prefixes.sort_by_key(|(k, _)| k.as_str());
         for (prefix, uri) in &sorted_prefixes {
-            let field_name =
-                format!("xmlns_{}", prefix.replace('-', "_").replace(':', "_"));
+            let field_name = format!("xmlns_{}", prefix.replace('-', "_").replace(':', "_"));
             ns_struct_fields.push_str(&format!(
                 "            #[serde(rename = \"@xmlns:{prefix}\")]\n            {field_name}: &'static str,\n"
             ));
@@ -674,11 +688,16 @@ fn gen_enum(name: &str, vals: &[String]) -> String {
         })
         .collect();
 
-    let mut match_arms: String = format!("                    \"enumNotSet\" => Ok({pascal_name}::EnumNotSet),\n");
-    match_arms.push_str(&variants
-        .iter()
-        .map(|(variant, orig)| format!("                    \"{orig}\" => Ok({pascal_name}::{variant}),\n"))
-        .collect::<String>());
+    let mut match_arms: String =
+        format!("                    \"enumNotSet\" => Ok({pascal_name}::EnumNotSet),\n");
+    match_arms.push_str(
+        &variants
+            .iter()
+            .map(|(variant, orig)| {
+                format!("                    \"{orig}\" => Ok({pascal_name}::{variant}),\n")
+            })
+            .collect::<String>(),
+    );
     let mut variant_names: Vec<String> = vec!["\"enumNotSet\"".to_string()];
     variant_names.extend(variants.iter().map(|(_, orig)| format!("\"{orig}\"")));
     let variant_names_str = variant_names.join(", ");
@@ -691,7 +710,9 @@ fn gen_enum(name: &str, vals: &[String]) -> String {
     out.push_str(&format!("pub enum {pascal_name} {{\n"));
     out.push_str("    /// Unset/default sentinel.\n    #[default]\n    #[serde(rename = \"enumNotSet\")]\n    EnumNotSet,\n");
     for (variant, orig) in &variants {
-        out.push_str(&format!("    /// `{orig}` variant.\n    #[serde(rename = \"{orig}\")]\n    {variant},\n"));
+        out.push_str(&format!(
+            "    /// `{orig}` variant.\n    #[serde(rename = \"{orig}\")]\n    {variant},\n"
+        ));
     }
     out.push_str("}\n\n");
     // Custom Deserialize impl
@@ -752,10 +773,16 @@ fn gen_type_alias(name: &str, base: &str, resolver: &XsdResolver) -> String {
     let pascal_name = pascal(name);
     let (ns, local) = resolver.resolve_pair(base);
     let rust_type = xsd_to_rust(ns.as_deref(), &local);
-    format!("// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n/// XSD simpleType `{name}`.\npub type {pascal_name} = {rust_type};\n")
+    format!(
+        "// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n/// XSD simpleType `{name}`.\npub type {pascal_name} = {rust_type};\n"
+    )
 }
 
-fn resolve_base_rust_type(base: &str, simple_map: &HashMap<&str, String>, resolver: &XsdResolver) -> String {
+fn resolve_base_rust_type(
+    base: &str,
+    simple_map: &HashMap<&str, String>,
+    resolver: &XsdResolver,
+) -> String {
     let (ns, local) = resolver.resolve_pair(base);
     if let Some(resolved) = simple_map.get(local.as_str()) {
         resolved.clone()
@@ -764,7 +791,11 @@ fn resolve_base_rust_type(base: &str, simple_map: &HashMap<&str, String>, resolv
     }
 }
 
-fn field_rust_type(f: &Field, simple_map: &HashMap<&str, String>, resolver: &XsdResolver) -> String {
+fn field_rust_type(
+    f: &Field,
+    simple_map: &HashMap<&str, String>,
+    resolver: &XsdResolver,
+) -> String {
     let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
     let base = if let Some(resolved) = simple_map.get(type_local.as_str()) {
         resolved.clone()
@@ -801,7 +832,10 @@ fn base_chain<'a>(
     let mut chain = Vec::new();
     let mut current = ct;
     while let Some(base_ref) = &current.extension_base {
-        let local = base_ref.rfind(':').map(|i| &base_ref[i + 1..]).unwrap_or(base_ref.as_str());
+        let local = base_ref
+            .rfind(':')
+            .map(|i| &base_ref[i + 1..])
+            .unwrap_or(base_ref.as_str());
         match complex_map.get(local) {
             Some(base_ct) => {
                 if !is_type_alias(base_ct) {
@@ -841,8 +875,7 @@ fn gen_field_validation(
         let mut out = String::new();
 
         // Length check: skip only when min=0 AND unbounded (no constraint at all).
-        let needs_len_check =
-            f.min_occurs > 0 || matches!(f.max_occurs, MaxOccurs::Bounded(_));
+        let needs_len_check = f.min_occurs > 0 || matches!(f.max_occurs, MaxOccurs::Bounded(_));
         if needs_len_check {
             let min = f.min_occurs;
             // Use range-contains syntax to satisfy clippy::manual_range_contains.
@@ -851,9 +884,7 @@ fn gen_field_validation(
                     (format!("!({min}..={n}).contains(&_n)"), n.to_string())
                 }
                 (true, MaxOccurs::Unbounded) => (format!("_n < {min}"), "unbounded".to_string()),
-                (false, MaxOccurs::Bounded(n)) => {
-                    (format!("_n > {n}"), n.to_string())
-                }
+                (false, MaxOccurs::Bounded(n)) => (format!("_n > {n}"), n.to_string()),
                 (false, MaxOccurs::Unbounded) => {
                     unreachable!("needs_len_check requires min>0 or bounded max")
                 }
@@ -894,9 +925,7 @@ fn gen_field_validation(
                  \x20   }}\n"
             )
         } else {
-            format!(
-                "    self.{field_name}.is_valid_at(&format!(\"{{path}}.{xsd_name}\"))?;\n"
-            )
+            format!("    self.{field_name}.is_valid_at(&format!(\"{{path}}.{xsd_name}\"))?;\n")
         };
     }
 
@@ -909,9 +938,7 @@ fn gen_field_validation(
                  \x20   }}\n"
             )
         } else {
-            format!(
-                "    self.{field_name}.is_valid_at(&format!(\"{{path}}.{xsd_name}\"))?;\n"
-            )
+            format!("    self.{field_name}.is_valid_at(&format!(\"{{path}}.{xsd_name}\"))?;\n")
         };
     }
 
@@ -1003,7 +1030,11 @@ fn gen_field_validation(
     if (rust_type == "crate::xs::Double" || rust_type == "crate::xs::Float")
         && let Some(facets) = facets_map.get(type_local.as_str())
     {
-        let float_suffix = if rust_type == "crate::xs::Double" { "f64" } else { "f32" };
+        let float_suffix = if rust_type == "crate::xs::Double" {
+            "f64"
+        } else {
+            "f32"
+        };
         let has_min = facets.min_inclusive.is_some();
         let has_max = facets.max_inclusive.is_some();
         if has_min || has_max {
@@ -1012,7 +1043,9 @@ fn gen_field_validation(
             // Use range-contains to satisfy clippy::manual_range_contains.
             // approx_constant / excessive_precision are suppressed at the file level.
             let cond = match (has_min, has_max) {
-                (true, true) => format!("!({min_val}_{float_suffix}..={max_val}_{float_suffix}).contains(&_v)"),
+                (true, true) => {
+                    format!("!({min_val}_{float_suffix}..={max_val}_{float_suffix}).contains(&_v)")
+                }
                 (true, false) => format!("_v < {min_val}_{float_suffix}"),
                 (false, true) => format!("_v > {max_val}_{float_suffix}"),
                 (false, false) => unreachable!(),
@@ -1083,7 +1116,9 @@ fn gen_struct(
     let pascal_name = pascal(&ct.name);
 
     // Extension with no additional fields → type alias; no trait needed.
-    if ct.fields.is_empty() && let Some(base) = &ct.extension_base {
+    if ct.fields.is_empty()
+        && let Some(base) = &ct.extension_base
+    {
         let rust_type = resolve_base_rust_type(base, simple_map, resolver);
         return format!(
             "// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n\
@@ -1151,9 +1186,13 @@ fn gen_struct(
         .map(|f| {
             let field_name = snake(&f.name);
             let full_type = field_rust_type(f, simple_map, resolver);
-            let tag = if f.is_vec() { " (sequence, inherited)" }
-                      else if f.is_optional() { " (optional, inherited)" }
-                      else { " (inherited)" };
+            let tag = if f.is_vec() {
+                " (sequence, inherited)"
+            } else if f.is_optional() {
+                " (optional, inherited)"
+            } else {
+                " (inherited)"
+            };
             let doc = format!("    /// XSD element `{}`{tag}.\n", f.name);
             let serde_rename = format!("    #[serde(rename = \"{}\")]\n", f.name);
             let maybe_skip = if f.is_optional() {
@@ -1173,8 +1212,11 @@ fn gen_struct(
         .flat_map(|(_, ancestor_ct)| &ancestor_ct.fields)
         .map(|f| {
             let field_name = snake(&f.name);
-            let default_val = if f.is_optional() { "None".to_string() }
-                              else { "Default::default()".to_string() };
+            let default_val = if f.is_optional() {
+                "None".to_string()
+            } else {
+                "Default::default()".to_string()
+            };
             format!("            {field_name}: {default_val},\n")
         })
         .collect();
@@ -1185,9 +1227,13 @@ fn gen_struct(
         .map(|f| {
             let field_name = snake(&f.name);
             let full_type = field_rust_type(f, simple_map, resolver);
-            let tag = if f.is_vec() { " (sequence)" }
-                      else if f.is_optional() { " (optional)" }
-                      else { "" };
+            let tag = if f.is_vec() {
+                " (sequence)"
+            } else if f.is_optional() {
+                " (optional)"
+            } else {
+                ""
+            };
             let doc = format!("    /// XSD element `{}`{tag}.\n", f.name);
             let serde_rename = format!("    #[serde(rename = \"{}\")]\n", f.name);
             let maybe_skip = if f.is_optional() {
@@ -1206,8 +1252,11 @@ fn gen_struct(
         .iter()
         .map(|f| {
             let field_name = snake(&f.name);
-            let default_val = if f.is_optional() { "None".to_string() }
-                              else { "Default::default()".to_string() };
+            let default_val = if f.is_optional() {
+                "None".to_string()
+            } else {
+                "Default::default()".to_string()
+            };
             format!("            {field_name}: {default_val},\n")
         })
         .collect();
@@ -1303,7 +1352,10 @@ fn gen_struct(
     out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types, non_snake_case, clippy::approx_constant, clippy::excessive_precision, clippy::wrong_self_convention)]\n\n");
 
     // Trait
-    out.push_str(&format!("/// Accessor trait for XSD complexType `{}`.\n", ct.name));
+    out.push_str(&format!(
+        "/// Accessor trait for XSD complexType `{}`.\n",
+        ct.name
+    ));
     out.push_str(&format!("pub trait {pascal_name} {supertrait}{{\n"));
     out.push_str(&trait_methods);
     out.push_str("}\n\n");
@@ -1340,11 +1392,17 @@ fn gen_struct(
     }
 
     // is_valid()
-    let path_param = if validation_checks.is_empty() { "_path" } else { "path" };
+    let path_param = if validation_checks.is_empty() {
+        "_path"
+    } else {
+        "path"
+    };
     out.push_str(&format!("impl {pascal_name}_ {{\n"));
     out.push_str("    /// Validates all fields against their XSD schema constraints.\n");
     out.push_str("    ///\n");
-    out.push_str("    /// `path` is the dot-separated path to this element, used in error messages.\n");
+    out.push_str(
+        "    /// `path` is the dot-separated path to this element, used in error messages.\n",
+    );
     out.push_str(&format!("    pub fn is_valid_at(&self, {path_param}: &str) -> Result<(), crate::uci::ValidationError> {{\n"));
     out.push_str(&validation_checks);
     out.push_str("        Ok(())\n");
@@ -1361,7 +1419,9 @@ fn gen_struct(
 
     // CalSubMessage marker
     if ct.abstract_ || !is_element_backed {
-        out.push_str(&format!("impl crate::uci::CalSubMessage for {pascal_name}_ {{}}\n"));
+        out.push_str(&format!(
+            "impl crate::uci::CalSubMessage for {pascal_name}_ {{}}\n"
+        ));
     }
 
     out
@@ -1377,11 +1437,11 @@ fn pascal(s: &str) -> String {
 }
 
 const RUST_KEYWORDS: &[&str] = &[
-    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn",
-    "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
-    "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe",
-    "use", "where", "while", "async", "await", "dyn", "abstract", "become", "box", "do",
-    "final", "macro", "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
+    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for",
+    "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+    "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where",
+    "while", "async", "await", "dyn", "abstract", "become", "box", "do", "final", "macro",
+    "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
 ];
 
 fn snake(s: &str) -> String {

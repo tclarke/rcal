@@ -20,7 +20,11 @@ fn read_file(path: &Path) -> String {
         eprintln!("Error reading {}: {e}", path.display());
         std::process::exit(1);
     });
-    let bytes = if raw.starts_with(&[0xEF, 0xBB, 0xBF]) { &raw[3..] } else { &raw };
+    let bytes = if raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &raw[3..]
+    } else {
+        &raw
+    };
     String::from_utf8_lossy(bytes).into_owned()
 }
 
@@ -33,7 +37,11 @@ fn attr_str(e: &quick_xml::events::BytesStart, key: &str) -> Option<String> {
     e.attributes()
         .filter_map(|a| a.ok())
         .find(|a| local_name_of(a.key.as_ref()) == key)
-        .and_then(|a| std::str::from_utf8(a.value.as_ref()).ok().map(str::to_owned))
+        .and_then(|a| {
+            std::str::from_utf8(a.value.as_ref())
+                .ok()
+                .map(str::to_owned)
+        })
 }
 
 fn split_lines_keep_ends(s: &str) -> Vec<&str> {
@@ -159,7 +167,9 @@ fn collect_ref(val: &str, refs: &mut HashSet<String>) {
 fn collect_type_refs(e: &quick_xml::events::BytesStart, refs: &mut HashSet<String>) {
     for attr in e.attributes().filter_map(|a| a.ok()) {
         let key = local_name_of(attr.key.as_ref());
-        let Ok(val) = std::str::from_utf8(attr.value.as_ref()) else { continue };
+        let Ok(val) = std::str::from_utf8(attr.value.as_ref()) else {
+            continue;
+        };
         match key {
             "type" | "base" | "ref" | "itemType" => collect_ref(val, refs),
             "memberTypes" => {
@@ -226,7 +236,10 @@ fn build_named_map(schema_paths: &[PathBuf]) -> HashMap<String, HashSet<String>>
     named
 }
 
-fn resolve_deps(element_names: &[String], named: &HashMap<String, HashSet<String>>) -> HashSet<String> {
+fn resolve_deps(
+    element_names: &[String],
+    named: &HashMap<String, HashSet<String>>,
+) -> HashSet<String> {
     let mut needed: HashSet<String> = HashSet::new();
     let mut queue = element_names.to_vec();
     while let Some(name) = queue.pop() {
@@ -313,7 +326,10 @@ fn main() {
         .map(String::as_str)
         .collect();
     if !missing.is_empty() {
-        eprintln!("Error: elements not found in schema: {}", missing.join(", "));
+        eprintln!(
+            "Error: elements not found in schema: {}",
+            missing.join(", ")
+        );
         std::process::exit(1);
     }
 
@@ -368,9 +384,11 @@ fn main() {
             support.len()
         );
     } else {
-        std::io::stdout().write_all(out.as_bytes()).unwrap_or_else(|e| {
-            eprintln!("Error writing stdout: {e}");
-            std::process::exit(1);
-        });
+        std::io::stdout()
+            .write_all(out.as_bytes())
+            .unwrap_or_else(|e| {
+                eprintln!("Error writing stdout: {e}");
+                std::process::exit(1);
+            });
     }
 }

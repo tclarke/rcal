@@ -634,8 +634,7 @@ where
         let expiration_dur = qos.expiration.map(|e| e.max_age);
         let reader_max = qos.reader_buffer.map(|b| b.max_messages);
 
-        let poll_state: PollState<M> =
-            Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
+        let poll_state: PollState<M> = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
         let task_alive = Arc::new(AtomicBool::new(true));
 
         let listeners: Arc<Mutex<Vec<Arc<dyn MessageListener<M>>>>> =
@@ -814,7 +813,9 @@ mod tests {
             "test.TestMsg".into()
         }
         fn cal_create() -> Self {
-            Self { value: String::new() }
+            Self {
+                value: String::new(),
+            }
         }
     }
 
@@ -825,7 +826,10 @@ mod tests {
     async fn test_check_creation() {
         let a = make_bus(logger).await;
         assert_eq!(a.oms_schema_version(), env!("RCAL_SCHEMA_VERSION"));
-        assert_eq!(a.oms_schema_compiler_version(), env!("RCAL_OMS_COMPILER_VERSION"));
+        assert_eq!(
+            a.oms_schema_compiler_version(),
+            env!("RCAL_OMS_COMPILER_VERSION")
+        );
         assert_eq!(a.service_identifier(), "Test Service");
         assert_eq!(a.asb_identifier(), "TestZmq");
         assert_eq!(
@@ -1082,7 +1086,8 @@ mod tests {
     async fn test_register_listener_in_failed_state_returns_err() {
         let mut a = make_bus(logger).await;
         a.update_status(AsbConnectionState::Normal, "").unwrap();
-        a.update_status(AsbConnectionState::Failed, "terminal").unwrap();
+        a.update_status(AsbConnectionState::Failed, "terminal")
+            .unwrap();
 
         let ld: Arc<dyn AsbStatusListener> = Arc::new(TestStatusListener::new());
         assert!(
@@ -1140,7 +1145,10 @@ mod tests {
             "test.topic",
             TopicQos::default(),
         );
-        assert!(result.is_err(), "create_writer must fail on type mismatch (CAL-005208)");
+        assert!(
+            result.is_err(),
+            "create_writer must fail on type mismatch (CAL-005208)"
+        );
     }
 
     #[init_test_logger]
@@ -1158,7 +1166,10 @@ mod tests {
             "test.topic",
             TopicQos::default(),
         );
-        assert!(result.is_err(), "create_reader must fail on type mismatch (CAL-005208)");
+        assert!(
+            result.is_err(),
+            "create_reader must fail on type mismatch (CAL-005208)"
+        );
     }
 
     #[init_test_logger]
@@ -1513,7 +1524,10 @@ mod tests {
             .expect("read() did not unblock within 500 ms after close()")
             .expect("task did not panic");
 
-        assert!(result.is_err(), "read() must return Err after close() (CAL-016049)");
+        assert!(
+            result.is_err(),
+            "read() must return Err after close() (CAL-016049)"
+        );
     }
 
     // ── QoS: TimeBasedFilter ──────────────────────────────────────────────
@@ -1741,7 +1755,11 @@ mod tests {
         )
         .unwrap();
 
-        writer.write(&TestMsg { value: "pending".into() }).unwrap();
+        writer
+            .write(&TestMsg {
+                value: "pending".into(),
+            })
+            .unwrap();
         // Gate still held: forwarding task has not drained; close must error.
         let result = writer.close();
         assert!(result.is_err(), "close must error when buffer is non-empty");
