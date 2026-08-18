@@ -10,14 +10,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::ops::DerefMut;
 
-use slog::info;
+use rcal::xs::DateTime;
+use slog::{error, info};
 
 use rcal::asb::zmq::ZmqAsb;
 use rcal::asb::{AbstractServiceBus, AbstractServiceBusCreateMessage, AbstractServiceBusExt, TopicQos};
-use rcal::uci::types::SystemStatus_;
 use rcal::uci::base::UUID;
 use rcal::uci::CalMessage;
-use rcal::uci::types::{SystemStatusMT, SystemStatusMDT, SystemStateEnum, HeaderType, MessageType, ID_Type, ClassificationEnum, SecurityInformationType};
+use rcal::uci::types::*;
 
 const TOPIC: &str = "SystemStatus";
 
@@ -77,17 +77,30 @@ async fn main() {
         .create_message::<SystemStatus_>()
         .expect("create_message failed");
 
-    msg.deref_mut().message_header_mut().system_id_mut().uuid_mut().clone_from(&UUID::generate(None));
-    msg.deref_mut().security_information_mut().classification_mut().clone_from(&ClassificationEnum::U);
+    *(*msg).security_information_mut().classification_mut() = ClassificationEnum::U;
+    let _foo = (*msg).security_information().owner_producer();
+    *(*msg).message_header_mut().system_id_mut().uuid_mut() = UUID::generate(None);
+    (*msg).message_header_mut().system_id_mut().descriptive_label_mut().replace(&mut "This is an example system".to_string());
+    (*msg).message_header_mut().schema_version_mut().clone_from(&bus.oms_schema_version().to_string());
+    *(*msg).message_header_mut().mode_mut() = MessageModeEnum::Simulation;
 
-    // Allow DISH socket to connect and complete ZMTP handshake before sending.
+    let sysid = (*msg).message_header().system_id().clone();
+    *(*msg).message_data_mut().system_id_mut() = sysid;
+    *(*msg).message_data_mut().system_state_mut() = SystemStateEnum::Operational;
+    *(*msg).message_data_mut().source_mut() = SystemSourceEnum::Actual;
+    (*msg).message_data_mut().communications_mut().mission_communications_state_mut().replace(&mut MissionCommunicationsStateEnum::Active);
+
+    // Allow DISH socket to connect and complete ZMTP handshake before sending
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     for i in 0..ITERATIONS {
         *msg.message_data_mut().system_state_mut() =
             if i % 2 == 0 { SystemStateEnum::Operational } else { SystemStateEnum::Degraded };
 
-        writer.write(&msg).expect("write failed");
+        if let Err(e) = writer.write(&msg) {
+            error!(root_logger, "Unable to write to ASB: {e}");
+            break;
+        }
         info!(root_logger, "sent"; "iteration" => i + 1, "of" => ITERATIONS);
         tokio::time::sleep(Duration::from_secs(1)).await;
     }

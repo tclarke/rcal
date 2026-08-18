@@ -575,12 +575,51 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
             Some(ns) => format!("Some(\"{ns}\")"),
             None => "None".to_string(),
         };
+        // Build xmlns field declarations and value initializers for the __Ns<'a> serialize wrapper.
+        let mut ns_struct_fields = String::new();
+        let mut ns_struct_values = String::new();
+        if let Some(ref default_ns) = resolver.default_ns {
+            ns_struct_fields.push_str(
+                "            #[serde(rename = \"@xmlns\")]\n            xmlns: &'static str,\n",
+            );
+            ns_struct_values
+                .push_str(&format!("            xmlns: \"{default_ns}\",\n"));
+        }
+        ns_struct_fields.push_str(
+            "            #[serde(rename = \"@xmlns:xsi\")]\n            xmlns_xsi: &'static str,\n",
+        );
+        ns_struct_values
+            .push_str("            xmlns_xsi: \"http://www.w3.org/2001/XMLSchema-instance\",\n");
+        let mut sorted_prefixes: Vec<_> = resolver.prefix_to_uri.iter().collect();
+        sorted_prefixes.sort_by_key(|(k, _)| k.as_str());
+        for (prefix, uri) in &sorted_prefixes {
+            let field_name =
+                format!("xmlns_{}", prefix.replace('-', "_").replace(':', "_"));
+            ns_struct_fields.push_str(&format!(
+                "            #[serde(rename = \"@xmlns:{prefix}\")]\n            {field_name}: &'static str,\n"
+            ));
+            ns_struct_values.push_str(&format!("            {field_name}: \"{uri}\",\n"));
+        }
         let code = format!(
             "// @generated — do not edit.\n#![allow(non_camel_case_types)]\n\n\
              /// XSD element `{el_name}`. Wraps [`{type_pascal}_`]({type_path_concrete}).\n\
-             #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n\
+             #[derive(Debug, Clone, serde::Deserialize)]\n\
              #[serde(transparent)]\n\
              pub struct {el_pascal}_(pub {type_path_concrete});\n\n\
+             impl serde::Serialize for {el_pascal}_ {{\n\
+             \x20   fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {{\n\
+             \x20       #[derive(serde::Serialize)]\n\
+             \x20       struct __Ns<'a> {{\n\
+             {ns_struct_fields}\
+             \x20           #[serde(flatten)]\n\
+             \x20           inner: &'a {type_path_concrete},\n\
+             \x20       }}\n\
+             \x20       __Ns {{\n\
+             {ns_struct_values}\
+             \x20           inner: &self.0,\n\
+             \x20       }}.serialize(serializer)\n\
+             \x20   }}\n\
+             }}\n\n\
              impl std::ops::Deref for {el_pascal}_ {{\n\
              \x20   type Target = {type_path_concrete};\n\
              \x20   fn deref(&self) -> &Self::Target {{ &self.0 }}\n\
@@ -598,6 +637,8 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
              \x20   }}\n\
              }}\n",
             el_name = el.name,
+            ns_struct_fields = ns_struct_fields,
+            ns_struct_values = ns_struct_values,
         );
         fs::write(out_dir.join(format!("{el_module}.rs")), code).unwrap();
         mod_entries.push(format!(
@@ -1019,6 +1060,17 @@ fn is_validatable_type(rust_type: &str, enum_names: &HashSet<&str>, type_local: 
         || (rust_type.starts_with("crate::uci::types::") && rust_type.ends_with('_'))
 }
 
+/// Converts a concrete complex-type path (`crate::uci::types::FooType_`) to its
+/// `dyn Trait` form (`dyn crate::uci::types::FooType`) for use in trait signatures.
+/// Non-complex types are returned unchanged.
+fn dyn_type(rust_type: &str) -> String {
+    if rust_type.starts_with("crate::uci::types::") && rust_type.ends_with('_') {
+        format!("dyn {}", &rust_type[..rust_type.len() - 1])
+    } else {
+        rust_type.to_string()
+    }
+}
+
 fn gen_struct(
     ct: &ComplexType,
     simple_map: &HashMap<&str, String>,
@@ -1063,6 +1115,7 @@ fn gen_struct(
         } else {
             xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
         };
+        let dyn_rt = dyn_type(&rust_type);
         if f.is_vec() {
             trait_methods.push_str(&format!(
                 "    /// Returns the XSD element sequence `{elem}`.\n\
@@ -1074,17 +1127,17 @@ fn gen_struct(
         } else if f.is_optional() {
             trait_methods.push_str(&format!(
                 "    /// Returns the optional XSD element `{elem}`.\n\
-                 \x20   fn {field_name}(&self) -> Option<&{rust_type}>;\n\
+                 \x20   fn {field_name}(&self) -> Option<&{dyn_rt}>;\n\
                  \x20   /// Returns a mutable reference to the optional XSD element `{elem}`.\n\
-                 \x20   fn {field_name}_mut(&mut self) -> Option<&mut {rust_type}>;\n",
+                 \x20   fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}>;\n",
                 elem = f.name,
             ));
         } else {
             trait_methods.push_str(&format!(
                 "    /// Returns the XSD element `{elem}`.\n\
-                 \x20   fn {field_name}(&self) -> &{rust_type};\n\
+                 \x20   fn {field_name}(&self) -> &{dyn_rt};\n\
                  \x20   /// Returns a mutable reference to the XSD element `{elem}`.\n\
-                 \x20   fn {field_name}_mut(&mut self) -> &mut {rust_type};\n",
+                 \x20   fn {field_name}_mut(&mut self) -> &mut {dyn_rt};\n",
                 elem = f.name,
             ));
         }
@@ -1171,6 +1224,7 @@ fn gen_struct(
             } else {
                 xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
             };
+            let dyn_rt = dyn_type(&rust_type);
             if f.is_vec() {
                 format!(
                     "    fn {field_name}(&self) -> &[{rust_type}] {{ &self.{field_name} }}\n\
@@ -1178,13 +1232,13 @@ fn gen_struct(
                 )
             } else if f.is_optional() {
                 format!(
-                    "    fn {field_name}(&self) -> Option<&{rust_type}> {{ self.{field_name}.as_ref() }}\n\
-                     fn {field_name}_mut(&mut self) -> Option<&mut {rust_type}> {{ self.{field_name}.as_mut() }}\n"
+                    "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref().map(|v| v as &{dyn_rt}) }}\n\
+                     fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n"
                 )
             } else {
                 format!(
-                    "    fn {field_name}(&self) -> &{rust_type} {{ &self.{field_name} }}\n\
-                     fn {field_name}_mut(&mut self) -> &mut {rust_type} {{ &mut self.{field_name} }}\n"
+                    "    fn {field_name}(&self) -> &{dyn_rt} {{ &self.{field_name} }}\n\
+                     fn {field_name}_mut(&mut self) -> &mut {dyn_rt} {{ &mut self.{field_name} }}\n"
                 )
             }
         })
@@ -1206,6 +1260,7 @@ fn gen_struct(
                     } else {
                         xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
                     };
+                    let dyn_rt = dyn_type(&rust_type);
                     if f.is_vec() {
                         format!(
                             "    fn {field_name}(&self) -> &[{rust_type}] {{ &self.{field_name} }}\n\
@@ -1213,13 +1268,13 @@ fn gen_struct(
                         )
                     } else if f.is_optional() {
                         format!(
-                            "    fn {field_name}(&self) -> Option<&{rust_type}> {{ self.{field_name}.as_ref() }}\n\
-                             fn {field_name}_mut(&mut self) -> Option<&mut {rust_type}> {{ self.{field_name}.as_mut() }}\n"
+                            "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref().map(|v| v as &{dyn_rt}) }}\n\
+                             fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n"
                         )
                     } else {
                         format!(
-                            "    fn {field_name}(&self) -> &{rust_type} {{ &self.{field_name} }}\n\
-                             fn {field_name}_mut(&mut self) -> &mut {rust_type} {{ &mut self.{field_name} }}\n"
+                            "    fn {field_name}(&self) -> &{dyn_rt} {{ &self.{field_name} }}\n\
+                             fn {field_name}_mut(&mut self) -> &mut {dyn_rt} {{ &mut self.{field_name} }}\n"
                         )
                     }
                 })
