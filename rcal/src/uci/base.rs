@@ -429,12 +429,154 @@ pub struct ServiceUuids {
     pub capabilities: Vec<UUID>,
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// §5  BoundedList  (CERT CXX-005168)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Sequence container that mirrors `uci::base::BoundedList<T>`.
+///
+/// Wraps [`Vec<T>`] and delegates all standard collection methods via
+/// [`Deref`][std::ops::Deref].  The key addition over a plain `Vec` is
+/// [`resize`][BoundedList::resize], which fills new slots with
+/// `T::default()` rather than requiring the caller to supply a value
+/// (CERT CXX-011201).
+///
+/// # CERT coverage
+/// CXX-005168, CXX-005172, CXX-005174, CXX-005179, CXX-005181,
+/// CXX-005184, CXX-005187, CXX-005195, CXX-005216, CXX-005224,
+/// CXX-005233, CXX-011183, CXX-011184, CXX-011186, CXX-011187,
+/// CXX-011189, CXX-011190, CXX-011191, CXX-011201
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct BoundedList<T>(Vec<T>);
+
+impl<T> BoundedList<T> {
+    /// Sentinel for an unbounded upper limit (CERT CXX-005174).
+    pub const UNBOUNDED_BOUND: usize = usize::MAX;
+
+    /// Construct an empty list.
+    pub fn new() -> Self {
+        BoundedList(Vec::new())
+    }
+
+    /// Returns 0 — the schema minimum is enforced by `is_valid_at`, not stored here
+    /// (CERT CXX-005233).
+    pub fn get_minimum_occurs(&self) -> usize {
+        0
+    }
+
+    /// Returns [`UNBOUNDED_BOUND`][BoundedList::UNBOUNDED_BOUND] — the schema
+    /// maximum is enforced by `is_valid_at`, not stored here (CERT CXX-005224).
+    pub fn get_maximum_occurs(&self) -> usize {
+        Self::UNBOUNDED_BOUND
+    }
+}
+
+impl<T: Default> BoundedList<T> {
+    /// Resize the list to `new_len`.
+    ///
+    /// If `new_len` is greater than the current length, new elements are
+    /// initialised with `T::default()`.  If smaller, the list is truncated.
+    ///
+    /// CERT CXX-011201
+    pub fn resize(&mut self, new_len: usize) {
+        self.0.resize_with(new_len, T::default);
+    }
+}
+
+impl<T> std::ops::Deref for BoundedList<T> {
+    type Target = Vec<T>;
+    fn deref(&self) -> &Vec<T> {
+        &self.0
+    }
+}
+
+impl<T> std::ops::DerefMut for BoundedList<T> {
+    fn deref_mut(&mut self) -> &mut Vec<T> {
+        &mut self.0
+    }
+}
+
+impl<T: Default> Default for BoundedList<T> {
+    fn default() -> Self {
+        BoundedList(Vec::new())
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for BoundedList<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl<T: Clone> Clone for BoundedList<T> {
+    fn clone(&self) -> Self {
+        BoundedList(self.0.clone())
+    }
+}
+
+impl<T: PartialEq> PartialEq for BoundedList<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<T> From<Vec<T>> for BoundedList<T> {
+    fn from(v: Vec<T>) -> Self {
+        BoundedList(v)
+    }
+}
+
+impl<T> From<BoundedList<T>> for Vec<T> {
+    fn from(bl: BoundedList<T>) -> Self {
+        bl.0
+    }
+}
+
+impl<T> IntoIterator for BoundedList<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a BoundedList<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut BoundedList<T> {
+    type Item = &'a mut T;
+    type IntoIter = std::slice::IterMut<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::calconfig::{UUIDFactory, UUIDFactoryType};
     use rcal_macros::init_test_logger;
     use slog::debug;
+
+    #[test]
+    fn test_bounded_list_resize() {
+        let mut list = BoundedList::<i32>::new();
+        list.push(10);
+        list.push(20);
+        list.resize(5);
+        assert_eq!(list.len(), 5);
+        assert_eq!(list[2], 0);
+        assert_eq!(list[4], 0);
+        list.resize(1);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0], 10);
+    }
 
     #[init_test_logger]
     #[test]

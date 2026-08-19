@@ -576,6 +576,25 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         }
     }
 
+    // Choice complex types: only those with validatable fields get the `_` suffix.
+    // The suffix signals to is_validatable_type/dyn_type that is_valid_at is meaningful.
+    for ct in &schema.complex_types {
+        if ct.is_choice {
+            let any_validatable = ct.fields.iter().any(|f| {
+                let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
+                let rust_type = if let Some(resolved) = simple_type_map.get(type_local.as_str()) {
+                    resolved.clone()
+                } else {
+                    xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
+                };
+                is_validatable_type(&rust_type, &enum_names, &type_local)
+            });
+            let pascal_name = pascal(&ct.name);
+            let suffix = if any_validatable { "_" } else { "" };
+            simple_type_map.insert(ct.name.as_str(), format!("crate::uci::types::{pascal_name}{suffix}"));
+        }
+    }
+
     // Generate complex types
     eprintln!("Generating complex types");
     for ct in &schema.complex_types {
@@ -824,7 +843,7 @@ fn field_rust_type(
         xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
     };
     if f.is_vec() {
-        format!("Vec<{base}>")
+        format!("crate::uci::base::BoundedList<{base}>")
     } else if f.is_optional() {
         format!("Option<{base}>")
     } else {
@@ -1134,6 +1153,14 @@ fn gen_choice_enum(
     let pascal_name = pascal(&ct.name);
     let mut out = String::new();
 
+    // Derive enum name from the pre-populated simple_map entry (set in generate_types
+    // before any gen_struct calls). The `_` suffix signals is_valid_at is meaningful.
+    let enum_type_name = simple_map
+        .get(ct.name.as_str())
+        .and_then(|path| path.rsplit("::").next())
+        .unwrap_or(&pascal_name)
+        .to_string();
+
     out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types, non_snake_case, clippy::approx_constant, clippy::excessive_precision, clippy::wrong_self_convention, clippy::large_enum_variant)]\n\n");
 
     out.push_str(&format!(
@@ -1144,7 +1171,7 @@ fn gen_choice_enum(
         "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n\
          #[serde(untagged)]\n",
     );
-    out.push_str(&format!("pub enum {pascal_name}_ {{\n"));
+    out.push_str(&format!("pub enum {enum_type_name} {{\n"));
 
     let mut first_variant_name = String::new();
     let mut first_payload_type = String::new();
@@ -1175,54 +1202,57 @@ fn gen_choice_enum(
     // Manual Default impl — derive(Default) requires #[default] which only works on unit variants.
     if !first_variant_name.is_empty() {
         out.push_str(&format!(
-            "impl Default for {pascal_name}_ {{\n\
+            "impl Default for {enum_type_name} {{\n\
              \x20   fn default() -> Self {{\n\
-             \x20       {pascal_name}_::{first_variant_name} {{ inner: <{first_payload_type}>::default() }}\n\
+             \x20       {enum_type_name}::{first_variant_name} {{ inner: <{first_payload_type}>::default() }}\n\
              \x20   }}\n\
              }}\n\n"
         ));
     }
 
     // is_valid_at: match on active variant only.
-    let any_validatable = ct.fields.iter().any(|f| {
-        let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
-        let rust_type = if let Some(resolved) = simple_map.get(type_local.as_str()) {
-            resolved.clone()
-        } else {
-            xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
-        };
-        is_validatable_type(&rust_type, enum_names, &type_local)
-    });
-    let path_param = if any_validatable { "path" } else { "_path" };
-    out.push_str(&format!("impl {pascal_name}_ {{\n"));
+    // Pre-compute all match arms; derive path_param from whether any arm uses is_valid_at.
+    let arms: Vec<(String, String, String)> = ct
+        .fields
+        .iter()
+        .map(|f| {
+            let variant_name = pascal(&f.name);
+            let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
+            let rust_type = if let Some(resolved) = simple_map.get(type_local.as_str()) {
+                resolved.clone()
+            } else {
+                xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
+            };
+            let (binding, validation) = if is_validatable_type(&rust_type, enum_names, &type_local) {
+                (
+                    "inner".to_string(),
+                    format!("inner.is_valid_at(&format!(\"{{path}}.{}\"))", f.name),
+                )
+            } else {
+                ("inner: _".to_string(), "Ok(())".to_string())
+            };
+            (variant_name, binding, validation)
+        })
+        .collect();
+    let path_param = if arms.iter().any(|(_, _, v)| v.contains("is_valid_at")) {
+        "path"
+    } else {
+        "_path"
+    };
+    out.push_str(&format!("impl {enum_type_name} {{\n"));
     out.push_str(&format!(
         "    pub fn is_valid_at(&self, {path_param}: &str) -> Result<(), crate::uci::ValidationError> {{\n\
          \x20       match self {{\n"
     ));
-    for f in &ct.fields {
-        let variant_name = pascal(&f.name);
-        let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
-        let rust_type = if let Some(resolved) = simple_map.get(type_local.as_str()) {
-            resolved.clone()
-        } else {
-            xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
-        };
-        let (binding, validation) = if is_validatable_type(&rust_type, enum_names, &type_local) {
-            (
-                "inner".to_string(),
-                format!("inner.is_valid_at(&format!(\"{{path}}.{}\"))", f.name),
-            )
-        } else {
-            ("inner: _".to_string(), "Ok(())".to_string())
-        };
+    for (variant_name, binding, validation) in &arms {
         out.push_str(&format!(
-            "            {pascal_name}_::{variant_name} {{ {binding} }} => {validation},\n"
+            "            {enum_type_name}::{variant_name} {{ {binding} }} => {validation},\n"
         ));
     }
     out.push_str("        }\n    }\n}\n\n");
 
     out.push_str(&format!(
-        "impl crate::uci::CalSubMessage for {pascal_name}_ {{}}\n"
+        "impl crate::uci::CalSubMessage for {enum_type_name} {{}}\n"
     ));
 
     out
@@ -1291,7 +1321,7 @@ fn gen_struct(
                 "    /// Returns the XSD element sequence `{elem}`.\n\
                  \x20   fn {field_name}(&self) -> &[{rust_type}];\n\
                  \x20   /// Returns a mutable reference to the XSD element sequence `{elem}`.\n\
-                 \x20   fn {field_name}_mut(&mut self) -> &mut Vec<{rust_type}>;\n",
+                 \x20   fn {field_name}_mut(&mut self) -> &mut crate::uci::base::BoundedList<{rust_type}>;\n",
                 elem = f.name,
             ));
         } else if f.is_optional() {
@@ -1333,7 +1363,7 @@ fn gen_struct(
             let maybe_skip = if f.is_optional() {
                 "    #[serde(skip_serializing_if = \"Option::is_none\")]\n"
             } else if f.is_vec() {
-                "    #[serde(default, skip_serializing_if = \"Vec::is_empty\")]\n"
+                "    #[serde(default, skip_serializing_if = \"crate::uci::base::BoundedList::is_empty\")]\n"
             } else {
                 ""
             };
@@ -1374,7 +1404,7 @@ fn gen_struct(
             let maybe_skip = if f.is_optional() {
                 "    #[serde(skip_serializing_if = \"Option::is_none\")]\n"
             } else if f.is_vec() {
-                "    #[serde(default, skip_serializing_if = \"Vec::is_empty\")]\n"
+                "    #[serde(default, skip_serializing_if = \"crate::uci::base::BoundedList::is_empty\")]\n"
             } else {
                 ""
             };
@@ -1417,7 +1447,7 @@ fn gen_struct(
             if f.is_vec() {
                 format!(
                     "    fn {field_name}(&self) -> &[{rust_type}] {{ &self.{field_name} }}\n\
-                     fn {field_name}_mut(&mut self) -> &mut Vec<{rust_type}> {{ &mut self.{field_name} }}\n"
+                     fn {field_name}_mut(&mut self) -> &mut crate::uci::base::BoundedList<{rust_type}> {{ &mut self.{field_name} }}\n"
                 )
             } else if f.is_optional() {
                 if is_choice_field {
@@ -1465,7 +1495,7 @@ fn gen_struct(
                     if f.is_vec() {
                         format!(
                             "    fn {field_name}(&self) -> &[{rust_type}] {{ &self.{field_name} }}\n\
-                             fn {field_name}_mut(&mut self) -> &mut Vec<{rust_type}> {{ &mut self.{field_name} }}\n"
+                             fn {field_name}_mut(&mut self) -> &mut crate::uci::base::BoundedList<{rust_type}> {{ &mut self.{field_name} }}\n"
                         )
                     } else if f.is_optional() {
                         if is_choice_field {
