@@ -63,6 +63,8 @@ fn validate_topic_type<M: CalMessage>(
     let Some(registered_type) = &topic_cfg.type_ else {
         return Ok(());
     };
+    // Config type= must match QName::display: bare local name for the default UCI
+    // namespace (e.g. "SystemStatusType"), prefix:local for mapped namespaces.
     if M::message_type_name() != registered_type.as_str() {
         return Err(CalError::new(
             CalErrorKind::TopicUnavailable,
@@ -176,7 +178,7 @@ impl ZmqAsb {
             })?;
         }
 
-        let (shutdown_tx, _) = tokio::sync::watch::channel(());
+        let (shutdown_tx, _) = tokio::sync::watch::channel(()); // initial receiver dropped; readers call subscribe()
         let shutdown_tx = Arc::new(shutdown_tx);
 
         let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();

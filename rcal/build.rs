@@ -73,7 +73,13 @@ fn main() {
         println!("cargo::rustc-env=RCAL_SCHEMA_VERSION={schema_version}");
         eprintln!("Schema version={schema_version}");
     } else {
-        let schema_version = format!("UCI_{}", schema.version.as_ref().unwrap());
+        let Some(ref v) = schema.version else {
+            println!(
+                "cargo::error=XSD has no version= attribute; set RCAL_SCHEMA_VERSION to override"
+            );
+            return;
+        };
+        let schema_version = format!("UCI_{v}");
         println!("cargo::rustc-env=RCAL_SCHEMA_VERSION={schema_version}");
         eprintln!("Schema version={schema_version}");
     }
@@ -86,6 +92,7 @@ fn main() {
 // Build-time namespace resolver
 // ════════════════════════════════════════════════════════════════════════════
 
+// Mirrors qname::NamespaceResolver — build scripts cannot use lib code.
 #[derive(Debug, Clone)]
 struct XsdResolver {
     default_ns: Option<String>,
@@ -518,9 +525,9 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         .collect();
 
     // Generate simple types
+    let mut simple_count = 0;
     eprintln!("Generating simple types");
     for st in &schema.simple_types {
-        eprintln!("- {}", st.name);
         // UniversallyUniqueIdentifierType maps directly to crate::uci::base::UUID — no alias needed.
         if st.name == "UniversallyUniqueIdentifierType" {
             continue;
@@ -537,6 +544,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         mod_entries.push(format!(
             "#[doc(hidden)]\npub mod {mod_name};\n#[doc(inline)]\npub use {mod_name}::*;"
         ));
+        simple_count += 1;
     }
 
     // Invert: complex-type local name → element name
@@ -599,9 +607,9 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
     }
 
     // Generate complex types
+    let mut complex_count = 0;
     eprintln!("Generating complex types");
     for ct in &schema.complex_types {
-        eprintln!("- {}", ct.name);
         let file_name = format!("{}.rs", snake(&ct.name));
         let code = gen_struct(
             ct,
@@ -618,12 +626,13 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         mod_entries.push(format!(
             "#[doc(hidden)]\n#[allow(missing_docs)]\npub mod {mod_name};\n#[doc(inline)]\npub use {mod_name}::*;"
         ));
+        complex_count += 1;
     }
 
     // Generate element newtype wrappers
+    let mut element_count = 0;
     eprintln!("Generating elements");
     for el in &schema.elements {
-        eprintln!("- {}", el.name);
         let (type_ns, type_local) = resolver.resolve_pair(&el.type_);
         let type_pascal = pascal(&type_local);
         let el_module = snake(&el.name);
@@ -701,6 +710,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         mod_entries.push(format!(
             "#[doc(hidden)]\n#[allow(missing_docs)]\npub mod {el_module};\n#[doc(inline)]\npub use {el_module}::*;"
         ));
+        element_count += 1;
     }
 
     // Write mod.rs
@@ -709,7 +719,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         mod_entries.join("\n")
     );
     fs::write(out_dir.join("mod.rs"), mod_content).unwrap();
-    eprintln!("Generating types :: Done");
+    eprintln!("Finished generating types: {element_count} elements, {simple_count} simple types, and {complex_count} complex typtes");
 }
 
 fn gen_enum(name: &str, vals: &[String]) -> String {

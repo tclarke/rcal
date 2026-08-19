@@ -500,6 +500,7 @@ impl<T> std::ops::Deref for BoundedList<T> {
 }
 
 impl<T> std::ops::DerefMut for BoundedList<T> {
+    // ponytail: exposes Vec::push/extend unchecked; bound enforcement is in is_valid_at(), not here
     fn deref_mut(&mut self) -> &mut Vec<T> {
         &mut self.0
     }
