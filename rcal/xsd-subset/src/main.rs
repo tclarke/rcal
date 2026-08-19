@@ -92,7 +92,7 @@ fn extract_blocks(path: &Path) -> HashMap<String, String> {
     let mut current_start = 0usize;
 
     for (i, line) in lines.iter().enumerate() {
-        let stripped = line.trim_end_matches(|c| c == '\r' || c == '\n');
+        let stripped = line.trim_end_matches(['\r', '\n']);
         if is_top_level_def(stripped) {
             if let Some(name) = current_name.take() {
                 blocks.insert(name, lines[current_start..i].concat());
@@ -116,7 +116,7 @@ fn extract_schema_header(path: &Path) -> String {
     let lines = split_lines_keep_ends(&content);
     let mut header: Vec<&str> = Vec::new();
     for line in &lines {
-        let stripped = line.trim_end_matches(|c| c == '\r' || c == '\n');
+        let stripped = line.trim_end_matches(['\r', '\n']);
         if is_top_level_def(stripped) {
             break;
         }

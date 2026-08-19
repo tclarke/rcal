@@ -103,7 +103,11 @@ async fn main() {
         .expect("create_message failed");
 
     *(*msg).security_information_mut().classification_mut() = ClassificationEnum::U;
-    (*msg).security_information_mut().owner_producer_mut().push(OwnerProducerChoiceType_::GovernmentIdentifier{inner: OwnerProducerEnum::Usa});
+    (*msg).security_information_mut().owner_producer_mut().push(
+        OwnerProducerChoiceType_::GovernmentIdentifier {
+            inner: OwnerProducerEnum::Usa,
+        },
+    );
     *(*msg).message_header_mut().system_id_mut().uuid_mut() = UUID::generate(None);
     (*msg)
         .message_header_mut()

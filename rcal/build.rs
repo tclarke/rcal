@@ -591,7 +591,10 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
             });
             let pascal_name = pascal(&ct.name);
             let suffix = if any_validatable { "_" } else { "" };
-            simple_type_map.insert(ct.name.as_str(), format!("crate::uci::types::{pascal_name}{suffix}"));
+            simple_type_map.insert(
+                ct.name.as_str(),
+                format!("crate::uci::types::{pascal_name}{suffix}"),
+            );
         }
     }
 
@@ -1163,10 +1166,7 @@ fn gen_choice_enum(
 
     out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types, non_snake_case, clippy::approx_constant, clippy::excessive_precision, clippy::wrong_self_convention, clippy::large_enum_variant)]\n\n");
 
-    out.push_str(&format!(
-        "/// XSD complexType `{}` (xs:choice).\n",
-        ct.name
-    ));
+    out.push_str(&format!("/// XSD complexType `{}` (xs:choice).\n", ct.name));
     out.push_str(
         "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n\
          #[serde(untagged)]\n",
@@ -1223,7 +1223,8 @@ fn gen_choice_enum(
             } else {
                 xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
             };
-            let (binding, validation) = if is_validatable_type(&rust_type, enum_names, &type_local) {
+            let (binding, validation) = if is_validatable_type(&rust_type, enum_names, &type_local)
+            {
                 (
                     "inner".to_string(),
                     format!("inner.is_valid_at(&format!(\"{{path}}.{}\"))", f.name),
