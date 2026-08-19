@@ -459,6 +459,14 @@ impl<T> BoundedList<T> {
         BoundedList(Vec::new())
     }
 
+    /// Returns `true` if the list contains no elements.
+    ///
+    /// Named explicitly so that `crate::uci::base::BoundedList::is_empty` is a
+    /// valid function-pointer path for `#[serde(skip_serializing_if = …)]`.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Returns 0 — the schema minimum is enforced by `is_valid_at`, not stored here
     /// (CERT CXX-005233).
     pub fn get_minimum_occurs(&self) -> usize {
