@@ -190,6 +190,7 @@ struct ComplexType {
     abstract_: bool,
     extension_base: Option<String>,
     fields: Vec<Field>,
+    is_choice: bool,
 }
 
 /// Maximum occurrences constraint on an XSD element.
@@ -248,6 +249,7 @@ fn parse_xsd_file(
     let mut current_simple: Option<SimpleType> = None;
     let mut current_complex: Option<ComplexType> = None;
     let mut in_restriction = false;
+    let mut in_choice_depth: u32 = 0;
     let mut restriction_base: Option<String> = None;
     let mut current_facets = Facets::default();
 
@@ -319,6 +321,7 @@ fn parse_xsd_file(
                                 abstract_,
                                 extension_base: None,
                                 fields: vec![],
+                                is_choice: false,
                             });
                         }
                     }
@@ -372,6 +375,12 @@ fn parse_xsd_file(
                     "maxInclusive" => {
                         if in_restriction {
                             current_facets.max_inclusive = attr(e, "value");
+                        }
+                    }
+                    "choice" => {
+                        in_choice_depth += 1;
+                        if let Some(ct) = current_complex.as_mut() {
+                            ct.is_choice = true;
                         }
                     }
                     "element" => {
@@ -428,6 +437,9 @@ fn parse_xsd_file(
                         if let Some(ct) = current_complex.take() {
                             schema.complex_types.push(ct);
                         }
+                    }
+                    "choice" if in_choice_depth > 0 => {
+                        in_choice_depth = in_choice_depth.saturating_sub(1);
                     }
                     _ => {}
                 }
@@ -545,6 +557,14 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         .map(|ct| (ct.name.as_str(), ct))
         .collect();
 
+    // Names of all xs:choice complex types — used to suppress trait generation and dyn dispatch.
+    let choice_type_names: HashSet<&str> = schema
+        .complex_types
+        .iter()
+        .filter(|ct| ct.is_choice)
+        .map(|ct| ct.name.as_str())
+        .collect();
+
     // Pure-extension complex types (no own fields) are emitted as type aliases.
     let mut simple_type_map = simple_type_map;
     for ct in &schema.complex_types {
@@ -569,6 +589,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
             &complex_type_map,
             &enum_names,
             &facets_map,
+            &choice_type_names,
         );
         fs::write(out_dir.join(&file_name), code).unwrap();
         let mod_name = snake(&ct.name);
@@ -608,7 +629,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         let mut sorted_prefixes: Vec<_> = resolver.prefix_to_uri.iter().collect();
         sorted_prefixes.sort_by_key(|(k, _)| k.as_str());
         for (prefix, uri) in &sorted_prefixes {
-            let field_name = format!("xmlns_{}", prefix.replace('-', "_").replace(':', "_"));
+            let field_name = format!("xmlns_{}", prefix.replace(['-', ':'], "_"));
             ns_struct_fields.push_str(&format!(
                 "            #[serde(rename = \"@xmlns:{prefix}\")]\n            {field_name}: &'static str,\n"
             ));
@@ -1104,6 +1125,110 @@ fn dyn_type(rust_type: &str) -> String {
     }
 }
 
+fn gen_choice_enum(
+    ct: &ComplexType,
+    simple_map: &HashMap<&str, String>,
+    resolver: &XsdResolver,
+    enum_names: &HashSet<&str>,
+) -> String {
+    let pascal_name = pascal(&ct.name);
+    let mut out = String::new();
+
+    out.push_str("// @generated — do not edit.\n#![allow(non_camel_case_types, non_snake_case, clippy::approx_constant, clippy::excessive_precision, clippy::wrong_self_convention, clippy::large_enum_variant)]\n\n");
+
+    out.push_str(&format!(
+        "/// XSD complexType `{}` (xs:choice).\n",
+        ct.name
+    ));
+    out.push_str(
+        "#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]\n\
+         #[serde(untagged)]\n",
+    );
+    out.push_str(&format!("pub enum {pascal_name}_ {{\n"));
+
+    let mut first_variant_name = String::new();
+    let mut first_payload_type = String::new();
+
+    for (i, f) in ct.fields.iter().enumerate() {
+        let variant_name = pascal(&f.name);
+        let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
+        let payload_type = if let Some(resolved) = simple_map.get(type_local.as_str()) {
+            resolved.clone()
+        } else {
+            xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
+        };
+        if i == 0 {
+            first_variant_name = variant_name.clone();
+            first_payload_type = payload_type.clone();
+        }
+        let doc = format!("    /// XSD element `{}`.\n", f.name);
+        out.push_str(&format!(
+            "{doc}    {variant_name} {{\n\
+             \x20       #[serde(rename = \"{xsd_name}\")]\n\
+             \x20       inner: {payload_type},\n\
+             \x20   }},\n",
+            xsd_name = f.name,
+        ));
+    }
+    out.push_str("}\n\n");
+
+    // Manual Default impl — derive(Default) requires #[default] which only works on unit variants.
+    if !first_variant_name.is_empty() {
+        out.push_str(&format!(
+            "impl Default for {pascal_name}_ {{\n\
+             \x20   fn default() -> Self {{\n\
+             \x20       {pascal_name}_::{first_variant_name} {{ inner: <{first_payload_type}>::default() }}\n\
+             \x20   }}\n\
+             }}\n\n"
+        ));
+    }
+
+    // is_valid_at: match on active variant only.
+    let any_validatable = ct.fields.iter().any(|f| {
+        let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
+        let rust_type = if let Some(resolved) = simple_map.get(type_local.as_str()) {
+            resolved.clone()
+        } else {
+            xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
+        };
+        is_validatable_type(&rust_type, enum_names, &type_local)
+    });
+    let path_param = if any_validatable { "path" } else { "_path" };
+    out.push_str(&format!("impl {pascal_name}_ {{\n"));
+    out.push_str(&format!(
+        "    pub fn is_valid_at(&self, {path_param}: &str) -> Result<(), crate::uci::ValidationError> {{\n\
+         \x20       match self {{\n"
+    ));
+    for f in &ct.fields {
+        let variant_name = pascal(&f.name);
+        let (type_ns, type_local) = resolver.resolve_pair(&f.type_);
+        let rust_type = if let Some(resolved) = simple_map.get(type_local.as_str()) {
+            resolved.clone()
+        } else {
+            xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
+        };
+        let (binding, validation) = if is_validatable_type(&rust_type, enum_names, &type_local) {
+            (
+                "inner".to_string(),
+                format!("inner.is_valid_at(&format!(\"{{path}}.{}\"))", f.name),
+            )
+        } else {
+            ("inner: _".to_string(), "Ok(())".to_string())
+        };
+        out.push_str(&format!(
+            "            {pascal_name}_::{variant_name} {{ {binding} }} => {validation},\n"
+        ));
+    }
+    out.push_str("        }\n    }\n}\n\n");
+
+    out.push_str(&format!(
+        "impl crate::uci::CalSubMessage for {pascal_name}_ {{}}\n"
+    ));
+
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
 fn gen_struct(
     ct: &ComplexType,
     simple_map: &HashMap<&str, String>,
@@ -1112,8 +1237,14 @@ fn gen_struct(
     complex_map: &HashMap<&str, &ComplexType>,
     enum_names: &HashSet<&str>,
     facets_map: &HashMap<&str, &Facets>,
+    choice_type_names: &HashSet<&str>,
 ) -> String {
     let pascal_name = pascal(&ct.name);
+
+    // xs:choice types are emitted as enums, not structs.
+    if ct.is_choice {
+        return gen_choice_enum(ct, simple_map, resolver, enum_names);
+    }
 
     // Extension with no additional fields → type alias; no trait needed.
     if ct.fields.is_empty()
@@ -1150,7 +1281,11 @@ fn gen_struct(
         } else {
             xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
         };
-        let dyn_rt = dyn_type(&rust_type);
+        let dyn_rt = if choice_type_names.contains(type_local.as_str()) {
+            rust_type.clone()
+        } else {
+            dyn_type(&rust_type)
+        };
         if f.is_vec() {
             trait_methods.push_str(&format!(
                 "    /// Returns the XSD element sequence `{elem}`.\n\
@@ -1273,17 +1408,29 @@ fn gen_struct(
             } else {
                 xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
             };
-            let dyn_rt = dyn_type(&rust_type);
+            let is_choice_field = choice_type_names.contains(type_local.as_str());
+            let dyn_rt = if is_choice_field {
+                rust_type.clone()
+            } else {
+                dyn_type(&rust_type)
+            };
             if f.is_vec() {
                 format!(
                     "    fn {field_name}(&self) -> &[{rust_type}] {{ &self.{field_name} }}\n\
                      fn {field_name}_mut(&mut self) -> &mut Vec<{rust_type}> {{ &mut self.{field_name} }}\n"
                 )
             } else if f.is_optional() {
-                format!(
-                    "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref().map(|v| v as &{dyn_rt}) }}\n\
-                     fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n"
-                )
+                if is_choice_field {
+                    format!(
+                        "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref() }}\n\
+                         fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut() }}\n"
+                    )
+                } else {
+                    format!(
+                        "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref().map(|v| v as &{dyn_rt}) }}\n\
+                         fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n"
+                    )
+                }
             } else {
                 format!(
                     "    fn {field_name}(&self) -> &{dyn_rt} {{ &self.{field_name} }}\n\
@@ -1309,17 +1456,29 @@ fn gen_struct(
                     } else {
                         xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
                     };
-                    let dyn_rt = dyn_type(&rust_type);
+                    let is_choice_field = choice_type_names.contains(type_local.as_str());
+                    let dyn_rt = if is_choice_field {
+                        rust_type.clone()
+                    } else {
+                        dyn_type(&rust_type)
+                    };
                     if f.is_vec() {
                         format!(
                             "    fn {field_name}(&self) -> &[{rust_type}] {{ &self.{field_name} }}\n\
                              fn {field_name}_mut(&mut self) -> &mut Vec<{rust_type}> {{ &mut self.{field_name} }}\n"
                         )
                     } else if f.is_optional() {
-                        format!(
-                            "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref().map(|v| v as &{dyn_rt}) }}\n\
-                             fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n"
-                        )
+                        if is_choice_field {
+                            format!(
+                                "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref() }}\n\
+                                 fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut() }}\n"
+                            )
+                        } else {
+                            format!(
+                                "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref().map(|v| v as &{dyn_rt}) }}\n\
+                                 fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n"
+                            )
+                        }
                     } else {
                         format!(
                             "    fn {field_name}(&self) -> &{dyn_rt} {{ &self.{field_name} }}\n\

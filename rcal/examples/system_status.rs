@@ -6,11 +6,9 @@
 //! Usage:
 //!   cargo run --example system_status
 
-use std::ops::DerefMut;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rcal::xs::DateTime;
 use slog::{error, info};
 
 use rcal::asb::zmq::ZmqAsb;
@@ -90,7 +88,6 @@ async fn main() {
         .expect("create_message failed");
 
     *(*msg).security_information_mut().classification_mut() = ClassificationEnum::U;
-    let _foo = (*msg).security_information().owner_producer();
     *(*msg).message_header_mut().system_id_mut().uuid_mut() = UUID::generate(None);
     (*msg)
         .message_header_mut()
@@ -107,11 +104,10 @@ async fn main() {
     *(*msg).message_data_mut().system_id_mut() = sysid;
     *(*msg).message_data_mut().system_state_mut() = SystemStateEnum::Operational;
     *(*msg).message_data_mut().source_mut() = SystemSourceEnum::Actual;
-    (*msg)
+    /* *(*msg)
         .message_data_mut()
-        .communications_mut()
-        .mission_communications_state_mut()
-        .replace(&mut MissionCommunicationsStateEnum::Active);
+        .communications_mut().expect()
+        .mission_communications_state_mut() = MissionCommunicationsStateEnum::Active; */
 
     // Allow DISH socket to connect and complete ZMTP handshake before sending
     tokio::time::sleep(Duration::from_millis(100)).await;
