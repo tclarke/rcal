@@ -1,10 +1,10 @@
-= RCal: An OMS Cal implementation in rust
+# RCal: An OMS Cal implementation in rust
 rcal is an Open Mission Systems (OMS) Critical Abstraction Layer (CAL) implementation for Rust. It implements the
 "CERT CAL-" requirements and take inspiration from the "CERT CXX-" requirements. The C++ requirements are an
 inspiration for the rust API and are used when they make sense while taking advantage of rust features.
 RCal currently utilizes the 2020 edition and builds with stable.
 
-= AI notes
+# AI notes
 One goal of developing this library was to experiment with Claude Code. I'd describe the AI contributions
 as "collaborative vibe coding". I've given requirements, reviewed all code, and added some code as it makes
 sense but Claude is treated like a junior engineer and performs most of the tasks with input from me.
@@ -14,7 +14,7 @@ of the design work in Planning mode. I'll often have to make some changes to the
 
 If you want to use claude code with this codebase I'd suggest at least the setup below.
 
-== Quickstart
+## Quickstart
 Just add as a dependency and build. This will generate from the UCI 2.5.0 schema. If you have a custom schema
 that removes unneeded types and elements or adds non-standard types and elements, set the `RCAL_SCHEMA_PATH`
 environment variable when you build. You can set this in your environment or create a `.cargo/config.toml`
@@ -29,7 +29,7 @@ string, you can also set this in `config.toml`.
 
 See the `examples/` folder for usage.
 
-= Setting up claude
+# Setting up claude
 - install rtk  -- This drastically reduces token use by stripping unnecessary output from external commands
 - install ripgrep  -- Required for some of the plugin capabilities
 - Install caveman  -- Cavement automatically has Claude use "caveman" speach with is highly compressed and functional. It removes pleasantries, fluff, etc. and produces output that has high signal to noise
@@ -44,7 +44,7 @@ See the `examples/` folder for usage.
 - Optional: Install skills -- This skill provides information on common rust async patterns. Since RCal heavily uses async this can get a working implementation with less back and forth discussion
   - `npx skills add https://github.com/wshobson/agents --skill rust-async-patterns`
 
-=== MCP Servers
+### MCP Servers
 - rust-mcp-server: Rust cargo and rust commands with MCP instead of bash
   - cargo install rust-mcp-server
   - cargo install cargo-machete
