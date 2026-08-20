@@ -719,7 +719,9 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         mod_entries.join("\n")
     );
     fs::write(out_dir.join("mod.rs"), mod_content).unwrap();
-    eprintln!("Finished generating types: {element_count} elements, {simple_count} simple types, and {complex_count} complex typtes");
+    eprintln!(
+        "Finished generating types: {element_count} elements, {simple_count} simple types, and {complex_count} complex typtes"
+    );
 }
 
 fn gen_enum(name: &str, vals: &[String]) -> String {

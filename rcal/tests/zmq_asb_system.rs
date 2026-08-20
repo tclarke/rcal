@@ -313,7 +313,11 @@ async fn test_multiprocess_receive_peer() {
     let m1 = reader.read(Some(timeout)).unwrap().unwrap();
     let m2 = reader.read(Some(timeout)).unwrap().unwrap();
     let m3 = reader.read(Some(timeout)).unwrap().unwrap();
-    assert_eq!([m1.value, m2.value, m3.value], [1, 2, 3], "multiprocess delivery order");
+    assert_eq!(
+        [m1.value, m2.value, m3.value],
+        [1, 2, 3],
+        "multiprocess delivery order"
+    );
     assert!(reader.read_no_wait().unwrap().is_none());
 
     child.wait().unwrap();
