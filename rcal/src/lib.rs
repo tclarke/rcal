@@ -7,5 +7,8 @@
 pub mod asb;
 pub mod calconfig;
 pub mod logging;
+pub mod qname;
 pub mod uci;
 pub mod xs;
+
+pub use qname::{NamespaceResolver, QName};

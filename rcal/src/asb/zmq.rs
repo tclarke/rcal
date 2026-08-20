@@ -28,14 +28,16 @@ pub const ZMQ_ASB_ID: &str = "zmq";
 
 fn serialize_message<M: serde::Serialize>(
     msg: &M,
+    root: &str,
     format: &SerializationFormat,
 ) -> CalResult<String> {
     match format {
-        SerializationFormat::Xml => quick_xml::se::to_string(msg)
+        SerializationFormat::Xml => quick_xml::se::to_string_with_root(root, msg)
             .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string())),
         SerializationFormat::PrettyXml => {
             let mut buf = String::new();
-            let mut ser = quick_xml::se::Serializer::new(&mut buf);
+            let mut ser = quick_xml::se::Serializer::with_root(&mut buf, Some(root))
+                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
             ser.indent(' ', 4);
             msg.serialize(ser)
                 .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
@@ -61,7 +63,9 @@ fn validate_topic_type<M: CalMessage>(
     let Some(registered_type) = &topic_cfg.type_ else {
         return Ok(());
     };
-    if registered_type != M::message_type_name() {
+    // Config type= must match QName::display: bare local name for the default UCI
+    // namespace (e.g. "SystemStatusType"), prefix:local for mapped namespaces.
+    if M::message_type_name() != registered_type.as_str() {
         return Err(CalError::new(
             CalErrorKind::TopicUnavailable,
             format!(
@@ -174,7 +178,7 @@ impl ZmqAsb {
             })?;
         }
 
-        let (shutdown_tx, _) = tokio::sync::watch::channel(());
+        let (shutdown_tx, _) = tokio::sync::watch::channel(()); // initial receiver dropped; readers call subscribe()
         let shutdown_tx = Arc::new(shutdown_tx);
 
         let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
@@ -273,11 +277,11 @@ impl AbstractServiceBus for ZmqAsb {
     }
 
     fn oms_schema_version(&self) -> &str {
-        "2.1.0_test_schema"
+        env!("RCAL_SCHEMA_VERSION")
     }
 
     fn oms_schema_compiler_version(&self) -> &str {
-        "0.1.0"
+        env!("RCAL_OMS_COMPILER_VERSION")
     }
 
     fn connection_status(&self) -> &AsbStatus {
@@ -363,7 +367,13 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
 
     fn write(&mut self, message: &M) -> CalResult<()> {
         trace!(self.logger, "ZmqWriter::write()"; "topic" => &self.topic);
-        let xml = serialize_message(message, &self.format)?;
+        message.is_valid().map_err(|e| {
+            crate::uci::CalError::new(
+                crate::uci::CalErrorKind::ValidationError(e),
+                "message failed schema validation",
+            )
+        })?;
+        let xml = serialize_message(message, &self.topic, &self.format)?;
         // RADIO/DISH: part[0] = group (topic for DISH filtering), part[1] = payload
         let msg = Message::multipart([self.topic.clone(), xml]);
         match &self.writer_buf {
@@ -626,8 +636,7 @@ where
         let expiration_dur = qos.expiration.map(|e| e.max_age);
         let reader_max = qos.reader_buffer.map(|b| b.max_messages);
 
-        let poll_state: PollState<M> =
-            Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
+        let poll_state: PollState<M> = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
         let task_alive = Arc::new(AtomicBool::new(true));
 
         let listeners: Arc<Mutex<Vec<Arc<dyn MessageListener<M>>>>> =
@@ -638,6 +647,7 @@ where
         let topic_str = topic.to_string();
         let _format = self.serialization_format.clone(); // ponytail: deserialization is format-agnostic (XML only); extend if binary formats are added
         let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let reader_logger = self.logger.new(slog::o!("topic" => topic.to_string()));
 
         let task = tokio::spawn(async move {
             let dish = Socket::new(SocketType::Dish, Options::default());
@@ -661,36 +671,41 @@ where
                     _ = shutdown_rx.changed() => break,
                 };
                 let payload = raw.part_bytes(1).unwrap_or_default();
-                if let Ok(m) = deserialize_message::<M>(&payload) {
-                    // TimeBasedFilter: drop messages within min_separation (CAL-005431)
-                    if let Some(ref f) = time_filter
-                        && let Some(last) = last_accepted
-                        && last.elapsed() < f.min_separation
-                    {
+                let m = match deserialize_message::<M>(&payload) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        slog::warn!(reader_logger, "deserialize failed"; "error" => %e);
                         continue;
                     }
-                    last_accepted = Some(Instant::now());
+                };
+                // TimeBasedFilter: drop messages within min_separation (CAL-005431)
+                if let Some(ref f) = time_filter
+                    && let Some(last) = last_accepted
+                    && last.elapsed() < f.min_separation
+                {
+                    continue;
+                }
+                last_accepted = Some(Instant::now());
 
-                    let arc_m = Arc::new(m);
-                    let ls = listeners_task.lock().unwrap();
-                    if ls.is_empty() {
-                        // Polling mode: buffer in queue (CAL-016052)
-                        let (lock, cvar) = &*poll_state_task;
-                        let mut queue = lock.lock().unwrap();
-                        if let Some(max) = reader_max {
-                            while queue.len() >= max {
-                                queue.pop_front(); // drop oldest (CAL-015746)
-                            }
+                let arc_m = Arc::new(m);
+                let ls = listeners_task.lock().unwrap();
+                if ls.is_empty() {
+                    // Polling mode: buffer in queue (CAL-016052)
+                    let (lock, cvar) = &*poll_state_task;
+                    let mut queue = lock.lock().unwrap();
+                    if let Some(max) = reader_max {
+                        while queue.len() >= max {
+                            queue.pop_front(); // drop oldest (CAL-015746)
                         }
-                        queue.push_back((Instant::now(), Arc::clone(&arc_m)));
-                        cvar.notify_one();
-                    } else {
-                        // Callback mode: dispatch to all listeners (CAL-005392)
-                        for l in ls.iter() {
-                            l.on_message(&arc_m);
-                        }
-                        // CAL-016045: message not placed in poll buffer after dispatch
                     }
+                    queue.push_back((Instant::now(), Arc::clone(&arc_m)));
+                    cvar.notify_one();
+                } else {
+                    // Callback mode: dispatch to all listeners (CAL-005392)
+                    for l in ls.iter() {
+                        l.on_message(&arc_m);
+                    }
+                    // CAL-016045: message not placed in poll buffer after dispatch
                 }
             }
 
@@ -796,8 +811,13 @@ mod tests {
     }
 
     impl CalMessage for TestMsg {
-        fn message_type_name() -> &'static str {
-            "test.TestMsg"
+        fn message_type_name() -> crate::QName {
+            "test.TestMsg".into()
+        }
+        fn cal_create() -> Self {
+            Self {
+                value: String::new(),
+            }
         }
     }
 
@@ -807,8 +827,11 @@ mod tests {
     #[tokio::test]
     async fn test_check_creation() {
         let a = make_bus(logger).await;
-        assert_eq!(a.oms_schema_version(), "2.1.0_test_schema");
-        assert_eq!(a.oms_schema_compiler_version(), "0.1.0");
+        assert_eq!(a.oms_schema_version(), env!("RCAL_SCHEMA_VERSION"));
+        assert_eq!(
+            a.oms_schema_compiler_version(),
+            env!("RCAL_OMS_COMPILER_VERSION")
+        );
         assert_eq!(a.service_identifier(), "Test Service");
         assert_eq!(a.asb_identifier(), "TestZmq");
         assert_eq!(
@@ -1065,7 +1088,8 @@ mod tests {
     async fn test_register_listener_in_failed_state_returns_err() {
         let mut a = make_bus(logger).await;
         a.update_status(AsbConnectionState::Normal, "").unwrap();
-        a.update_status(AsbConnectionState::Failed, "terminal").unwrap();
+        a.update_status(AsbConnectionState::Failed, "terminal")
+            .unwrap();
 
         let ld: Arc<dyn AsbStatusListener> = Arc::new(TestStatusListener::new());
         assert!(
@@ -1123,7 +1147,10 @@ mod tests {
             "test.topic",
             TopicQos::default(),
         );
-        assert!(result.is_err(), "create_writer must fail on type mismatch (CAL-005208)");
+        assert!(
+            result.is_err(),
+            "create_writer must fail on type mismatch (CAL-005208)"
+        );
     }
 
     #[init_test_logger]
@@ -1141,7 +1168,10 @@ mod tests {
             "test.topic",
             TopicQos::default(),
         );
-        assert!(result.is_err(), "create_reader must fail on type mismatch (CAL-005208)");
+        assert!(
+            result.is_err(),
+            "create_reader must fail on type mismatch (CAL-005208)"
+        );
     }
 
     #[init_test_logger]
@@ -1496,7 +1526,10 @@ mod tests {
             .expect("read() did not unblock within 500 ms after close()")
             .expect("task did not panic");
 
-        assert!(result.is_err(), "read() must return Err after close() (CAL-016049)");
+        assert!(
+            result.is_err(),
+            "read() must return Err after close() (CAL-016049)"
+        );
     }
 
     // ── QoS: TimeBasedFilter ──────────────────────────────────────────────
@@ -1724,7 +1757,11 @@ mod tests {
         )
         .unwrap();
 
-        writer.write(&TestMsg { value: "pending".into() }).unwrap();
+        writer
+            .write(&TestMsg {
+                value: "pending".into(),
+            })
+            .unwrap();
         // Gate still held: forwarding task has not drained; close must error.
         let result = writer.close();
         assert!(result.is_err(), "close must error when buffer is non-empty");

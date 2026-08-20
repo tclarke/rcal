@@ -1,0 +1,21 @@
+[system]
+id = "BasicExample"
+label = "rcal basic example"
+default_transport = "main-bus"
+
+[system.logging]
+default_level = "info"
+
+[[system.logging.sink]]
+type = "stdout"
+format = "pretty"
+level = "info"
+
+[[transport]]
+id = "main-bus"
+type = "zmq"
+uri = "tcp://127.0.0.1:55500"
+format = "pretty_xml"
+
+[[service]]
+id = "basic-example"

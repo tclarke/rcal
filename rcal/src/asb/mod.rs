@@ -584,6 +584,30 @@ pub trait AbstractServiceBusExt<M: CalMessage>: AbstractServiceBus {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// AbstractServiceBusCreateMessage
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Extension trait that adds typed message creation to any [`AbstractServiceBus`].
+///
+/// Implemented as a blanket impl over all `AbstractServiceBus` types so that
+/// transport implementations do not need to duplicate this logic.
+///
+/// Use this instead of constructing message types directly — generated structs
+/// have no public constructors (CERT CAL-016035).
+pub trait AbstractServiceBusCreateMessage {
+    /// Creates a default-initialised instance of message type `M`.
+    ///
+    /// Equivalent to the C++ `<Type>::create(asb)` static factory.
+    fn create_message<M: CalMessage>(&self) -> CalResult<M>;
+}
+
+impl<T: AbstractServiceBus> AbstractServiceBusCreateMessage for T {
+    fn create_message<M: CalMessage>(&self) -> CalResult<M> {
+        Ok(M::cal_create())
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Factory
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -683,8 +707,11 @@ mod trait_object_safety {
 
     struct Ping;
     impl CalMessage for Ping {
-        fn message_type_name() -> &'static str {
-            "test.Ping"
+        fn message_type_name() -> crate::QName {
+            "test.Ping".into()
+        }
+        fn cal_create() -> Self {
+            Self
         }
     }
 

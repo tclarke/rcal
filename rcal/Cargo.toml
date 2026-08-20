@@ -1,4 +1,4 @@
-workspace = { members = [ "rcal_macros" ] }
+workspace = { members = [ "rcal_macros" , "xsd-subset"] }
 
 [package]
 name = "rcal"
@@ -7,6 +7,7 @@ edition = "2024"
 
 [dependencies]
 lazy_static = "1.5.0"
+regex = "1"
 mac_address = { version = "1.1.8", features = ["serde"] }
 rcal_macros = { path = "./rcal_macros" }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -19,6 +20,13 @@ uuid = { version = "1.24.0", features = ["v1", "v3", "v4", "slog", "serde", "rng
 omq-tokio = "0.21.1"
 tokio = { version = "1.53.1", features = ["full"] }
 quick-xml = { version = "0.37", features = ["serialize"] }
+
+[build-dependencies]
+quick-xml = { version = "0.37" }
+glob = "0.3.4"
+
+[[example]]
+name = "system_status"
 
 [[example]]
 name = "basic"

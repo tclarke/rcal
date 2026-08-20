@@ -138,7 +138,10 @@ fn with_filter(drain: BoxDrain, allowed: Vec<String>) -> BoxDrain {
     if allowed.is_empty() {
         drain
     } else {
-        Box::new(SubsystemFilteredDrain { inner: drain, allowed })
+        Box::new(SubsystemFilteredDrain {
+            inner: drain,
+            allowed,
+        })
     }
 }
 
@@ -166,24 +169,38 @@ fn build_sink(sink: &SinkConfig) -> Option<BoxDrain> {
                     make_async_drain!(FullFormat::new(dec).build())
                 }
                 LogFormat::Basic => {
-                    let w: Box<dyn std::io::Write + Send + Sync> =
-                        if stderr { Box::new(std::io::stderr()) } else { Box::new(std::io::stdout()) };
+                    let w: Box<dyn std::io::Write + Send + Sync> = if stderr {
+                        Box::new(std::io::stderr())
+                    } else {
+                        Box::new(std::io::stdout())
+                    };
                     make_async_drain!(FullFormat::new(PlainDecorator::new(w)).build())
                 }
                 LogFormat::Logfmt => {
-                    let w: Box<dyn std::io::Write + Send + Sync> =
-                        if stderr { Box::new(std::io::stderr()) } else { Box::new(std::io::stdout()) };
-                    make_async_drain!(LogfmtDrain { writer: std::sync::Mutex::new(w) })
+                    let w: Box<dyn std::io::Write + Send + Sync> = if stderr {
+                        Box::new(std::io::stderr())
+                    } else {
+                        Box::new(std::io::stdout())
+                    };
+                    make_async_drain!(LogfmtDrain {
+                        writer: std::sync::Mutex::new(w)
+                    })
                 }
                 LogFormat::Json => {
-                    let w: Box<dyn std::io::Write + Send + Sync> =
-                        if stderr { Box::new(std::io::stderr()) } else { Box::new(std::io::stdout()) };
+                    let w: Box<dyn std::io::Write + Send + Sync> = if stderr {
+                        Box::new(std::io::stderr())
+                    } else {
+                        Box::new(std::io::stdout())
+                    };
                     make_async_drain!(slog_json::Json::default(w))
                 }
             })
         }
         SinkType::File { path } => {
-            let file = OpenOptions::new().create(true).append(true).open(path)
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
                 .map_err(|e| eprintln!("rcal logging: failed to open log file '{}': {}", path, e))
                 .ok()?;
             Some(match sink.format {
@@ -191,7 +208,9 @@ fn build_sink(sink: &SinkConfig) -> Option<BoxDrain> {
                     make_async_drain!(FullFormat::new(PlainDecorator::new(file)).build())
                 }
                 LogFormat::Logfmt => {
-                    make_async_drain!(LogfmtDrain { writer: std::sync::Mutex::new(file) })
+                    make_async_drain!(LogfmtDrain {
+                        writer: std::sync::Mutex::new(file)
+                    })
                 }
                 LogFormat::Json => make_async_drain!(slog_json::Json::default(file)),
             })
@@ -205,13 +224,19 @@ fn build_sink(sink: &SinkConfig) -> Option<BoxDrain> {
 ///
 /// If no sinks are configured the logger discards all output.
 pub fn build_logger(config: &LoggingConfig) -> Logger {
-    let drains: Vec<BoxDrain> = config.sink.iter().filter_map(build_sink).collect();
+    let default_level: slog::Level = config.default_level.into();
+
+    let mut drains: Vec<BoxDrain> = config.sink.iter().filter_map(build_sink).collect();
 
     if drains.is_empty() {
-        return Logger::root(slog::Discard, o!());
+        let dec = TermDecorator::new().stdout().build();
+        let async_drain = Async::new(FullFormat::new(dec).build().fuse())
+            .build()
+            .fuse();
+        let filtered = slog::LevelFilter::new(async_drain, default_level).fuse();
+        drains.push(Box::new(filtered));
     }
 
-    let default_level: slog::Level = config.default_level.into();
     let fanned = FanoutDrain { drains };
     let filtered = slog::LevelFilter::new(fanned, default_level).fuse();
     Logger::root(filtered, o!())

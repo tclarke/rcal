@@ -4,14 +4,14 @@
 //! tokio runtime, loads CAL config, and creates a `root_logger`.
 //!
 //! Run:
-//!   RCAL_CONFIG=CALConfig.toml cargo run --example basic
+//!   cargo run --example basic
 
 use std::sync::Arc;
 
 use rcal::asb;
 use slog::{error, info, warn};
 
-#[rcal_macros::rcal_main]
+#[rcal_macros::rcal_main(config = "examples/CALConfig.toml")]
 async fn main() {
     info!(root_logger, "basic example starting");
 

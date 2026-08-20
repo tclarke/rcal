@@ -1,0 +1,8 @@
+[package]
+name = "rcal-xsd-subset"
+version = "0.1.0"
+edition = "2021"
+description = "Dev tool for subsetting UCI XSD files; not used in the library build pipeline"
+
+[dependencies]
+quick-xml = "0.41.0"

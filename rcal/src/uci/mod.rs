@@ -13,6 +13,22 @@
 use std::fmt;
 
 pub mod base;
+/// Generated UCI message types, produced from an XSD by the build script.
+pub mod types;
+
+// ════════════════════════════════════════════════════════════════════════════
+// Sealed constructor token
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Crate-private construction token embedded in generated message structs.
+///
+/// Users of the library can see struct fields but cannot construct a message
+/// struct directly — only `AbstractServiceBus::create_message` may do so.
+pub mod sealed {
+    /// Opaque token that prevents direct construction of generated message structs.
+    #[derive(Debug, Clone, Default)]
+    pub struct Token(pub(crate) ());
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // CalMessage / CalSubMessage
@@ -32,11 +48,59 @@ pub trait CalMessage: Send + Sync + 'static {
     /// OMS Message Schema. Used to enforce one-type-per-topic association
     /// (CERT CAL-005208).
     ///
-    /// Example: `"uci.core.SystemStatusType"`
-    fn message_type_name() -> &'static str
+    /// The returned [`QName`](crate::QName) carries the namespace URI and local
+    /// name; its `Display` form is the shortest resolvable representation as
+    /// determined when the code was generated (bare local name for the default
+    /// namespace, `prefix:local` for mapped namespaces, Clark notation as a
+    /// last resort).
+    fn message_type_name() -> crate::QName
     where
         Self: Sized;
+
+    /// Creates a default-initialised instance of this message type.
+    ///
+    /// Not part of the public API — use
+    /// [`AbstractServiceBusCreateMessage::create_message`] instead.
+    #[doc(hidden)]
+    fn cal_create() -> Self
+    where
+        Self: Sized;
+
+    /// Validates this message against its XSD schema constraints.
+    ///
+    /// Returns `Ok(())` if all fields satisfy their schema constraints.
+    /// Returns `Err(ValidationError)` for the first failing field, with a
+    /// dot-separated path (e.g. `"SystemStatus.MessageHeader.SystemId"`) and
+    /// a human-readable reason.
+    ///
+    /// Generated element wrapper types override this with a full recursive
+    /// check. The default always returns `Ok(())`.
+    fn is_valid(&self) -> Result<(), ValidationError> {
+        Ok(())
+    }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// ValidationError
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Describes a schema constraint violation found by [`CalMessage::is_valid`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationError {
+    /// Dot-separated path to the failing field,
+    /// e.g. `"SystemStatus.MessageHeader.SystemId"`.
+    pub path: String,
+    /// Human-readable failure reason, e.g. `"enum not set"`.
+    pub reason: String,
+}
+
+impl fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.path, self.reason)
+    }
+}
+
+impl std::error::Error for ValidationError {}
 
 /// Marker trait for CAL Sub-message types — complex nested field types.
 ///
@@ -101,6 +165,9 @@ pub enum CalErrorKind {
         /// Optional detail about the implementation error.
         kind: Option<CalImplementationErrorKind>,
     },
+
+    /// A message failed schema validation before being sent.
+    ValidationError(ValidationError),
 }
 
 impl fmt::Display for CalErrorKind {
@@ -131,6 +198,7 @@ impl fmt::Display for CalErrorKind {
             Self::ImplementationError {
                 kind: Some(CalImplementationErrorKind::ListenerError),
             } => write!(f, "Status listener error"),
+            Self::ValidationError(e) => write!(f, "Message validation failed: {e}"),
         }
     }
 }

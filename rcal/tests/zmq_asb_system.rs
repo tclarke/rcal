@@ -6,6 +6,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rcal::QName;
 use rcal::asb::zmq::ZmqAsb;
 use rcal::uci::CalMessage;
 use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, MessageListener, TopicQos};
@@ -35,7 +36,7 @@ fn test_config(port: u16) -> Arc<rcal::calconfig::CalConfig> {
 
 async fn make_bus(label: &str, port: u16, logger: slog::Logger) -> ZmqAsb {
     let config = test_config(port);
-    let tconfig = config.get_transport(&"T".to_string()).unwrap();
+    let tconfig = config.get_transport("T").unwrap();
     ZmqAsb::new(label, "T", logger, config.clone(), tconfig)
         .await
         .unwrap()
@@ -49,8 +50,11 @@ struct IntMsg {
 }
 
 impl CalMessage for IntMsg {
-    fn message_type_name() -> &'static str {
-        "test.IntMsg"
+    fn message_type_name() -> QName {
+        QName::new(Some("test"), "IntMsg")
+    }
+    fn cal_create() -> Self {
+        Self { value: 0 }
     }
 }
 

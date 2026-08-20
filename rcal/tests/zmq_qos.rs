@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use rcal::QName;
 use rcal::asb::zmq::ZmqAsb;
 use rcal::uci::CalMessage;
 use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, TopicQos};
@@ -35,7 +36,7 @@ fn test_config(port: u16) -> Arc<rcal::calconfig::CalConfig> {
 
 async fn make_bus(label: &str, port: u16, logger: slog::Logger) -> ZmqAsb {
     let config = test_config(port);
-    let tconfig = config.get_transport(&"T".to_string()).unwrap();
+    let tconfig = config.get_transport("T").unwrap();
     ZmqAsb::new(label, "T", logger, config.clone(), tconfig)
         .await
         .unwrap()
@@ -49,8 +50,13 @@ struct QosMsg {
 }
 
 impl CalMessage for QosMsg {
-    fn message_type_name() -> &'static str {
-        "test.QosMsg"
+    fn message_type_name() -> rcal::QName {
+        QName::new(Some("test"), "QosMsg")
+    }
+    fn cal_create() -> Self {
+        Self {
+            value: String::new(),
+        }
     }
 }
 
@@ -72,9 +78,12 @@ async fn test_qos_time_based_filter() {
     let mut reader =
         <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos)
             .unwrap();
-    let mut writer =
-        <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_writer(&mut bus, "t", TopicQos::default())
-            .unwrap();
+    let mut writer = <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_writer(
+        &mut bus,
+        "t",
+        TopicQos::default(),
+    )
+    .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Burst: only the first message should pass the filter
@@ -135,9 +144,12 @@ async fn test_qos_expiration() {
     let mut reader =
         <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos)
             .unwrap();
-    let mut writer =
-        <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_writer(&mut bus, "t", TopicQos::default())
-            .unwrap();
+    let mut writer = <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_writer(
+        &mut bus,
+        "t",
+        TopicQos::default(),
+    )
+    .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Write 3 messages, wait for them to expire
@@ -156,8 +168,16 @@ async fn test_qos_expiration() {
     );
 
     // Write fresh messages, read before they expire
-    writer.write(&QosMsg { value: "fresh0".into() }).unwrap();
-    writer.write(&QosMsg { value: "fresh1".into() }).unwrap();
+    writer
+        .write(&QosMsg {
+            value: "fresh0".into(),
+        })
+        .unwrap();
+    writer
+        .write(&QosMsg {
+            value: "fresh1".into(),
+        })
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(20)).await; // < max_age
 
     let r0 = reader.read_no_wait().unwrap();
@@ -188,9 +208,12 @@ async fn test_qos_reader_buffer() {
     let mut reader =
         <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos)
             .unwrap();
-    let mut writer =
-        <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_writer(&mut bus, "t", TopicQos::default())
-            .unwrap();
+    let mut writer = <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_writer(
+        &mut bus,
+        "t",
+        TopicQos::default(),
+    )
+    .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     for i in 0..5u32 {
@@ -210,7 +233,10 @@ async fn test_qos_reader_buffer() {
     assert_eq!(r0.as_deref().map(|m| m.value.as_str()), Some("msg2"));
     assert_eq!(r1.as_deref().map(|m| m.value.as_str()), Some("msg3"));
     assert_eq!(r2.as_deref().map(|m| m.value.as_str()), Some("msg4"));
-    assert!(r3.is_none(), "buffer must be empty after max_messages reads");
+    assert!(
+        r3.is_none(),
+        "buffer must be empty after max_messages reads"
+    );
 
     bus.close().unwrap();
 }
