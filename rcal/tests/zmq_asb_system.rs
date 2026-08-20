@@ -11,7 +11,7 @@ use rcal::asb::zmq::ZmqAsb;
 use rcal::uci::CalMessage;
 use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, MessageListener, TopicQos};
 
-// ── shared port allocator ─────────────────────────────────────────────────────
+// ── port allocator (multiprocess test only) ───────────────────────────────────
 
 static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(56200);
 
@@ -19,9 +19,22 @@ fn next_port() -> u16 {
     NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
 }
 
-// ── config builder ────────────────────────────────────────────────────────────
+// ── config / bus builders ─────────────────────────────────────────────────────
 
-fn test_config(port: u16) -> Arc<rcal::calconfig::CalConfig> {
+fn test_config_inproc(name: &str) -> Arc<rcal::calconfig::CalConfig> {
+    use rcal::calconfig;
+    use rcal::uci::base::UUID;
+    const BASE_UUID: &str = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b";
+    let ns = UUID::parse_str(BASE_UUID).unwrap();
+    let sys_uuid = UUID::generate_v3(&ns, name.as_bytes());
+    let toml = format!(
+        "[system]\nid = \"TestSystem\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"T\"\n\
+         \n[[transport]]\nid = \"T\"\ntype = \"zmq\"\nuri = \"inproc://{name}\"\n"
+    );
+    Arc::new(calconfig::parse_config(&toml).unwrap())
+}
+
+fn test_config_tcp(port: u16) -> Arc<rcal::calconfig::CalConfig> {
     use rcal::calconfig;
     use rcal::uci::base::UUID;
     const BASE_UUID: &str = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b";
@@ -34,8 +47,16 @@ fn test_config(port: u16) -> Arc<rcal::calconfig::CalConfig> {
     Arc::new(calconfig::parse_config(&toml).unwrap())
 }
 
-async fn make_bus(label: &str, port: u16, logger: slog::Logger) -> ZmqAsb {
-    let config = test_config(port);
+async fn make_bus(label: &str, name: &str, logger: slog::Logger) -> ZmqAsb {
+    let config = test_config_inproc(name);
+    let tconfig = config.get_transport("T").unwrap();
+    ZmqAsb::new(label, "T", logger, config.clone(), tconfig)
+        .await
+        .unwrap()
+}
+
+async fn make_tcp_bus(label: &str, port: u16, logger: slog::Logger) -> ZmqAsb {
+    let config = test_config_tcp(port);
     let tconfig = config.get_transport("T").unwrap();
     ZmqAsb::new(label, "T", logger, config.clone(), tconfig)
         .await
@@ -83,7 +104,7 @@ impl MessageListener<IntMsg> for CollectListener {
 #[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_three_clients_shared_bus() {
-    let mut bus = make_bus("Sys", next_port(), logger).await;
+    let mut bus = make_bus("Sys", "shared-bus", logger).await;
 
     let mut a_writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
         &mut bus,
@@ -172,17 +193,13 @@ async fn test_three_clients_shared_bus() {
 #[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_three_clients_separate_radios() {
-    let port_a = next_port();
-    let port_b = next_port();
-    let port_c = next_port();
+    let mut bus_a = make_bus("ClientA", "sep-client-a", logger.clone()).await;
+    let mut bus_b = make_bus("ClientB", "sep-client-b", logger.clone()).await;
+    let mut bus_c = make_bus("ClientC", "sep-client-c", logger.clone()).await;
 
-    let mut bus_a = make_bus("ClientA", port_a, logger.clone()).await;
-    let mut bus_b = make_bus("ClientB", port_b, logger.clone()).await;
-    let mut bus_c = make_bus("ClientC", port_c, logger.clone()).await;
-
-    bus_b.add_receive_peer(format!("tcp://127.0.0.1:{port_a}"));
-    bus_c.add_receive_peer(format!("tcp://127.0.0.1:{port_a}"));
-    bus_c.add_receive_peer(format!("tcp://127.0.0.1:{port_b}"));
+    bus_b.add_receive_peer("inproc://sep-client-a");
+    bus_c.add_receive_peer("inproc://sep-client-a");
+    bus_c.add_receive_peer("inproc://sep-client-b");
 
     let mut a_writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
         &mut bus_a,
@@ -276,7 +293,7 @@ async fn test_multiprocess_receive_peer() {
         .spawn()
         .expect("failed to spawn zmq_peer_sender");
 
-    let mut bus = make_bus("Receiver", port_r, logger).await;
+    let mut bus = make_tcp_bus("Receiver", port_r, logger).await;
     bus.add_receive_peer(format!("tcp://127.0.0.1:{port_s}"));
 
     let mut reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
