@@ -20,7 +20,7 @@
 //! | `xs:float`         | `f32`                   | OMSC-SPC-008 Table 9.1-1   |
 //! | `xs:integer`       | `i64`                   | **CERT CAL-016024**        |
 //! | `xs:duration`      | `i64` (nanoseconds)     | **CERT CAL-016027**        |
-//! | `xs:dateTime`      | `i64` (ns since epoch)  | **CERT CAL-016028**        |
+//! | `xs:dateTime`      | `DateTime` (chrono UTC) | **CERT CAL-016028**        |
 //! | `xs:time`          | `i64` (ns since 00:00Z) | **CERT CAL-016029**        |
 //! | `xs:string`        | `String`                | OMSC-SPC-008 Table 9.1-2   |
 //! | `xs:hexBinary`     | `Vec<u8>`               | OMSC-SPC-008 Table 9.1-3   |
@@ -90,11 +90,64 @@ pub type Integer = i64;
 /// Positive values indicate forward durations; negative indicate backward.
 pub type Duration = i64;
 
-/// `xs:dateTime` — nanoseconds since the POSIX epoch (1970-01-01T00:00:00Z).
+/// `xs:dateTime` — UTC instant wrapping [`chrono::DateTime<chrono::Utc>`].
 ///
-/// **CERT CAL-016028**: represented as a signed 64-bit integer.
-/// Negative values represent dates before the POSIX epoch.
-pub type DateTime = i64;
+/// **CERT CAL-016028**: serialised as a signed 64-bit integer of nanoseconds
+/// since the POSIX epoch (1970-01-01T00:00:00Z).  Negative values represent
+/// instants before the epoch.  Use [`DateTime::from`] / [`Into<i64>`] to
+/// convert to/from the raw nanosecond representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DateTime(chrono::DateTime<chrono::Utc>);
+
+impl Default for DateTime {
+    fn default() -> Self {
+        Self(chrono::DateTime::UNIX_EPOCH)
+    }
+}
+
+impl DateTime {
+    /// Current UTC time.
+    pub fn now() -> Self {
+        Self(chrono::Utc::now())
+    }
+}
+
+impl From<chrono::DateTime<chrono::Utc>> for DateTime {
+    fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
+        Self(dt)
+    }
+}
+
+impl From<DateTime> for chrono::DateTime<chrono::Utc> {
+    fn from(dt: DateTime) -> Self {
+        dt.0
+    }
+}
+
+impl From<i64> for DateTime {
+    fn from(ns: i64) -> Self {
+        Self(chrono::DateTime::from_timestamp_nanos(ns))
+    }
+}
+
+impl From<DateTime> for i64 {
+    fn from(dt: DateTime) -> Self {
+        // Returns i64::MAX for chrono::DateTime values outside the i64-nanosecond range.
+        dt.0.timestamp_nanos_opt().unwrap_or(i64::MAX)
+    }
+}
+
+impl serde::Serialize for DateTime {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        chrono::serde::ts_nanoseconds::serialize(&self.0, s)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DateTime {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        chrono::serde::ts_nanoseconds::deserialize(d).map(DateTime)
+    }
+}
 
 /// `xs:time` — nanoseconds since 00:00:00.000000000Z of the current day.
 ///
@@ -135,11 +188,36 @@ mod tests {
     }
 
     #[test]
-    fn time_types_are_i64() {
-        // CERT CAL-016027 / CAL-016028 / CAL-016029
+    fn duration_and_time_are_i64() {
+        // CERT CAL-016027 / CAL-016029
         let _: Duration = 1_000_000_000_i64; // 1 second in ns
-        let _: DateTime = 0_i64; // POSIX epoch
         let _: Time = 0_i64; // midnight
+    }
+
+    #[test]
+    fn datetime_roundtrips_nanoseconds() {
+        // CERT CAL-016028: nanosecond integer round-trip
+        let epoch = DateTime::from(0_i64);
+        assert_eq!(i64::from(epoch), 0_i64);
+
+        let ns: i64 = 1_700_000_000_000_000_000;
+        let dt = DateTime::from(ns);
+        assert_eq!(i64::from(dt), ns);
+    }
+
+    #[test]
+    fn datetime_serializes_as_i64() {
+        let dt = DateTime::from(42_i64);
+        let json = serde_json::to_string(&dt).expect("serialize");
+        assert_eq!(json, "42");
+        let back: DateTime = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(i64::from(back), 42_i64);
+    }
+
+    #[test]
+    fn datetime_now_is_positive() {
+        let ns = i64::from(DateTime::now());
+        assert!(ns > 0, "now() should be after epoch");
     }
 
     #[test]

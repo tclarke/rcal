@@ -20,6 +20,7 @@ uuid = { version = "1.24.0", features = ["v1", "v3", "v4", "slog", "serde", "rng
 omq-tokio = "0.21.1"
 tokio = { version = "1.53.1", features = ["full"] }
 quick-xml = { version = "0.37", features = ["serialize"] }
+chrono = { version = "0.4.45", features = ["serde"] }
 
 [build-dependencies]
 quick-xml = { version = "0.37" }
@@ -48,3 +49,6 @@ harness = true
 [[test]]
 name = "zmq_qos"
 harness = true
+
+[dev-dependencies]
+serde_json = "1.0.151"
