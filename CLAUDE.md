@@ -37,8 +37,15 @@ This is a standard cargo layout. all `.rs` and `.toml` files can be used as inpu
  - Additional modules may be added for Rust specific tools, interfaces, and implementations. For example, the abstract service bus (ASB) interfaces will be in the `uci::base` module but ASB implementations can be in `uci::asb` or `asb` modules.
 
 # Coding review and checks
- - After implementing a new feature and before commiting, run `cargo clippy` and fix any warnings.
- - After committing a feature but before generating a pull request, use `/ponyttail:ponytail-review` to locate any over engineering. Do not automatically apply suggetions but present them as options.
+ - After implementing a new feature and before creating a PR, run the following tools.
+   - `cargo check --worspace --all-targets`
+   - `cargo clippy --no-deps`
+   - `cargo fmt --all`
+   - `cargo test --workspace --all-targets`
+   - `ponytail-review`
+   - `caveman-review`
+ - After the above have all succeeded and after the goal or feature is complete: commit, push, create a new PR
+ - When told the "review is complete", switch back to "main", "pull", and remove pruned branches then verify the original github issue has been closed.
 
 # Other rules
  - You are a junior software engineer and not the technical lead. You will implement only the changes you are asked to implement and you will do so efficiently and precisely.
