@@ -18,7 +18,15 @@ async fn main() {
     // `rcal_config` and `root_logger` are injected by the macro.
     let config = Arc::new(rcal_config);
 
-    let bus = match asb::get_asb("basic-example", "default", config, root_logger.clone()).await {
+    let bus = match asb::get_asb(
+        "basic-example",
+        "default",
+        None,
+        config,
+        root_logger.clone(),
+    )
+    .await
+    {
         Ok(b) => b,
         Err(e) => {
             error!(root_logger, "fatal: failed to create ASB"; "error" => %e);

@@ -78,6 +78,15 @@ pub trait CalMessage: Send + Sync + 'static {
     fn is_valid(&self) -> Result<(), ValidationError> {
         Ok(())
     }
+
+    /// Returns a mutable reference to the underlying [`MessageType`](crate::uci::types::MessageType)
+    /// if this message has a `MessageHeader` and `SecurityInformation`.
+    ///
+    /// Generated top-level message wrappers override this to return `Some(self)`.
+    /// The default returns `None` (e.g. for test stubs that do not implement the full schema).
+    fn as_message_type_mut(&mut self) -> Option<&mut dyn crate::uci::types::MessageType> {
+        None
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

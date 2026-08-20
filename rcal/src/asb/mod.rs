@@ -14,8 +14,12 @@
 
 use crate::calconfig::CalConfig;
 use crate::uci::CalMessage;
-use crate::uci::base::ServiceUuids;
+use crate::uci::base::{ServiceUuids, UUID};
+use crate::uci::types::{
+    ClassificationEnum, ID_Type as _, MessageModeEnum, OwnerProducerChoiceType_,
+};
 use crate::uci::{CalError, CalErrorKind, CalResult};
+use chrono::Utc;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::env;
@@ -328,6 +332,39 @@ pub trait AbstractServiceBus: Send + Sync {
     /// registered listeners will not receive further callbacks, and blocked
     /// `read()` calls are released with an error.
     fn close(&mut self) -> CalResult<()>;
+
+    // ── Message header defaults ───────────────────────────────────────────
+
+    /// Returns the defaults used to pre-populate `MessageHeader` and
+    /// `SecurityInformation` fields when creating a new message via
+    /// [`AbstractServiceBusCreateMessage::create_message`].
+    fn message_header_defaults(&self) -> MessageHeaderDefaults;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MessageHeaderDefaults
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Default values applied to every message created through an ASB.
+///
+/// Sourced from the CAL configuration file (`[system]` and `[service]`
+/// sections) plus the compiled-in schema version string.
+#[derive(Debug, Clone)]
+pub struct MessageHeaderDefaults {
+    /// System UUID for the `MessageHeader.SystemID.UUID` field (required).
+    pub system_id: UUID,
+    /// Optional service UUID for the `MessageHeader.ServiceID.UUID` field.
+    pub service_id: Option<UUID>,
+    /// Optional mission UUID for the `MessageHeader.MissionID.UUID` field.
+    pub mission_id: Option<UUID>,
+    /// Schema version string for `MessageHeader.SchemaVersion`.
+    pub schema_version: String,
+    /// Message mode for `MessageHeader.Mode`.
+    pub mode: MessageModeEnum,
+    /// Classification for `SecurityInformation.Classification`.
+    pub classification: ClassificationEnum,
+    /// OwnerProducer entries for `SecurityInformation.OwnerProducer`.
+    pub owner_producer: Vec<OwnerProducerChoiceType_>,
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -603,7 +640,29 @@ pub trait AbstractServiceBusCreateMessage {
 
 impl<T: AbstractServiceBus> AbstractServiceBusCreateMessage for T {
     fn create_message<M: CalMessage>(&self) -> CalResult<M> {
-        Ok(M::cal_create())
+        let mut msg = M::cal_create();
+        if let Some(mt) = msg.as_message_type_mut() {
+            let defaults = self.message_header_defaults();
+            let hdr = mt.message_header_mut();
+            *hdr.system_id_mut().uuid_mut() = defaults.system_id;
+            *hdr.schema_version_mut() = defaults.schema_version;
+            *hdr.mode_mut() = defaults.mode;
+            *hdr.timestamp_mut() = Utc::now().into();
+            // Optional fields can only be set if already initialized (trait returns Option<&mut>).
+            // service_id and mission_id are set here only if already Some in the message.
+            if let (Some(sid), Some(sfield)) = (defaults.service_id, hdr.service_id_mut()) {
+                *sfield.uuid_mut() = sid;
+            }
+            if let (Some(mid), Some(mfield)) = (defaults.mission_id, hdr.mission_id_mut()) {
+                *mfield.uuid_mut() = mid;
+            }
+            let sec = mt.security_information_mut();
+            *sec.classification_mut() = defaults.classification;
+            let op = sec.owner_producer_mut();
+            op.clear();
+            op.extend(defaults.owner_producer);
+        }
+        Ok(msg)
     }
 }
 
@@ -635,6 +694,7 @@ lazy_static! {
 pub async fn get_asb(
     service_identifier: impl Into<String>,
     asb_identifier: impl Into<String>,
+    service_config_name: Option<String>,
     config: Arc<CalConfig>,
     logger: slog::Logger,
 ) -> CalResult<AsbInstance> {
@@ -676,6 +736,7 @@ pub async fn get_asb(
             ZmqAsb::new(
                 key.service_identifier.clone(),
                 key.asb_identifier.clone(),
+                service_config_name,
                 logger,
                 Arc::clone(&config),
                 transport,
@@ -694,6 +755,29 @@ pub async fn get_asb(
     // case return the existing instance (CAL-005202: one instance per key).
     let mut map = ASB_FACTORY.lock().unwrap();
     Ok(Arc::clone(map.entry(key).or_insert(instance)))
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Common message macros
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Refreshes the `MessageHeader.Timestamp` field to the current UTC time.
+///
+/// Accepts any mutable reference to a type that implements [`CalMessage`] with
+/// an accessible `MessageType` (i.e. any generated top-level message wrapper).
+/// No-op for message types that do not expose a `MessageType` interface.
+///
+/// # Example
+/// ```ignore
+/// update_message_header!(my_msg);
+/// ```
+#[macro_export]
+macro_rules! update_message_header {
+    ($msg:expr) => {
+        if let Some(mt) = $crate::uci::CalMessage::as_message_type_mut(&mut $msg) {
+            *mt.message_header_mut().timestamp_mut() = chrono::Utc::now().into();
+        }
+    };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -740,15 +824,28 @@ mod tests {
         let p2 = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
         let config = zmq::test_config_on_ports(&[p1, p2]);
 
-        let a = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
-            .await
-            .expect("first get_asb must succeed");
-        let b = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
-            .await
-            .expect("second get_asb must succeed");
+        let a = get_asb(
+            "test_svc",
+            "TestZmq",
+            None,
+            Arc::clone(&config),
+            logger.clone(),
+        )
+        .await
+        .expect("first get_asb must succeed");
+        let b = get_asb(
+            "test_svc",
+            "TestZmq",
+            None,
+            Arc::clone(&config),
+            logger.clone(),
+        )
+        .await
+        .expect("second get_asb must succeed");
         let c = get_asb(
             "test_svc_2",
             "TestZmq2",
+            None,
             Arc::clone(&config),
             logger.clone(),
         )
@@ -771,7 +868,7 @@ mod tests {
             parse_config_from_file(&get_test_config_path("calconfig_no_default.toml")).unwrap(),
         );
         assert!(
-            get_asb("svc", "dummy", no_default_config, logger)
+            get_asb("svc", "dummy", None, no_default_config, logger)
                 .await
                 .is_err()
         );

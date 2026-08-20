@@ -50,7 +50,7 @@ fn test_config_tcp(port: u16) -> Arc<rcal::calconfig::CalConfig> {
 async fn make_bus(label: &str, name: &str, logger: slog::Logger) -> ZmqAsb {
     let config = test_config_inproc(name);
     let tconfig = config.get_transport("T").unwrap();
-    ZmqAsb::new(label, "T", logger, config.clone(), tconfig)
+    ZmqAsb::new(label, "T", None, logger, config.clone(), tconfig)
         .await
         .unwrap()
 }
@@ -58,7 +58,7 @@ async fn make_bus(label: &str, name: &str, logger: slog::Logger) -> ZmqAsb {
 async fn make_tcp_bus(label: &str, port: u16, logger: slog::Logger) -> ZmqAsb {
     let config = test_config_tcp(port);
     let tconfig = config.get_transport("T").unwrap();
-    ZmqAsb::new(label, "T", logger, config.clone(), tconfig)
+    ZmqAsb::new(label, "T", None, logger, config.clone(), tconfig)
         .await
         .unwrap()
 }

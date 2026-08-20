@@ -53,7 +53,7 @@ async fn main() {
     let tconfig = config.get_transport("T").unwrap();
 
     let logger = slog::Logger::root(slog::Discard, slog::o!());
-    let mut bus = ZmqAsb::new("sender", "T", logger, config.clone(), tconfig)
+    let mut bus = ZmqAsb::new("sender", "T", None, logger, config.clone(), tconfig)
         .await
         .unwrap();
 
