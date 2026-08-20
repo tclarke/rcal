@@ -130,6 +130,14 @@ pub struct System {
     pub uuid: UUID,
     pub default_transport: Option<String>,
     pub logging: LoggingConfig,
+    /// Optional MissionID UUID populated in message headers.
+    pub mission_id: Option<UUID>,
+    /// Message mode populated in message headers (default: "LIVE").
+    pub mode: Option<String>,
+    /// Classification populated in message security info (default: "U").
+    pub classification: Option<String>,
+    /// OwnerProducer values populated in message security info (default: ["USA"]).
+    pub owner_producer: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
@@ -182,6 +190,8 @@ pub struct Service {
     pub id: String,
     pub transport: Option<String>,
     pub topic: Vec<Topic>,
+    /// Optional service UUID used to populate the ServiceID field in message headers.
+    pub uuid: Option<UUID>,
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]

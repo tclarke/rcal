@@ -13,10 +13,9 @@ use omq_tokio::{Endpoint, Message, Options, Socket, SocketType};
 
 use super::{
     AbstractReader, AbstractServiceBus, AbstractServiceBusExt, AbstractWriter, AsbConnectionState,
-    AsbStatus, AsbStatusListener, MessageListener, TopicQos,
+    AsbStatus, AsbStatusListener, MessageHeaderDefaults, MessageListener, TopicQos,
 };
 use crate::calconfig::{CalConfig, SerializationFormat, Transport};
-use crate::uci::base::{ServiceUuids, UUID};
 use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
 
 /// ASB identifier string for the ZeroMQ-compatible transport.
@@ -100,8 +99,7 @@ fn deserialize_message<M: serde::de::DeserializeOwned>(xml: &[u8]) -> CalResult<
 /// [`ZmqWriter`]s hold a clone of the channel sender.
 pub struct ZmqAsb {
     asb_id: String,
-    service_id: String,
-    uuids: ServiceUuids,
+    service_name: String,
 
     /// Sender side of the RADIO background task's work queue.
     /// Set to `None` by [`close()`].
@@ -144,7 +142,7 @@ impl ZmqAsb {
     /// For tcp:// and inproc:// URIs the RADIO socket binds immediately.
     /// For udp:// URIs the RADIO connects to an existing DISH listener.
     pub async fn new(
-        service_id: impl Into<String>,
+        service_name: impl Into<String>,
         asb_id: impl Into<String>,
         logger: Logger,
         config: Arc<CalConfig>,
@@ -191,15 +189,8 @@ impl ZmqAsb {
 
         let logger = logger.new(slog::o!("subsystem" => "zmq"));
         Ok(Self {
-            service_id: service_id.into(),
+            service_name: service_name.into(),
             asb_id: asb_id.into(),
-            uuids: ServiceUuids {
-                system: UUID::nil(),
-                service: UUID::nil(),
-                subsystem: None,
-                components: Vec::new(),
-                capabilities: Vec::new(),
-            },
             write_tx: Some(write_tx),
             status: AsbStatus::new(AsbConnectionState::Initializing, "ZeroMQ ASB initializing"),
             logger,
@@ -265,15 +256,11 @@ impl AbstractServiceBus for ZmqAsb {
     }
 
     fn service_identifier(&self) -> &str {
-        &self.service_id
+        &self.service_name
     }
 
     fn asb_identifier(&self) -> &str {
         &self.asb_id
-    }
-
-    fn service_uuids(&self) -> CalResult<&ServiceUuids> {
-        Ok(&self.uuids)
     }
 
     fn oms_schema_version(&self) -> &str {
@@ -336,6 +323,54 @@ impl AbstractServiceBus for ZmqAsb {
         // Dropping write_tx closes the channel; the background writer task exits.
         self.write_tx = None;
         Ok(())
+    }
+
+    fn message_header_defaults(&self) -> MessageHeaderDefaults {
+        use crate::uci::types::{
+            ClassificationEnum, MessageModeEnum, OwnerProducerChoiceType_, OwnerProducerEnum,
+        };
+        let sys = &self.config.system;
+        let service_id = self
+            .config
+            .get_service(&self.service_name)
+            .and_then(|svc| svc.uuid);
+        let mission_id = sys.mission_id;
+        let mode = match sys.mode.as_deref() {
+            Some("EXERCISE") => MessageModeEnum::Exercise,
+            Some("SIMULATION") => MessageModeEnum::Simulation,
+            Some("NONEXERCISE_SIMULATION") => MessageModeEnum::Nonexercise_simulation,
+            _ => MessageModeEnum::Live,
+        };
+        let classification = match sys.classification.as_deref() {
+            Some("R") => ClassificationEnum::R,
+            Some("C") => ClassificationEnum::C,
+            Some("S") => ClassificationEnum::S,
+            Some("TS") => ClassificationEnum::Ts,
+            _ => ClassificationEnum::U,
+        };
+        let owner_producer: Vec<_> = sys
+            .owner_producer
+            .iter()
+            .map(|_s| OwnerProducerChoiceType_::GovernmentIdentifier {
+                inner: OwnerProducerEnum::Usa,
+            })
+            .collect();
+        let owner_producer = if owner_producer.is_empty() {
+            vec![OwnerProducerChoiceType_::GovernmentIdentifier {
+                inner: OwnerProducerEnum::Usa,
+            }]
+        } else {
+            owner_producer
+        };
+        MessageHeaderDefaults {
+            system_id: sys.uuid,
+            service_id,
+            mission_id,
+            schema_version: self.oms_schema_version().to_string(),
+            mode,
+            classification,
+            owner_producer,
+        }
     }
 }
 
@@ -553,7 +588,7 @@ where
         topic: &str,
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractWriter<M>>> {
-        validate_topic_type::<M>(&self.config, &self.service_id, topic)?;
+        validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
         let tx = self
             .write_tx
             .as_ref()
@@ -614,7 +649,7 @@ where
         topic: &str,
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractReader<M>>> {
-        validate_topic_type::<M>(&self.config, &self.service_id, topic)?;
+        validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
         // Build the list of RADIO URIs for this reader's DISH to connect to.
         // If no peers are registered, connect to our own RADIO (single-process use).
         let connect_uris: Vec<String> = if self.peer_uris.is_empty() {

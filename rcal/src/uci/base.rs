@@ -405,30 +405,6 @@ impl slog::Value for UUID {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// §4  Service UUID aggregate  (CAL-005203)
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Aggregated UUIDs that identify a CAL Client's service context.
-///
-/// Obtained after successful initialisation via
-/// [`AbstractServiceBus::service_uuids`].
-///
-/// # CERT coverage
-/// CAL-005203
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ServiceUuids {
-    /// UUID of the OMS Platform System.
-    pub system: UUID,
-    /// UUID of this Service instance.
-    pub service: UUID,
-    /// UUID of the Subsystem, if applicable.
-    pub subsystem: Option<UUID>,
-    /// UUIDs of named components within this Service.
-    pub components: Vec<UUID>,
-    /// UUIDs of named capabilities within this Service.
-    pub capabilities: Vec<UUID>,
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // §5  BoundedList  (CERT CXX-005168)
 // ════════════════════════════════════════════════════════════════════════════

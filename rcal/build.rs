@@ -701,6 +701,9 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
              \x20   fn is_valid(&self) -> Result<(), crate::uci::ValidationError> {{\n\
              \x20       self.0.is_valid_at(\"{el_name}\")\n\
              \x20   }}\n\
+             \x20   fn as_message_type_mut(&mut self) -> Option<&mut dyn crate::uci::types::MessageType> {{\n\
+             \x20       Some(&mut self.0)\n\
+             \x20   }}\n\
              }}\n",
             el_name = el.name,
             ns_struct_fields = ns_struct_fields,
