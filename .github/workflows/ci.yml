@@ -6,6 +6,20 @@ on:
   pull_request:
 
 jobs:
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rcal
+      - run: cargo clippy --all-targets
+        working-directory: rcal
+        env:
+          RCAL_XSD_PATH: examples/UCI_SystemStatusOnly_v2_5_0.xsd
   test:
     runs-on: ubuntu-latest
     steps:
@@ -16,6 +30,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rcal
-      - run: cargo test -vv --manifest-path rcal/Cargo.toml
+      - run: cargo test
+        working-directory: rcal
+        env:
+          RCAL_XSD_PATH: examples/UCI_SystemStatusOnly_v2_5_0.xsd
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rcal
+      - run: cargo run --example system_status
+        working-directory: rcal
         env:
           RCAL_XSD_PATH: examples/UCI_SystemStatusOnly_v2_5_0.xsd
