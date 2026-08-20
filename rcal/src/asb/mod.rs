@@ -14,7 +14,7 @@
 
 use crate::calconfig::CalConfig;
 use crate::uci::CalMessage;
-use crate::uci::base::{ServiceUuids, UUID};
+use crate::uci::base::UUID;
 use crate::uci::types::{
     ClassificationEnum, ID_Type as _, MessageModeEnum, OwnerProducerChoiceType_,
 };
@@ -285,10 +285,6 @@ pub trait AbstractServiceBus: Send + Sync {
     /// ASB Identifier.  Together with `service_identifier()` this uniquely
     /// identifies the CAL instance (CERT CAL-005202).
     fn asb_identifier(&self) -> &str;
-
-    /// Returns the UUIDs identifying System, Service, Subsystem, Components,
-    /// and Capabilities (CERT CAL-005203).
-    fn service_uuids(&self) -> CalResult<&ServiceUuids>;
 
     /// Version of the OMS Schema Definition used to generate the CAL.
     fn oms_schema_version(&self) -> &str;
@@ -694,7 +690,6 @@ lazy_static! {
 pub async fn get_asb(
     service_identifier: impl Into<String>,
     asb_identifier: impl Into<String>,
-    service_config_name: Option<String>,
     config: Arc<CalConfig>,
     logger: slog::Logger,
 ) -> CalResult<AsbInstance> {
@@ -736,7 +731,6 @@ pub async fn get_asb(
             ZmqAsb::new(
                 key.service_identifier.clone(),
                 key.asb_identifier.clone(),
-                service_config_name,
                 logger,
                 Arc::clone(&config),
                 transport,
@@ -824,28 +818,15 @@ mod tests {
         let p2 = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
         let config = zmq::test_config_on_ports(&[p1, p2]);
 
-        let a = get_asb(
-            "test_svc",
-            "TestZmq",
-            None,
-            Arc::clone(&config),
-            logger.clone(),
-        )
-        .await
-        .expect("first get_asb must succeed");
-        let b = get_asb(
-            "test_svc",
-            "TestZmq",
-            None,
-            Arc::clone(&config),
-            logger.clone(),
-        )
-        .await
-        .expect("second get_asb must succeed");
+        let a = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
+            .await
+            .expect("first get_asb must succeed");
+        let b = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
+            .await
+            .expect("second get_asb must succeed");
         let c = get_asb(
             "test_svc_2",
             "TestZmq2",
-            None,
             Arc::clone(&config),
             logger.clone(),
         )
@@ -868,7 +849,7 @@ mod tests {
             parse_config_from_file(&get_test_config_path("calconfig_no_default.toml")).unwrap(),
         );
         assert!(
-            get_asb("svc", "dummy", None, no_default_config, logger)
+            get_asb("svc", "dummy", no_default_config, logger)
                 .await
                 .is_err()
         );

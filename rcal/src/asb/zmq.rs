@@ -16,7 +16,6 @@ use super::{
     AsbStatus, AsbStatusListener, MessageHeaderDefaults, MessageListener, TopicQos,
 };
 use crate::calconfig::{CalConfig, SerializationFormat, Transport};
-use crate::uci::base::{ServiceUuids, UUID};
 use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
 
 /// ASB identifier string for the ZeroMQ-compatible transport.
@@ -100,11 +99,7 @@ fn deserialize_message<M: serde::de::DeserializeOwned>(xml: &[u8]) -> CalResult<
 /// [`ZmqWriter`]s hold a clone of the channel sender.
 pub struct ZmqAsb {
     asb_id: String,
-    service_id: String,
-    /// Name of the `[[service]]` config section used to look up the service UUID
-    /// for message header population. `None` means no service-specific config.
-    service_config_name: Option<String>,
-    uuids: ServiceUuids,
+    service_name: String,
 
     /// Sender side of the RADIO background task's work queue.
     /// Set to `None` by [`close()`].
@@ -147,9 +142,8 @@ impl ZmqAsb {
     /// For tcp:// and inproc:// URIs the RADIO socket binds immediately.
     /// For udp:// URIs the RADIO connects to an existing DISH listener.
     pub async fn new(
-        service_id: impl Into<String>,
+        service_name: impl Into<String>,
         asb_id: impl Into<String>,
-        service_config_name: Option<String>,
         logger: Logger,
         config: Arc<CalConfig>,
         tconfig: &Transport,
@@ -195,16 +189,8 @@ impl ZmqAsb {
 
         let logger = logger.new(slog::o!("subsystem" => "zmq"));
         Ok(Self {
-            service_id: service_id.into(),
+            service_name: service_name.into(),
             asb_id: asb_id.into(),
-            service_config_name,
-            uuids: ServiceUuids {
-                system: UUID::nil(),
-                service: UUID::nil(),
-                subsystem: None,
-                components: Vec::new(),
-                capabilities: Vec::new(),
-            },
             write_tx: Some(write_tx),
             status: AsbStatus::new(AsbConnectionState::Initializing, "ZeroMQ ASB initializing"),
             logger,
@@ -270,15 +256,11 @@ impl AbstractServiceBus for ZmqAsb {
     }
 
     fn service_identifier(&self) -> &str {
-        &self.service_id
+        &self.service_name
     }
 
     fn asb_identifier(&self) -> &str {
         &self.asb_id
-    }
-
-    fn service_uuids(&self) -> CalResult<&ServiceUuids> {
-        Ok(&self.uuids)
     }
 
     fn oms_schema_version(&self) -> &str {
@@ -349,9 +331,8 @@ impl AbstractServiceBus for ZmqAsb {
         };
         let sys = &self.config.system;
         let service_id = self
-            .service_config_name
-            .as_deref()
-            .and_then(|name| self.config.get_service(name))
+            .config
+            .get_service(&self.service_name)
             .and_then(|svc| svc.uuid);
         let mission_id = sys.mission_id;
         let mode = match sys.mode.as_deref() {
@@ -385,7 +366,7 @@ impl AbstractServiceBus for ZmqAsb {
             system_id: sys.uuid,
             service_id,
             mission_id,
-            schema_version: env!("RCAL_SCHEMA_VERSION").to_string(),
+            schema_version: self.oms_schema_version().to_string(),
             mode,
             classification,
             owner_producer,
@@ -607,7 +588,7 @@ where
         topic: &str,
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractWriter<M>>> {
-        validate_topic_type::<M>(&self.config, &self.service_id, topic)?;
+        validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
         let tx = self
             .write_tx
             .as_ref()
@@ -668,7 +649,7 @@ where
         topic: &str,
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractReader<M>>> {
-        validate_topic_type::<M>(&self.config, &self.service_id, topic)?;
+        validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
         // Build the list of RADIO URIs for this reader's DISH to connect to.
         // If no peers are registered, connect to our own RADIO (single-process use).
         let connect_uris: Vec<String> = if self.peer_uris.is_empty() {
@@ -852,16 +833,9 @@ mod tests {
         let tconfig = config
             .get_transport(&String::from("TestZmq"))
             .expect("TestZmq transport must exist in test config");
-        ZmqAsb::new(
-            "Test Service",
-            "TestZmq",
-            None,
-            logger,
-            config.clone(),
-            tconfig,
-        )
-        .await
-        .unwrap()
+        ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap()
     }
 
     // ── Test message type ─────────────────────────────────────────────────
@@ -1199,16 +1173,9 @@ mod tests {
         let port = next_port();
         let config = test_config_with_topic_type(port, "test.topic", "some.OtherMsg");
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new(
-            "Test Service",
-            "TestZmq",
-            None,
-            logger,
-            config.clone(),
-            tconfig,
-        )
-        .await
-        .unwrap();
+        let mut asb = ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
 
         let result = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
             &mut asb,
@@ -1227,16 +1194,9 @@ mod tests {
         let port = next_port();
         let config = test_config_with_topic_type(port, "test.topic", "some.OtherMsg");
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new(
-            "Test Service",
-            "TestZmq",
-            None,
-            logger,
-            config.clone(),
-            tconfig,
-        )
-        .await
-        .unwrap();
+        let mut asb = ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
 
         let result = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
             &mut asb,
@@ -1255,16 +1215,9 @@ mod tests {
         let port = next_port();
         let config = test_config_with_topic_type(port, "test.topic", "test.TestMsg");
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new(
-            "Test Service",
-            "TestZmq",
-            None,
-            logger,
-            config.clone(),
-            tconfig,
-        )
-        .await
-        .unwrap();
+        let mut asb = ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
+            .await
+            .unwrap();
 
         assert!(
             <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
@@ -1285,7 +1238,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1341,7 +1294,7 @@ mod tests {
         );
         let config = Arc::new(calconfig::parse_config(&toml).unwrap());
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1391,7 +1344,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1434,7 +1387,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1457,7 +1410,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1481,7 +1434,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1518,7 +1471,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1584,7 +1537,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1622,7 +1575,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1676,7 +1629,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1719,7 +1672,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1764,7 +1717,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 
@@ -1821,7 +1774,7 @@ mod tests {
         let port = next_port();
         let config = test_config_on_ports(&[port]);
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
-        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", None, logger, config.clone(), tconfig)
+        let mut asb = ZmqAsb::new("TestSvc", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap();
 

@@ -39,7 +39,6 @@ async fn main() {
     let mut bus = ZmqAsb::new(
         "SystemStatusExample",
         transport_id,
-        None,
         root_logger.clone(),
         config,
         &tconfig,
