@@ -30,10 +30,9 @@ impl CalMessage for IntMsg {
 
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    assert!(args.len() == 3, "usage: zmq_peer_sender <port> <num_messages>");
-    let port: u16 = args[1].parse().expect("port must be u16");
-    let count: i32 = args[2].parse().expect("count must be i32");
+    let mut args = std::env::args().skip(1);
+    let port: u16 = args.next().expect("usage: zmq_peer_sender <port> <num_messages>").parse().expect("port must be u16");
+    let count: i32 = args.next().expect("usage: zmq_peer_sender <port> <num_messages>").parse().expect("count must be i32");
 
     const BASE_UUID: &str = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b";
     let ns = UUID::parse_str(BASE_UUID).unwrap();
