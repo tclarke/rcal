@@ -36,6 +36,11 @@ This is a standard cargo layout. all `.rs` and `.toml` files can be used as inpu
  - Always use modules based on the C++ namespaces in the "CERT C++"
  - Additional modules may be added for Rust specific tools, interfaces, and implementations. For example, the abstract service bus (ASB) interfaces will be in the `uci::base` module but ASB implementations can be in `uci::asb` or `asb` modules.
 
+# Starting a task
+When given a goal to complete a specific github issue, first create a branch for the issue.
+Enter plan mode and come up with a design which implements the issue.
+Always perfor "Coding review and checks" when finished implementing.
+
 # Coding review and checks
  - After implementing a new feature and before creating a PR, run the following tools.
    - `cargo check --worspace --all-targets`
