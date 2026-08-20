@@ -16,7 +16,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rcal
-      - run: cargo clippy --all-targets --manifest-path rcal/Cargo.toml
+      - run: cargo clippy --all-targets
+        working-directory: rcal
         env:
           RCAL_XSD_PATH: examples/UCI_SystemStatusOnly_v2_5_0.xsd
   test:
@@ -29,7 +30,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rcal
-      - run: cargo test -vv --manifest-path rcal/Cargo.toml
+      - run: cargo test
+        working-directory: rcal
         env:
           RCAL_XSD_PATH: examples/UCI_SystemStatusOnly_v2_5_0.xsd
   examples:
@@ -42,6 +44,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rcal
-      - run: cargo run --example system_status --manifest-path rcal/Cargo.toml
+      - run: cargo run --example system_status
+        working-directory: rcal
         env:
           RCAL_XSD_PATH: examples/UCI_SystemStatusOnly_v2_5_0.xsd
