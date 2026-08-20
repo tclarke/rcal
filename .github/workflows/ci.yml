@@ -10,8 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rcal
-      - run: cargo test --manifest-path rcal/Cargo.toml
+      - run: cargo test -vv --manifest-path rcal/Cargo.toml
