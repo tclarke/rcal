@@ -256,3 +256,49 @@ async fn test_three_clients_separate_radios() {
     bus_b.close().unwrap();
     bus_c.close().unwrap();
 }
+
+// ── system test: real multi-process ──────────────────────────────────────────
+
+/// Verifies `add_receive_peer` across two real OS processes.
+///
+/// Topology:
+///   Sender process (zmq_peer_sender) — RADIO on port_s, publishes 3 messages
+///   This process                     — DISH connecting to port_s via `add_receive_peer`
+#[rcal_macros::init_test_logger]
+#[tokio::test]
+async fn test_multiprocess_receive_peer() {
+    let port_s = next_port();
+    let port_r = next_port();
+
+    let sender_bin = env!("CARGO_BIN_EXE_zmq_peer_sender");
+    let mut child = std::process::Command::new(sender_bin)
+        .args([port_s.to_string(), "3".to_string()])
+        .spawn()
+        .expect("failed to spawn zmq_peer_sender");
+
+    let mut bus = make_bus("Receiver", port_r, logger).await;
+    bus.add_receive_peer(format!("tcp://127.0.0.1:{port_s}"));
+
+    let mut reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
+        &mut bus,
+        "data",
+        TopicQos::default(),
+    )
+    .unwrap();
+
+    // read() uses cvar.wait_timeout which blocks the tokio executor thread, preventing
+    // the reader task from running. Sleep long enough for the sender process to start,
+    // bind, publish, and for the reader task to buffer all messages before we call read().
+    // Sender binary startup + 1000 ms sender-side delay ≈ 1200–1500 ms on Windows.
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+
+    let timeout = Duration::from_millis(500);
+    let m1 = reader.read(Some(timeout)).unwrap().unwrap();
+    let m2 = reader.read(Some(timeout)).unwrap().unwrap();
+    let m3 = reader.read(Some(timeout)).unwrap().unwrap();
+    assert_eq!([m1.value, m2.value, m3.value], [1, 2, 3], "multiprocess delivery order");
+    assert!(reader.read_no_wait().unwrap().is_none());
+
+    child.wait().unwrap();
+    bus.close().unwrap();
+}

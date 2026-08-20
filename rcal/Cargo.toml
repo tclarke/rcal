@@ -25,6 +25,9 @@ quick-xml = { version = "0.37", features = ["serialize"] }
 quick-xml = { version = "0.37" }
 glob = "0.3.4"
 
+[[bin]]
+name = "zmq_peer_sender"
+
 [[example]]
 name = "system_status"
 
