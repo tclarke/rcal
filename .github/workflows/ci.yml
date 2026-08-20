@@ -17,3 +17,5 @@ jobs:
         with:
           workspaces: rcal
       - run: cargo test -vv --manifest-path rcal/Cargo.toml
+        env:
+          RCAL_XSD_PATH: examples/UCI_SystemStatusOnly_v2_5_0.xsd
