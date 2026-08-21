@@ -192,6 +192,10 @@ pub struct Service {
     pub topic: Vec<Topic>,
     /// Optional service UUID used to populate the ServiceID field in message headers.
     pub uuid: Option<UUID>,
+    /// Duration string for periodic status message interval (e.g. "1s", "500ms").
+    pub status_delay: Option<String>,
+    /// When true, the service registers a ServiceStatusDataRequest reader and responds automatically.
+    pub service_status_data_request_enable: bool,
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]

@@ -1,0 +1,5 @@
+[target.x86_64-pc-windows-msvc]
+linker = "C:\\Users\\clarketr\\msvc\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\link.exe"
+
+[env]
+RCAL_CALCONFIG_PATH = { value = "src/ExampleConfig.toml", relative = true }

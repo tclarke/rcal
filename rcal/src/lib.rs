@@ -8,6 +8,8 @@ pub mod asb;
 pub mod calconfig;
 pub mod logging;
 pub mod qname;
+#[cfg(feature = "service")]
+pub mod service;
 pub mod uci;
 pub mod xs;
 

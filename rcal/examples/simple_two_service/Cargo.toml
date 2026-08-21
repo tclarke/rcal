@@ -1,0 +1,15 @@
+[package]
+name = "simple_two_service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "simple_two_service"
+
+[dependencies]
+rcal = { path = "../..", features = ["service"] }
+rcal_macros = { path = "../../rcal_macros" }
+tokio = { version = "1", features = ["full"] }
+slog = "2"
+chrono = "0.4"

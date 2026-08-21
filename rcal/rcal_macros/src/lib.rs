@@ -2,10 +2,79 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
 use syn::{
-    Ident, ItemFn, LitBool, LitStr, Token,
+    Ident, ItemFn, ItemStruct, LitBool, LitStr, Token,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
+
+// ── monitor ──────────────────────────────────────────────────────────────────
+
+/// Injects a `__monitor_mutex: ::std::sync::Mutex<()>` field into a named-field struct.
+///
+/// Pair with `#[guarded]` on methods to implement the monitor pattern — a
+/// single mutex that serialises all externally-callable methods.
+///
+/// The field is private; constructors must initialise it as
+/// `__monitor_mutex: ::std::sync::Mutex::new(())`.
+///
+/// ```ignore
+/// #[rcal_macros::monitor]
+/// pub struct Foo {
+///     x: i32,
+/// }
+///
+/// impl Foo {
+///     pub fn new() -> Self { Self { x: 0, __monitor_mutex: ::std::sync::Mutex::new(()) } }
+///
+///     #[rcal_macros::guarded]
+///     pub fn set_x(&mut self, v: i32) { self.x = v; }
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn monitor(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut input = parse_macro_input!(item as ItemStruct);
+
+    let mutex_field: syn::Field = syn::parse_quote! {
+        __monitor_mutex: ::std::sync::Mutex<()>
+    };
+
+    match &mut input.fields {
+        syn::Fields::Named(fields) => {
+            fields.named.push(mutex_field);
+        }
+        _ => {
+            return syn::Error::new_spanned(
+                &input.ident,
+                "#[monitor] only supports structs with named fields",
+            )
+            .to_compile_error()
+            .into();
+        }
+    }
+
+    quote! { #input }.into()
+}
+
+// ── guarded ───────────────────────────────────────────────────────────────────
+
+/// Prepends `let _monitor_guard = self.__monitor_mutex.lock().unwrap();` to a
+/// method body, acquiring the monitor mutex for the duration of the call.
+///
+/// Apply only to `&self` or `&mut self` methods on a struct annotated with
+/// `#[monitor]`. Do **not** apply to methods that are only called from other
+/// guarded methods — doing so will deadlock (std::sync::Mutex is not reentrant).
+#[proc_macro_attribute]
+pub fn guarded(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut func = parse_macro_input!(item as ItemFn);
+
+    let guard_stmt: syn::Stmt = syn::parse_quote! {
+        let _monitor_guard = self.__monitor_mutex.lock().unwrap();
+    };
+
+    func.block.stmts.insert(0, guard_stmt);
+
+    quote! { #func }.into()
+}
 
 // ── init_test_logger ──────────────────────────────────────────────────────────
 
