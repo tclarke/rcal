@@ -54,3 +54,12 @@ See the `examples/` folder for usage.
   - `claude mcp add filesystem -s user  -- npx -y @modelcontextprotocol/server-filesystem ~/rcal`
 - Optional: sequencial-thinking: This provides a dynamic workflow for complex design and reasoning which uses multiple sub-agents to do parallel research, etc. It uses a LOT of tokens so care should be used.
   - `claude mcp add sequential-thinking -s user -- npx -y @modelcontextprotocol/server-sequential-thinking`
+
+## Release Process
+
+1. Bump version in rcal/Cargo.toml [workspace.package]
+  (single edit propagates to all three crates via inheritance)
+2. Commit: "chore: bump version to vX.Y.Z"
+3. Close the milestone on GitHub
+4. git tag vX.Y.Z && git push origin vX.Y.Z
+5. Workflow fires — tests, publishes, creates GitHub Release
