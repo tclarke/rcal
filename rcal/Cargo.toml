@@ -19,6 +19,7 @@ description = "OMS Critical Abstraction Layer (CAL) implementation for Rust"
 lazy_static = "1.5.0"
 regex = "1"
 mac_address = { version = "1.1.8", features = ["serde"] }
+rcal_macros = { path = "./rcal_macros" }
 serde = { version = "1.0.229", features = ["derive"] }
 slog = "2.8.2"
 slog-async = "2.8.0"
@@ -30,9 +31,6 @@ omq-tokio = "0.21.1"
 tokio = { version = "1.53.1", features = ["full"] }
 quick-xml = { version = "0.37", features = ["serialize"] }
 chrono = { version = "0.4.45", features = ["serde"] }
-
-[workspace.dependencies]
-rcal_macros = { path = "./rcal_macros" }
 
 [build-dependencies]
 quick-xml = { version = "0.37" }
