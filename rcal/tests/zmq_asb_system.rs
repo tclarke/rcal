@@ -13,7 +13,7 @@ use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, MessageListener
 
 // ── port allocator (multiprocess test only) ───────────────────────────────────
 
-static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(1000);
+static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(2000);
 
 fn next_port() -> u16 {
     NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
