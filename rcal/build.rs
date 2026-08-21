@@ -9,6 +9,8 @@ fn main() {
     println!("cargo::rerun-if-env-changed=RCAL_XSD_PATH");
     println!("cargo::rerun-if-env-changed=RCAL_SCHEMA_VERSION");
     println!("cargo::rerun-if-env-changed=RCAL_OMS_COMPILER_VERSION");
+    println!("cargo::rerun-if-env-changed=RCAL_CALCONFIG_PATH");
+    println!("cargo::rerun-if-env-changed=RCAL_CALCONFIG_SERVICES");
 
     eprintln!("Starting generation step");
     if let Ok(compiler_version) = std::env::var("RCAL_OMS_COMPILER_VERSION") {
@@ -84,8 +86,32 @@ fn main() {
         eprintln!("Schema version={schema_version}");
     }
 
+    // Resolve optional calconfig-based message subset
+    let subset = if let Ok(calconfig_path) = std::env::var("RCAL_CALCONFIG_PATH") {
+        println!("cargo::rerun-if-changed={calconfig_path}");
+        let service_filter: Option<HashSet<String>> =
+            std::env::var("RCAL_CALCONFIG_SERVICES").ok().map(|s| {
+                s.split(',')
+                    .map(|v| v.trim().to_owned())
+                    .filter(|v| !v.is_empty())
+                    .collect()
+            });
+        match calconfig_topics(&calconfig_path, service_filter.as_ref()) {
+            Ok(topics) => {
+                eprintln!("Calconfig topics: {topics:?}");
+                Some(compute_needed_names(&topics, &schema))
+            }
+            Err(e) => {
+                println!("cargo::error=Failed to parse RCAL_CALCONFIG_PATH={calconfig_path}: {e}");
+                return;
+            }
+        }
+    } else {
+        None
+    };
+
     eprintln!("Generating");
-    generate_types(&schema, &types_dir);
+    generate_types(&schema, &types_dir, subset.as_ref());
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -477,9 +503,10 @@ fn attr(e: &quick_xml::events::BytesStart, key: &str) -> Option<String> {
 // Code generator
 // ════════════════════════════════════════════════════════════════════════════
 
-fn generate_types(schema: &Schema, out_dir: &Path) {
+fn generate_types(schema: &Schema, out_dir: &Path, subset: Option<&HashSet<String>>) {
     let resolver = &schema.resolver;
     let mut mod_entries: Vec<String> = vec![];
+    let mut written_files: HashSet<String> = HashSet::new();
 
     // Build a lookup: simple-type local name → fully-qualified Rust type path.
     let simple_type_map: HashMap<&str, String> = schema
@@ -532,6 +559,11 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
         if st.name == "UniversallyUniqueIdentifierType" {
             continue;
         }
+        if let Some(needed) = subset
+            && !needed.contains(&st.name)
+        {
+            continue;
+        }
         let file_name = format!("{}.rs", snake(&st.name));
         let code = match &st.kind {
             SimpleTypeKind::Enum(vals) => gen_enum(&st.name, vals),
@@ -540,6 +572,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
             }
         };
         fs::write(out_dir.join(&file_name), code).unwrap();
+        written_files.insert(file_name.clone());
         let mod_name = snake(&st.name);
         mod_entries.push(format!(
             "#[doc(hidden)]\npub mod {mod_name};\n#[doc(inline)]\npub use {mod_name}::*;"
@@ -610,6 +643,11 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
     let mut complex_count = 0;
     eprintln!("Generating complex types");
     for ct in &schema.complex_types {
+        if let Some(needed) = subset
+            && !needed.contains(&ct.name)
+        {
+            continue;
+        }
         let file_name = format!("{}.rs", snake(&ct.name));
         let code = gen_struct(
             ct,
@@ -622,6 +660,7 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
             &choice_type_names,
         );
         fs::write(out_dir.join(&file_name), code).unwrap();
+        written_files.insert(file_name.clone());
         let mod_name = snake(&ct.name);
         mod_entries.push(format!(
             "#[doc(hidden)]\n#[allow(missing_docs)]\npub mod {mod_name};\n#[doc(inline)]\npub use {mod_name}::*;"
@@ -633,6 +672,11 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
     let mut element_count = 0;
     eprintln!("Generating elements");
     for el in &schema.elements {
+        if let Some(needed) = subset
+            && !needed.contains(&el.name)
+        {
+            continue;
+        }
         let (type_ns, type_local) = resolver.resolve_pair(&el.type_);
         let type_pascal = pascal(&type_local);
         let el_module = snake(&el.name);
@@ -709,11 +753,29 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
             ns_struct_fields = ns_struct_fields,
             ns_struct_values = ns_struct_values,
         );
-        fs::write(out_dir.join(format!("{el_module}.rs")), code).unwrap();
+        let el_file = format!("{el_module}.rs");
+        fs::write(out_dir.join(&el_file), code).unwrap();
+        written_files.insert(el_file);
         mod_entries.push(format!(
             "#[doc(hidden)]\n#[allow(missing_docs)]\npub mod {el_module};\n#[doc(inline)]\npub use {el_module}::*;"
         ));
         element_count += 1;
+    }
+
+    // Remove stale .rs files from a previous broader generation
+    if subset.is_some()
+        && let Ok(entries) = fs::read_dir(out_dir)
+    {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.ends_with(".rs")
+                && name_str != "mod.rs"
+                && !written_files.contains(name_str.as_ref())
+            {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
     }
 
     // Write mod.rs
@@ -725,6 +787,198 @@ fn generate_types(schema: &Schema, out_dir: &Path) {
     eprintln!(
         "Finished generating types: {element_count} elements, {simple_count} simple types, and {complex_count} complex typtes"
     );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Calconfig-based message subsetting
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Parse a calconfig.toml and return the set of message type names referenced by topics.
+///
+/// If `service_filter` is Some, only topics from those service IDs are included.
+fn calconfig_topics(
+    path: &str,
+    service_filter: Option<&HashSet<String>>,
+) -> Result<HashSet<String>, String> {
+    let content = fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let mut topics: HashSet<String> = HashSet::new();
+
+    #[derive(Default)]
+    enum Section {
+        #[default]
+        Other,
+        Service,
+        ServiceTopic,
+    }
+
+    let mut section = Section::default();
+    let mut current_service_id = String::new();
+    let mut current_topic_id = String::new();
+    let mut current_topic_type: Option<String> = None;
+    let mut in_selected_service = false;
+
+    let flush_topic =
+        |id: &str, type_: Option<&str>, in_svc: bool, topics: &mut HashSet<String>| {
+            if in_svc && !id.is_empty() {
+                topics.insert(type_.unwrap_or(id).to_owned());
+            }
+        };
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed == "[[service]]" {
+            flush_topic(
+                &current_topic_id,
+                current_topic_type.as_deref(),
+                in_selected_service,
+                &mut topics,
+            );
+            current_topic_id.clear();
+            current_topic_type = None;
+            current_service_id.clear();
+            in_selected_service = false;
+            section = Section::Service;
+            continue;
+        }
+
+        if trimmed == "[[service.topic]]" {
+            flush_topic(
+                &current_topic_id,
+                current_topic_type.as_deref(),
+                in_selected_service,
+                &mut topics,
+            );
+            current_topic_id.clear();
+            current_topic_type = None;
+            section = Section::ServiceTopic;
+            continue;
+        }
+
+        // Any other array-of-tables header resets section
+        if trimmed.starts_with("[[") {
+            flush_topic(
+                &current_topic_id,
+                current_topic_type.as_deref(),
+                in_selected_service,
+                &mut topics,
+            );
+            current_topic_id.clear();
+            current_topic_type = None;
+            section = Section::Other;
+            continue;
+        }
+
+        match section {
+            Section::Service => {
+                if let Some(val) = parse_toml_string_value(trimmed, "id") {
+                    current_service_id = val;
+                    in_selected_service = service_filter
+                        .map(|f| f.contains(&current_service_id))
+                        .unwrap_or(true);
+                }
+            }
+            Section::ServiceTopic => {
+                if let Some(val) = parse_toml_string_value(trimmed, "id") {
+                    current_topic_id = val;
+                } else if let Some(val) = parse_toml_string_value(trimmed, "type") {
+                    current_topic_type = Some(val);
+                }
+            }
+            Section::Other => {}
+        }
+    }
+
+    flush_topic(
+        &current_topic_id,
+        current_topic_type.as_deref(),
+        in_selected_service,
+        &mut topics,
+    );
+
+    Ok(topics)
+}
+
+/// Extract a `key = "value"` string from a TOML line.
+fn parse_toml_string_value(line: &str, key: &str) -> Option<String> {
+    let rest = line.strip_prefix(key)?.trim_start();
+    let rest = rest.strip_prefix('=')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_owned())
+}
+
+/// Resolve all transitive XSD dependencies for the given message element names.
+///
+/// Returns a HashSet of all element and type names that must be generated.
+fn compute_needed_names(message_types: &HashSet<String>, schema: &Schema) -> HashSet<String> {
+    // Build a map: name -> set of referenced names
+    let mut refs: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for el in &schema.elements {
+        let local = el
+            .type_
+            .rfind(':')
+            .map(|i| &el.type_[i + 1..])
+            .unwrap_or(&el.type_);
+        let mut dep_set = HashSet::new();
+        if !el.type_.starts_with("xs:") {
+            dep_set.insert(local.to_owned());
+        }
+        refs.insert(el.name.clone(), dep_set);
+    }
+
+    for ct in &schema.complex_types {
+        let mut dep_set: HashSet<String> = HashSet::new();
+        if let Some(base) = &ct.extension_base {
+            let local = base.rfind(':').map(|i| &base[i + 1..]).unwrap_or(base);
+            if !base.starts_with("xs:") {
+                dep_set.insert(local.to_owned());
+            }
+        }
+        for f in &ct.fields {
+            let local = f
+                .type_
+                .rfind(':')
+                .map(|i| &f.type_[i + 1..])
+                .unwrap_or(&f.type_);
+            if !f.type_.starts_with("xs:") {
+                dep_set.insert(local.to_owned());
+            }
+        }
+        refs.insert(ct.name.clone(), dep_set);
+    }
+
+    for st in &schema.simple_types {
+        let dep_set = match &st.kind {
+            SimpleTypeKind::Restriction { base, .. } if !base.starts_with("xs:") => {
+                let local = base.rfind(':').map(|i| &base[i + 1..]).unwrap_or(base);
+                let mut s = HashSet::new();
+                s.insert(local.to_owned());
+                s
+            }
+            _ => HashSet::new(),
+        };
+        refs.insert(st.name.clone(), dep_set);
+    }
+
+    // BFS from message_types
+    let mut needed: HashSet<String> = HashSet::new();
+    let mut queue: Vec<String> = message_types.iter().cloned().collect();
+    while let Some(name) = queue.pop() {
+        if needed.contains(&name) {
+            continue;
+        }
+        needed.insert(name.clone());
+        if let Some(deps) = refs.get(&name) {
+            for dep in deps {
+                if !needed.contains(dep) {
+                    queue.push(dep.clone());
+                }
+            }
+        }
+    }
+    needed
 }
 
 fn gen_enum(name: &str, vals: &[String]) -> String {
