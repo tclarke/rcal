@@ -62,3 +62,10 @@ harness = true
 
 [dev-dependencies]
 serde_json = "1.0.151"
+
+[workspace.metadata.release]
+allow-branch = [ "main" ]
+sign-commit = true
+sign-tag = true
+publish = false
+verify = false
