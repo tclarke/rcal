@@ -40,6 +40,9 @@ This is a standard cargo layout. all `.rs` and `.toml` files can be used as inpu
 When given a goal to complete a specific github issue, first create a branch for the issue.
 Enter plan mode and come up with a design which implements the issue.
 Always perfor "Coding review and checks" when finished implementing.
+Always update the issue start date and set status to "In Progres" when starting a new task
+Always set the issue status to "In Review" when a PR has been created.
+Always update the end date after the PR has been merged.
 
 # Coding review and checks
  - After implementing a new feature and before creating a PR, run the following tools.
