@@ -78,6 +78,16 @@ fn validate_topic_type<M: CalMessage>(
     Ok(())
 }
 
+/// Returns the remapped CAL topic name for `topic` if the service config defines
+/// a mapping (CAL-005209), otherwise returns `topic` unchanged.
+fn resolve_topic<'a>(config: &'a CalConfig, service_id: &str, topic: &'a str) -> &'a str {
+    config
+        .get_service(service_id)
+        .and_then(|s| s.topic.iter().find(|t| t.id == topic))
+        .and_then(|t| t.topic.as_deref())
+        .unwrap_or(topic)
+}
+
 fn deserialize_message<M: serde::de::DeserializeOwned>(xml: &[u8]) -> CalResult<M> {
     let xml_str = std::str::from_utf8(xml)
         .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
@@ -584,6 +594,7 @@ where
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractWriter<M>>> {
         validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
+        let cal_topic = resolve_topic(&self.config, &self.service_name, topic);
         let tx = self
             .write_tx
             .as_ref()
@@ -625,10 +636,10 @@ where
             (Some(tx), None, None, None)
         };
 
-        trace!(self.logger, "ZmqAsb::create_writer()"; "topic" => topic);
+        trace!(self.logger, "ZmqAsb::create_writer()"; "topic" => cal_topic);
         Ok(Box::new(ZmqWriter {
-            topic: topic.to_string(),
-            logger: self.logger.new(slog::o!("topic" => topic.to_string())),
+            topic: cal_topic.to_string(),
+            logger: self.logger.new(slog::o!("topic" => cal_topic.to_string())),
             format: self.serialization_format.clone(),
             direct_tx,
             writer_buf,
@@ -645,6 +656,7 @@ where
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractReader<M>>> {
         validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
+        let cal_topic = resolve_topic(&self.config, &self.service_name, topic);
         // Build the list of RADIO URIs for this reader's DISH to connect to.
         // If no peers are registered, connect to our own RADIO (single-process use).
         let connect_uris: Vec<String> = if self.peer_uris.is_empty() {
@@ -674,10 +686,10 @@ where
         let listeners_task = Arc::clone(&listeners);
         let poll_state_task = Arc::clone(&poll_state);
         let task_alive_task = Arc::clone(&task_alive);
-        let topic_str = topic.to_string();
+        let topic_str = cal_topic.to_string();
         let _format = self.serialization_format.clone(); // ponytail: deserialization is format-agnostic (XML only); extend if binary formats are added
         let mut shutdown_rx = self.shutdown_tx.subscribe();
-        let reader_logger = self.logger.new(slog::o!("topic" => topic.to_string()));
+        let reader_logger = self.logger.new(slog::o!("topic" => cal_topic.to_string()));
 
         let task = tokio::spawn(async move {
             let dish = Socket::new(SocketType::Dish, Options::default());
@@ -1791,5 +1803,40 @@ mod tests {
         assert!(result.is_err(), "close must error when buffer is non-empty");
 
         asb.close().unwrap();
+    }
+
+    #[test]
+    fn test_resolve_topic_remapping() {
+        use crate::calconfig;
+        let toml = r#"
+[system]
+id = "TestSystem"
+label = "OMS Test System"
+uuid = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b"
+default_transport = "main"
+
+[[transport]]
+id = "main"
+type = "zmq"
+uri = "tcp://127.0.0.1:55599"
+
+[[service]]
+id = "Svc"
+
+[[service.topic]]
+id = "ClientTopic"
+topic = "CalTopic"
+
+[[service.topic]]
+id = "NoRemap"
+"#;
+        let config = Arc::new(calconfig::parse_config(toml).unwrap());
+        assert_eq!(resolve_topic(&config, "Svc", "ClientTopic"), "CalTopic");
+        assert_eq!(resolve_topic(&config, "Svc", "NoRemap"), "NoRemap");
+        assert_eq!(resolve_topic(&config, "Svc", "Unknown"), "Unknown");
+        assert_eq!(
+            resolve_topic(&config, "NoSvc", "ClientTopic"),
+            "ClientTopic"
+        );
     }
 }
