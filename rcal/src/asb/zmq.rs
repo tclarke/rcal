@@ -192,7 +192,7 @@ impl ZmqAsb {
             service_name: service_name.into(),
             asb_id: asb_id.into(),
             write_tx: Some(write_tx),
-            status: AsbStatus::new(AsbConnectionState::Initializing, "ZeroMQ ASB initializing"),
+            status: AsbStatus::new(AsbConnectionState::Normal, "ZeroMQ ASB connected"),
             logger,
             config,
             transport_uri,
@@ -222,11 +222,6 @@ impl ZmqAsb {
     #[cfg(test)]
     pub fn write_gate(&self) -> Arc<tokio::sync::Mutex<()>> {
         Arc::clone(&self.write_gate)
-    }
-
-    /// Connect to the bus (future use: establish DISH subscriptions).
-    pub async fn connect(&mut self) -> CalResult<()> {
-        Ok(())
     }
 
     /// Transitions to `state`, updates the description, then notifies all
@@ -869,10 +864,7 @@ mod tests {
         );
         assert_eq!(a.service_identifier(), "Test Service");
         assert_eq!(a.asb_identifier(), "TestZmq");
-        assert_eq!(
-            a.connection_status().state,
-            AsbConnectionState::Initializing
-        );
+        assert_eq!(a.connection_status().state, AsbConnectionState::Normal);
     }
 
     // ── Transport: inproc ─────────────────────────────────────────────────
@@ -1050,7 +1042,6 @@ mod tests {
         let l2d: Arc<dyn AsbStatusListener> = l2.clone();
 
         assert_eq!(a.listeners.len(), 0);
-        a.update_status(AsbConnectionState::Normal, "").unwrap();
         assert_eq!(l1.call_count(), 0);
         assert_eq!(l2.call_count(), 0);
 
@@ -1122,7 +1113,6 @@ mod tests {
     #[tokio::test]
     async fn test_register_listener_in_failed_state_returns_err() {
         let mut a = make_bus(logger).await;
-        a.update_status(AsbConnectionState::Normal, "").unwrap();
         a.update_status(AsbConnectionState::Failed, "terminal")
             .unwrap();
 
@@ -1138,7 +1128,6 @@ mod tests {
     async fn test_invalid_state_transition_returns_err() {
         let mut a = make_bus(logger).await;
 
-        a.update_status(AsbConnectionState::Normal, "").unwrap();
         a.update_status(AsbConnectionState::Failed, "").unwrap();
 
         for next in [
