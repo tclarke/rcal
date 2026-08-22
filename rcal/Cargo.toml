@@ -27,10 +27,14 @@ slog-json = "2.6.1"
 slog-term = "2.9.2"
 toml = "1.1.4"
 uuid = { version = "1.24.0", features = ["v1", "v3", "v4", "slog", "serde", "rng"] }
-omq-tokio = "0.21.1"
+omq-tokio = { version = "0.21.1", optional = true }
 tokio = { version = "1.53.1", features = ["full"] }
 quick-xml = { version = "0.37", features = ["serialize"] }
 chrono = { version = "0.4.45", features = ["serde"] }
+
+[features]
+zmq = ["dep:omq-tokio"]
+default = ["zmq"]
 
 [build-dependencies]
 quick-xml = { version = "0.37" }
@@ -38,6 +42,7 @@ glob = "0.3.4"
 
 [[bin]]
 name = "zmq_peer_sender"
+required-features = ["zmq"]
 
 [[example]]
 name = "system_status"
@@ -51,14 +56,17 @@ name = "custom_tokio"
 [[test]]
 name = "zmq_radio_dish"
 harness = true
+required-features = ["zmq"]
 
 [[test]]
 name = "zmq_asb_system"
 harness = true
+required-features = ["zmq"]
 
 [[test]]
 name = "zmq_qos"
 harness = true
+required-features = ["zmq"]
 
 [dev-dependencies]
 serde_json = "1.0.151"
