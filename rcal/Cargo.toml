@@ -17,7 +17,8 @@ description = "OMS Critical Abstraction Layer (CAL) implementation for Rust"
 
 [features]
 service = []
-default = ["service"]
+zmq = ["dep:omq-tokio"]
+default = ["service", "zmq"]
 
 [dependencies]
 lazy_static = "1.5.0"
@@ -35,10 +36,6 @@ omq-tokio = { version = "0.21.1", optional = true }
 tokio = { version = "1.53.1", features = ["full"] }
 quick-xml = { version = "0.37", features = ["serialize"] }
 chrono = { version = "0.4.45", features = ["serde"] }
-
-[features]
-zmq = ["dep:omq-tokio"]
-default = ["zmq"]
 
 [build-dependencies]
 quick-xml = { version = "0.37" }
