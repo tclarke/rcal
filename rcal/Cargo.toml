@@ -2,7 +2,7 @@
 members = ["rcal_macros", "xsd-subset", "examples/simple_two_service"]
 
 [workspace.package]
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tclarke/rcal"
@@ -24,7 +24,7 @@ default = ["service", "zmq"]
 lazy_static = "1.5.0"
 regex = "1"
 mac_address = { version = "1.1.8", features = ["serde"] }
-rcal_macros = { path = "./rcal_macros", version = "1.0.0" }
+rcal_macros = { path = "./rcal_macros", version = "2.0.0" }
 serde = { version = "1.0.229", features = ["derive"] }
 slog = "2.8.2"
 slog-async = "2.8.0"
