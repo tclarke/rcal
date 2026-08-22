@@ -331,7 +331,8 @@ macro_rules! service_status_loop {
     ($interval:expr, $body:block) => {
         ::tokio::spawn(async move {
             loop {
-                $body::tokio::time::sleep($interval).await;
+                $body;
+                ::tokio::time::sleep($interval).await;
             }
         })
     };
