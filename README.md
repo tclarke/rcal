@@ -1,3 +1,8 @@
+[![CI](https://github.com/tclarke/rcal/actions/workflows/ci.yml/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/tclarke/rcal/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/github-code-scanning/codeql)
+[![DevSkim](https://github.com/tclarke/rcal/actions/workflows/devskim.yml/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/devskim.yml)
+[![Release](https://github.com/tclarke/rcal/actions/workflows/release.yml/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/release.yml)
+
 # RCal: An OMS Cal implementation in rust
 rcal is an Open Mission Systems (OMS) Critical Abstraction Layer (CAL) implementation for Rust. It implements the
 "CERT CAL-" requirements and take inspiration from the "CERT CXX-" requirements. The C++ requirements are an
