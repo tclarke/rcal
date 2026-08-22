@@ -1,0 +1,59 @@
+[system]
+id = "TestSystem"
+label = "OMS Test System with 2 services"
+uuid = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b"
+
+[system.logging]
+default_level = "info"
+
+[[system.logging.sink]]
+type = "stdout"
+level = "trace"
+format = "pretty"
+
+# Two transports on consecutive ports (base 2000) so each service
+# can bind its own RADIO socket and peer-connect to the other.
+[[transport]]
+id = "service1"
+type = "zmq"
+uri = "tcp://127.0.0.1:2000"
+
+[[transport]]
+id = "service2"
+type = "zmq"
+uri = "tcp://127.0.0.1:2001"
+
+[[service]]
+id = "TestService1"
+transport = "service1"
+status_delay = "1s"
+service_status_data_request_enable = true
+
+[[service.topic]]
+id = "SystemStatus"
+
+[[service.topic]]
+id = "ServiceStatus"
+
+[[service.topic]]
+id = "ServiceStatusDataRequest"
+
+[[service.topic]]
+id = "ServiceStatusDataRequestStatus"
+
+[[service]]
+id = "TestService2"
+transport = "service2"
+status_delay = "1s"
+
+[[service.topic]]
+id = "SystemStatus"
+
+[[service.topic]]
+id = "ServiceStatus"
+
+[[service.topic]]
+id = "ServiceStatusDataRequest"
+
+[[service.topic]]
+id = "ServiceStatusDataRequestStatus"

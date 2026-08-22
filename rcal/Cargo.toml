@@ -1,5 +1,5 @@
 [workspace]
-members = ["rcal_macros", "xsd-subset"]
+members = ["rcal_macros", "xsd-subset", "examples/simple_two_service"]
 
 [workspace.package]
 version = "1.0.0"
@@ -14,6 +14,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "OMS Critical Abstraction Layer (CAL) implementation for Rust"
+
+[features]
+service = []
+zmq = ["dep:omq-tokio"]
+default = ["service", "zmq"]
 
 [dependencies]
 lazy_static = "1.5.0"
@@ -31,10 +36,6 @@ omq-tokio = { version = "0.21.1", optional = true }
 tokio = { version = "1.53.1", features = ["full"] }
 quick-xml = { version = "0.37", features = ["serialize"] }
 chrono = { version = "0.4.45", features = ["serde"] }
-
-[features]
-zmq = ["dep:omq-tokio"]
-default = ["zmq"]
 
 [build-dependencies]
 quick-xml = { version = "0.37" }
