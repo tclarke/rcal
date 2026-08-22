@@ -18,13 +18,29 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-rcal = { git = "https://github.com/tclarke/rcal" }
+rcal = "1"
 ```
 
-By default rcal generates Rust types from the bundled UCI 2.5.0 XSD at build time. To use a custom schema,
-set `RCAL_SCHEMA_PATH` to your `.xsd` file path (in the environment or in `.cargo/config.toml`).
-
 See the [`examples/`](examples/) directory for usage patterns.
+
+## Build-time configuration
+
+rcal generates Rust UCI message types from an XSD schema at build time. Control this via environment
+variables (set in the shell or in `.cargo/config.toml`):
+
+| Variable | Purpose |
+|----------|---------|
+| `RCAL_CALCONFIG_PATH` | Path to a `CALConfig.toml`. rcal reads the declared topics and generates **only** the UCI types your services actually use, shrinking compile times and binary size. |
+| `RCAL_CALCONFIG_SERVICES` | Comma-separated service names within `RCAL_CALCONFIG_PATH` to further restrict which topics are included. |
+| `RCAL_XSD_PATH` | Path to a custom or subsetted XSD file. Use when you need non-standard types or have pre-subsetted the schema with `rcal-xsd-subset`. Defaults to the bundled UCI 2.5.0 schema. |
+| `RCAL_SCHEMA_VERSION` | Override the version string embedded in generated code (defaults to the `version=` attribute in the XSD). |
+
+Example `.cargo/config.toml`:
+
+```toml
+[env]
+RCAL_CALCONFIG_PATH = "/path/to/CALConfig.toml"
+```
 
 ## Crates in this workspace
 

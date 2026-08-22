@@ -17,5 +17,5 @@ If you need the macros standalone:
 
 ```toml
 [dependencies]
-rcal_macros = { git = "https://github.com/tclarke/rcal", package = "rcal_macros" }
+rcal_macros = "1"
 ```
