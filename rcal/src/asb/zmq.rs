@@ -17,6 +17,8 @@ use super::{
 };
 use crate::calconfig::{CalConfig, SerializationFormat, Transport};
 use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
+use serde::Deserialize as _;
+use serde::de::IntoDeserializer;
 
 /// ASB identifier string for the ZeroMQ-compatible transport.
 pub const ZMQ_ASB_ID: &str = "zmq";
@@ -356,8 +358,11 @@ impl AbstractServiceBus for ZmqAsb {
         let owner_producer: Vec<_> = sys
             .owner_producer
             .iter()
-            .map(|_s| OwnerProducerChoiceType_::GovernmentIdentifier {
-                inner: OwnerProducerEnum::Usa,
+            .map(|s| {
+                let de: serde::de::value::StrDeserializer<serde::de::value::Error> =
+                    s.as_str().into_deserializer();
+                let inner = OwnerProducerEnum::deserialize(de).unwrap_or(OwnerProducerEnum::Usa);
+                OwnerProducerChoiceType_::GovernmentIdentifier { inner }
             })
             .collect();
         let owner_producer = if owner_producer.is_empty() {

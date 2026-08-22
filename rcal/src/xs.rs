@@ -132,8 +132,8 @@ impl From<i64> for DateTime {
 
 impl From<DateTime> for i64 {
     fn from(dt: DateTime) -> Self {
-        // Returns i64::MAX for chrono::DateTime values outside the i64-nanosecond range.
-        dt.0.timestamp_nanos_opt().unwrap_or(i64::MAX)
+        dt.0.timestamp_nanos_opt()
+            .expect("DateTime nanosecond timestamp overflows i64 (representable range ~1678–2261)")
     }
 }
 
