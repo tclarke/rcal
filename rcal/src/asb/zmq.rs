@@ -306,6 +306,18 @@ impl AbstractServiceBus for ZmqAsb {
         env!("RCAL_OMS_COMPILER_VERSION")
     }
 
+    fn get_system_label(&self) -> Option<&str> {
+        self.config.system.label.as_deref()
+    }
+
+    fn get_abstract_service_bus_connection_version(&self) -> &str {
+        env!("RCAL_ASB_CONNECTION_VERSION")
+    }
+
+    fn get_oms_api_version(&self) -> &str {
+        env!("RCAL_OMS_API_VERSION")
+    }
+
     fn connection_status(&self) -> &AsbStatus {
         &self.status
     }
@@ -922,6 +934,17 @@ mod tests {
         assert_eq!(a.service_identifier(), "Test Service");
         assert_eq!(a.asb_identifier(), "TestZmq");
         assert_eq!(a.connection_status().state, AsbConnectionState::Normal);
+    }
+
+    #[init_test_logger]
+    #[tokio::test]
+    async fn test_version_and_label_methods() {
+        let a = make_bus(logger).await;
+        // Version strings are non-empty (defaults to package/version).
+        assert!(!a.get_abstract_service_bus_connection_version().is_empty());
+        assert!(!a.get_oms_api_version().is_empty());
+        // Label comes from calconfig_sample.toml.
+        assert_eq!(a.get_system_label(), Some("OMS Test System"));
     }
 
     // ── Transport: inproc ─────────────────────────────────────────────────

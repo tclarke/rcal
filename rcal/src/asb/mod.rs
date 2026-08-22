@@ -324,6 +324,30 @@ pub trait AbstractServiceBus: Send + Sync {
     /// Version of the OMS Schema Compiler used to generate the CAL.
     fn oms_schema_compiler_version(&self) -> &str;
 
+    /// Human-readable label for the system this CAL instance belongs to.
+    ///
+    /// Sourced from `[system] label` in the CAL configuration file.
+    /// Returns `None` when the label is not configured.
+    ///
+    /// CERT CXX-005424 (`getMySystemLabel()`).
+    fn get_system_label(&self) -> Option<&str>;
+
+    /// Version string identifying this CAL implementation.
+    ///
+    /// Defaults to `<package>/<version>` at build time; override by setting
+    /// the `RCAL_ASB_CONNECTION_VERSION` environment variable during the build.
+    ///
+    /// CERT CXX-011176 (`getAbstractServiceBusConnectionVersion()`).
+    fn get_abstract_service_bus_connection_version(&self) -> &str;
+
+    /// Version string identifying the OMS API against which this CAL was built.
+    ///
+    /// Defaults to `<package>/<version>` at build time; override by setting
+    /// the `RCAL_OMS_API_VERSION` environment variable during the build.
+    ///
+    /// CERT CXX-012694 (`getOMSApiVersion()`).
+    fn get_oms_api_version(&self) -> &str;
+
     // ── Connection Status — Polling ───────────────────────────────────────
 
     /// Returns the current ASB connection status (polling interface, §5.9).
