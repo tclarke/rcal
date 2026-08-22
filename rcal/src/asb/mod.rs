@@ -288,6 +288,36 @@ pub trait AbstractServiceBus: Send + Sync {
     /// identifies the CAL instance (CERT CAL-005202).
     fn asb_identifier(&self) -> &str;
 
+    /// UUID of the system this CAL instance belongs to (CERT CXX-011168).
+    ///
+    /// Sourced from `[system] uuid` in the CAL configuration file.
+    /// Returns the nil UUID when not configured.
+    fn get_system_uuid(&self) -> UUID;
+
+    /// UUID of the service this CAL instance represents (CERT CXX-011169).
+    ///
+    /// Sourced from `[service.<id>] uuid` in the CAL configuration file.
+    /// Returns `None` when the service UUID is not configured.
+    fn get_service_uuid(&self) -> Option<UUID>;
+
+    /// UUID of the subsystem this service belongs to (CERT CXX-011170).
+    ///
+    /// Sourced from `[service.<id>] subsystem_uuid` in the CAL configuration file.
+    /// Returns `None` when not configured.
+    fn get_subsystem_uuid(&self) -> Option<UUID>;
+
+    /// UUID of the named component (CERT CXX-011171).
+    ///
+    /// Looks up `name` in the `[[service.<id>.components]]` list in the CAL
+    /// configuration file.  Returns `None` when the component is not found.
+    fn get_component_uuid(&self, name: &str) -> Option<UUID>;
+
+    /// UUID of the named capability (CERT CXX-011172).
+    ///
+    /// Looks up `name` in the `[[service.<id>.capabilities]]` list in the CAL
+    /// configuration file.  Returns `None` when the capability is not found.
+    fn get_capability_uuid(&self, name: &str) -> Option<UUID>;
+
     /// Version of the OMS Schema Definition used to generate the CAL.
     fn oms_schema_version(&self) -> &str;
 

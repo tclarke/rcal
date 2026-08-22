@@ -184,6 +184,15 @@ pub struct Transport {
     pub format: SerializationFormat,
 }
 
+/// A name-to-UUID mapping used for components and capabilities (CAL-005203).
+#[derive(Deserialize, Serialize, Default, Debug, Clone)]
+pub struct NamedUuid {
+    /// Logical name for the component or capability.
+    pub name: String,
+    /// UUID assigned to this component or capability.
+    pub uuid: UUID,
+}
+
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
 pub struct Service {
@@ -192,10 +201,34 @@ pub struct Service {
     pub topic: Vec<Topic>,
     /// Optional service UUID used to populate the ServiceID field in message headers.
     pub uuid: Option<UUID>,
+    /// Optional subsystem UUID this service belongs to (CAL-005203, CERT CXX-011170).
+    pub subsystem_uuid: Option<UUID>,
+    /// Component UUIDs accessible via this service (CAL-005203, CERT CXX-011171).
+    pub components: Vec<NamedUuid>,
+    /// Capability UUIDs accessible via this service (CAL-005203, CERT CXX-011172).
+    pub capabilities: Vec<NamedUuid>,
     /// Duration string for periodic status message interval (e.g. "1s", "500ms").
     pub status_delay: Option<String>,
     /// When true, the service registers a ServiceStatusDataRequest reader and responds automatically.
     pub service_status_data_request_enable: bool,
+}
+
+impl Service {
+    /// Returns the UUID of the named component, or `None` if not configured.
+    pub fn get_component_uuid(&self, name: &str) -> Option<UUID> {
+        self.components
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| c.uuid)
+    }
+
+    /// Returns the UUID of the named capability, or `None` if not configured.
+    pub fn get_capability_uuid(&self, name: &str) -> Option<UUID> {
+        self.capabilities
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| c.uuid)
+    }
 }
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
