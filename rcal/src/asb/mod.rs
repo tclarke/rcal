@@ -29,7 +29,9 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[cfg(feature = "zmq")]
 pub mod zmq;
+#[cfg(feature = "zmq")]
 use zmq::{ZMQ_ASB_ID, ZmqAsb};
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -727,6 +729,7 @@ pub async fn get_asb(
 
     // Construct the implementation without holding the factory lock.
     let instance: AsbInstance = match transport.type_.as_str() {
+        #[cfg(feature = "zmq")]
         ZMQ_ASB_ID => Arc::new(Mutex::new(
             ZmqAsb::new(
                 key.service_identifier.clone(),
@@ -811,6 +814,7 @@ mod tests {
 
     static NEXT_PORT: AtomicU16 = AtomicU16::new(55700);
 
+    #[cfg(feature = "zmq")]
     #[init_test_logger]
     #[tokio::test]
     async fn test_asb_factory_same_key_returns_same_instance() {
