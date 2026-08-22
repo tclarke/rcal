@@ -444,22 +444,23 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
 
     fn close(self: Box<Self>) -> CalResult<()> {
         trace!(self.logger, "ZmqWriter::close()"; "topic" => &self.topic);
-        if let Some(buf) = &self.writer_buf {
+        let result = if let Some(buf) = &self.writer_buf {
             let remaining = buf.lock().unwrap().len();
             if remaining > 0 {
-                if let Some(task) = self.writer_task {
-                    task.abort();
-                }
-                return Err(CalError::new(
+                Err(CalError::new(
                     CalErrorKind::AsbFailed,
                     format!("close: {remaining} buffered messages dropped"),
-                ));
+                ))
+            } else {
+                Ok(())
             }
-        }
+        } else {
+            Ok(())
+        };
         if let Some(task) = self.writer_task {
             task.abort();
         }
-        Ok(())
+        result
     }
 }
 
@@ -834,10 +835,8 @@ mod tests {
     };
     use std::time::Duration;
 
-    static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(55600);
-
     fn next_port() -> u16 {
-        NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        crate::asb::NEXT_TEST_PORT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
     async fn make_bus(logger: Logger) -> ZmqAsb {

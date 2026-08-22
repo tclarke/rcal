@@ -14,7 +14,7 @@ level = "info"
 [[transport]]
 id = "main-bus"
 type = "zmq"
-uri = "tcp://127.0.0.1:55500"
+uri = "tcp://127.0.0.1:2100"
 format = "pretty_xml"
 
 [[service]]

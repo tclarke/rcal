@@ -152,7 +152,11 @@ impl<'de> serde::Deserialize<'de> for DateTime {
 /// `xs:time` — nanoseconds since 00:00:00.000000000Z of the current day.
 ///
 /// **CERT CAL-016029**: represented as a signed 64-bit integer.
-/// Values are always in the range `0 ..= 86_400_000_000_000` (one day in ns).
+///
+/// Valid range: `0 ..= 86_400_000_000_000` (one day in nanoseconds).
+/// This invariant is documented only — the type alias does not enforce it.
+/// Callers constructing a `Time` value are responsible for ensuring it falls
+/// within the valid range.
 pub type Time = i64;
 
 // ── String types (OMSC-SPC-008 Table 9.1-2) ─────────────────────────────────

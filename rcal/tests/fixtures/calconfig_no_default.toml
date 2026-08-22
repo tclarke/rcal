@@ -6,7 +6,7 @@ uuid = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b"
 [[transport]]
 id = "TestZmq"
 type = "zmq"
-uri = "tcp://127.0.0.1:55544"
+uri = "tcp://127.0.0.1:2200"
 
 [[service]]
 id = "TestService1"

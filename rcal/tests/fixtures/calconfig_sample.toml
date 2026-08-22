@@ -7,7 +7,7 @@ default_transport = "TestZmq"
 [[transport]]
 id = "TestZmq"
 type = "zmq"
-uri = "tcp://127.0.0.1:55544"
+uri = "tcp://127.0.0.1:2200"
 
 [[service]]
 id = "TestService1"

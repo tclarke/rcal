@@ -439,6 +439,14 @@ pub trait AbstractWriter<M: CalMessage>: Send + Sync {
 /// The topic connection and message buffering are established at creation
 /// time, before this call returns (CERT CAL-005394, CAL-016044).
 ///
+/// # Connection timing (stream-based transports)
+///
+/// For transports that use an asynchronous TCP handshake (e.g. ZeroMQ
+/// RADIO/DISH over TCP), the underlying socket connects in the background.
+/// Messages published in the brief window between `create_reader` returning
+/// and the handshake completing may be missed. Callers requiring reliable
+/// first-message delivery should insert a short delay after creation.
+///
 /// # Callback vs polling — mutually exclusive (CAL-016050)
 ///
 /// **Callback mode**: register one or more [`MessageListener`]s via
@@ -678,7 +686,8 @@ type AsbInstance = Arc<Mutex<dyn AbstractServiceBus>>;
 type AsbFactoryMap = HashMap<AsbKey, AsbInstance>;
 
 lazy_static! {
-    static ref ASB_FACTORY: Mutex<AsbFactoryMap> = Mutex::new(AsbFactoryMap::new());
+    static ref ASB_FACTORY: tokio::sync::Mutex<AsbFactoryMap> =
+        tokio::sync::Mutex::new(AsbFactoryMap::new());
 }
 
 /// Returns the [`AbstractServiceBus`] instance for `(service_identifier,
@@ -700,34 +709,33 @@ pub async fn get_asb(
         asb_identifier: asb_identifier.into(),
     };
 
-    // Resolve transport config and check for an existing instance — both
-    // without holding the lock across an await point.
-    let transport = {
-        let map = ASB_FACTORY.lock().unwrap();
-        if let Some(existing) = map.get(&key) {
-            return Ok(Arc::clone(existing));
-        }
-        config
-            .get_transport(&key.asb_identifier)
-            .or_else(|| {
-                config
-                    .system
-                    .default_transport
-                    .as_ref()
-                    .and_then(|def| config.get_transport(def))
-            })
-            .ok_or_else(|| {
-                CalError::new(
-                    CalErrorKind::InitializationFailure,
-                    format!(
-                        "No transport configured for '{}' and no default_transport available.",
-                        key.asb_identifier
-                    ),
-                )
-            })?
-    }; // lock dropped here
+    // Hold the factory lock for the entire construction to prevent concurrent
+    // callers from constructing duplicate instances that bind the same socket.
+    let mut map = ASB_FACTORY.lock().await;
 
-    // Construct the implementation without holding the factory lock.
+    if let Some(existing) = map.get(&key) {
+        return Ok(Arc::clone(existing));
+    }
+
+    let transport = config
+        .get_transport(&key.asb_identifier)
+        .or_else(|| {
+            config
+                .system
+                .default_transport
+                .as_ref()
+                .and_then(|def| config.get_transport(def))
+        })
+        .ok_or_else(|| {
+            CalError::new(
+                CalErrorKind::InitializationFailure,
+                format!(
+                    "No transport configured for '{}' and no default_transport available.",
+                    key.asb_identifier
+                ),
+            )
+        })?;
+
     let instance: AsbInstance = match transport.type_.as_str() {
         #[cfg(feature = "zmq")]
         ZMQ_ASB_ID => Arc::new(Mutex::new(
@@ -748,10 +756,8 @@ pub async fn get_asb(
         }
     };
 
-    // Re-acquire to insert; a concurrent call may have won the race — in that
-    // case return the existing instance (CAL-005202: one instance per key).
-    let mut map = ASB_FACTORY.lock().unwrap();
-    Ok(Arc::clone(map.entry(key).or_insert(instance)))
+    map.insert(key, Arc::clone(&instance));
+    Ok(instance)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -780,6 +786,12 @@ macro_rules! update_message_header {
 // ════════════════════════════════════════════════════════════════════════════
 // Unit tests
 // ════════════════════════════════════════════════════════════════════════════
+
+/// Shared port counter for all ASB tests — prevents overlap between test
+/// modules running in parallel within the same binary.
+#[cfg(test)]
+pub(crate) static NEXT_TEST_PORT: std::sync::atomic::AtomicU16 =
+    std::sync::atomic::AtomicU16::new(2000);
 
 #[cfg(test)]
 mod trait_object_safety {
@@ -810,16 +822,14 @@ mod tests {
     use super::*;
     use crate::calconfig::{get_test_config_path, parse_config_from_file};
     use rcal_macros::init_test_logger;
-    use std::sync::atomic::{AtomicU16, Ordering};
-
-    static NEXT_PORT: AtomicU16 = AtomicU16::new(55700);
+    use std::sync::atomic::Ordering;
 
     #[cfg(feature = "zmq")]
     #[init_test_logger]
     #[tokio::test]
     async fn test_asb_factory_same_key_returns_same_instance() {
-        let p1 = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
-        let p2 = NEXT_PORT.fetch_add(1, Ordering::SeqCst);
+        let p1 = super::NEXT_TEST_PORT.fetch_add(1, Ordering::SeqCst);
+        let p2 = super::NEXT_TEST_PORT.fetch_add(1, Ordering::SeqCst);
         let config = zmq::test_config_on_ports(&[p1, p2]);
 
         let a = get_asb("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
