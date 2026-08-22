@@ -25,7 +25,13 @@ pub mod types;
 /// Users of the library can see struct fields but cannot construct a message
 /// struct directly — only `AbstractServiceBus::create_message` may do so.
 pub mod sealed {
-    /// Opaque token that prevents direct construction of generated message structs.
+    /// Opaque token used in the sealed-trait pattern to prevent external
+    /// construction of generated message structs.
+    ///
+    /// The inner field is `pub(crate)` so the code-generator (inside this
+    /// crate) can emit `Token(())` in `cal_create()` implementations.
+    /// External crates see the field but cannot name the unit type to
+    /// construct it — only code within this crate can write `Token(())`.
     #[derive(Debug, Clone, Default)]
     pub struct Token(pub(crate) ());
 }
