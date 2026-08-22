@@ -791,7 +791,7 @@ macro_rules! update_message_header {
 /// modules running in parallel within the same binary.
 #[cfg(test)]
 pub(crate) static NEXT_TEST_PORT: std::sync::atomic::AtomicU16 =
-    std::sync::atomic::AtomicU16::new(55600);
+    std::sync::atomic::AtomicU16::new(2000);
 
 #[cfg(test)]
 mod trait_object_safety {
