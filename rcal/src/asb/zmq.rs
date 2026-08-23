@@ -270,6 +270,34 @@ impl AbstractServiceBus for ZmqAsb {
         &self.asb_id
     }
 
+    fn get_system_uuid(&self) -> crate::uci::base::UUID {
+        self.config.system.uuid
+    }
+
+    fn get_service_uuid(&self) -> Option<crate::uci::base::UUID> {
+        self.config
+            .get_service(&self.service_name)
+            .and_then(|s| s.uuid)
+    }
+
+    fn get_subsystem_uuid(&self) -> Option<crate::uci::base::UUID> {
+        self.config
+            .get_service(&self.service_name)
+            .and_then(|s| s.subsystem_uuid)
+    }
+
+    fn get_component_uuid(&self, name: &str) -> Option<crate::uci::base::UUID> {
+        self.config
+            .get_service(&self.service_name)
+            .and_then(|s| s.get_component_uuid(name))
+    }
+
+    fn get_capability_uuid(&self, name: &str) -> Option<crate::uci::base::UUID> {
+        self.config
+            .get_service(&self.service_name)
+            .and_then(|s| s.get_capability_uuid(name))
+    }
+
     fn oms_schema_version(&self) -> &str {
         env!("RCAL_SCHEMA_VERSION")
     }
@@ -868,6 +896,19 @@ mod tests {
     }
 
     // ── Basic construction ────────────────────────────────────────────────
+
+    #[init_test_logger]
+    #[tokio::test]
+    async fn test_uuid_identity_methods() {
+        let a = make_bus(logger).await;
+        // System UUID is derived from the port in test_config_on_ports.
+        assert!(!a.get_system_uuid().is_nil());
+        // "Test Service" has no [[service]] entry in the test config → all None.
+        assert_eq!(a.get_service_uuid(), None);
+        assert_eq!(a.get_subsystem_uuid(), None);
+        assert_eq!(a.get_component_uuid("anything"), None);
+        assert_eq!(a.get_capability_uuid("anything"), None);
+    }
 
     #[init_test_logger]
     #[tokio::test]
