@@ -417,16 +417,25 @@ impl slog::Value for UUID {
 /// `T::default()` rather than requiring the caller to supply a value
 /// (CERT CXX-011201).
 ///
+/// `MIN` and `MAX` encode the schema-defined cardinality bounds as
+/// compile-time constants so that [`get_minimum_occurs`] and
+/// [`get_maximum_occurs`] return the actual per-field values
+/// (CERT CXX-005224, CERT CXX-005233).  Defaults (`MIN=0`,
+/// `MAX=usize::MAX`) represent an unconstrained list.
+///
 /// # CERT coverage
 /// CXX-005168, CXX-005172, CXX-005174, CXX-005179, CXX-005181,
 /// CXX-005184, CXX-005187, CXX-005195, CXX-005216, CXX-005224,
 /// CXX-005233, CXX-011183, CXX-011184, CXX-011186, CXX-011187,
 /// CXX-011189, CXX-011190, CXX-011191, CXX-011201
+///
+/// [`get_minimum_occurs`]: BoundedList::get_minimum_occurs
+/// [`get_maximum_occurs`]: BoundedList::get_maximum_occurs
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-pub struct BoundedList<T>(Vec<T>);
+pub struct BoundedList<T, const MIN: usize = 0, const MAX: usize = { usize::MAX }>(Vec<T>);
 
-impl<T> BoundedList<T> {
+impl<T, const MIN: usize, const MAX: usize> BoundedList<T, MIN, MAX> {
     /// Sentinel for an unbounded upper limit (CERT CXX-005174).
     pub const UNBOUNDED_BOUND: usize = usize::MAX;
 
@@ -443,20 +452,34 @@ impl<T> BoundedList<T> {
         self.0.is_empty()
     }
 
-    /// Returns 0 — the schema minimum is enforced by `is_valid_at`, not stored here
-    /// (CERT CXX-005233).
+    /// Returns the schema-defined minimum number of elements (CERT CXX-005233).
     pub fn get_minimum_occurs(&self) -> usize {
-        0
+        MIN
     }
 
-    /// Returns [`UNBOUNDED_BOUND`][BoundedList::UNBOUNDED_BOUND] — the schema
-    /// maximum is enforced by `is_valid_at`, not stored here (CERT CXX-005224).
+    /// Returns the schema-defined maximum number of elements (CERT CXX-005224).
+    ///
+    /// [`UNBOUNDED_BOUND`][BoundedList::UNBOUNDED_BOUND] indicates no upper limit.
     pub fn get_maximum_occurs(&self) -> usize {
-        Self::UNBOUNDED_BOUND
+        MAX
+    }
+
+    /// Check that the list length satisfies `MIN..=MAX` (CERT CXX-005224, CXX-005233).
+    ///
+    /// `path` is a dot-separated field path included in the error message.
+    pub fn is_valid_at(&self, path: &str) -> Result<(), crate::uci::ValidationError> {
+        let n = self.0.len();
+        if !(MIN..=MAX).contains(&n) {
+            return Err(crate::uci::ValidationError {
+                path: path.to_string(),
+                reason: format!("incorrect number of elements: got {n}, expected {MIN}..={MAX}"),
+            });
+        }
+        Ok(())
     }
 }
 
-impl<T: Default> BoundedList<T> {
+impl<T: Default, const MIN: usize, const MAX: usize> BoundedList<T, MIN, MAX> {
     /// Resize the list to `new_len`.
     ///
     /// If `new_len` is greater than the current length, new elements are
@@ -468,57 +491,57 @@ impl<T: Default> BoundedList<T> {
     }
 }
 
-impl<T> std::ops::Deref for BoundedList<T> {
+impl<T, const MIN: usize, const MAX: usize> std::ops::Deref for BoundedList<T, MIN, MAX> {
     type Target = Vec<T>;
     fn deref(&self) -> &Vec<T> {
         &self.0
     }
 }
 
-impl<T> std::ops::DerefMut for BoundedList<T> {
+impl<T, const MIN: usize, const MAX: usize> std::ops::DerefMut for BoundedList<T, MIN, MAX> {
     // ponytail: exposes Vec::push/extend unchecked; bound enforcement is in is_valid_at(), not here
     fn deref_mut(&mut self) -> &mut Vec<T> {
         &mut self.0
     }
 }
 
-impl<T: Default> Default for BoundedList<T> {
+impl<T: Default, const MIN: usize, const MAX: usize> Default for BoundedList<T, MIN, MAX> {
     fn default() -> Self {
         BoundedList(Vec::new())
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for BoundedList<T> {
+impl<T: fmt::Debug, const MIN: usize, const MAX: usize> fmt::Debug for BoundedList<T, MIN, MAX> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.0, f)
     }
 }
 
-impl<T: Clone> Clone for BoundedList<T> {
+impl<T: Clone, const MIN: usize, const MAX: usize> Clone for BoundedList<T, MIN, MAX> {
     fn clone(&self) -> Self {
         BoundedList(self.0.clone())
     }
 }
 
-impl<T: PartialEq> PartialEq for BoundedList<T> {
+impl<T: PartialEq, const MIN: usize, const MAX: usize> PartialEq for BoundedList<T, MIN, MAX> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 
-impl<T> From<Vec<T>> for BoundedList<T> {
+impl<T, const MIN: usize, const MAX: usize> From<Vec<T>> for BoundedList<T, MIN, MAX> {
     fn from(v: Vec<T>) -> Self {
         BoundedList(v)
     }
 }
 
-impl<T> From<BoundedList<T>> for Vec<T> {
-    fn from(bl: BoundedList<T>) -> Self {
+impl<T, const MIN: usize, const MAX: usize> From<BoundedList<T, MIN, MAX>> for Vec<T> {
+    fn from(bl: BoundedList<T, MIN, MAX>) -> Self {
         bl.0
     }
 }
 
-impl<T> IntoIterator for BoundedList<T> {
+impl<T, const MIN: usize, const MAX: usize> IntoIterator for BoundedList<T, MIN, MAX> {
     type Item = T;
     type IntoIter = std::vec::IntoIter<T>;
     fn into_iter(self) -> Self::IntoIter {
@@ -526,7 +549,7 @@ impl<T> IntoIterator for BoundedList<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a BoundedList<T> {
+impl<'a, T, const MIN: usize, const MAX: usize> IntoIterator for &'a BoundedList<T, MIN, MAX> {
     type Item = &'a T;
     type IntoIter = std::slice::Iter<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
@@ -534,7 +557,7 @@ impl<'a, T> IntoIterator for &'a BoundedList<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a mut BoundedList<T> {
+impl<'a, T, const MIN: usize, const MAX: usize> IntoIterator for &'a mut BoundedList<T, MIN, MAX> {
     type Item = &'a mut T;
     type IntoIter = std::slice::IterMut<'a, T>;
     fn into_iter(self) -> Self::IntoIter {

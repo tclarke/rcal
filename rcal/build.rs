@@ -1115,7 +1115,16 @@ fn field_rust_type(
         xsd_to_rust_concrete(type_ns.as_deref(), &type_local)
     };
     if f.is_vec() {
-        format!("crate::uci::base::BoundedList<{base}>")
+        let min = f.min_occurs as usize;
+        let max = match f.max_occurs {
+            MaxOccurs::Unbounded => usize::MAX,
+            MaxOccurs::Bounded(n) => n as usize,
+        };
+        if min == 0 && max == usize::MAX {
+            format!("crate::uci::base::BoundedList<{base}>")
+        } else {
+            format!("crate::uci::base::BoundedList<{base}, {min}, {max}>")
+        }
     } else if f.is_optional() {
         format!("Option<{base}>")
     } else {
@@ -1186,33 +1195,11 @@ fn gen_field_validation(
     if f.is_vec() {
         let mut out = String::new();
 
-        // Length check: skip only when min=0 AND unbounded (no constraint at all).
-        let needs_len_check = f.min_occurs > 0 || matches!(f.max_occurs, MaxOccurs::Bounded(_));
-        if needs_len_check {
-            let min = f.min_occurs;
-            // Use range-contains syntax to satisfy clippy::manual_range_contains.
-            let (cond, max_desc) = match (min > 0, &f.max_occurs) {
-                (true, MaxOccurs::Bounded(n)) => {
-                    (format!("!({min}..={n}).contains(&_n)"), n.to_string())
-                }
-                (true, MaxOccurs::Unbounded) => (format!("_n < {min}"), "unbounded".to_string()),
-                (false, MaxOccurs::Bounded(n)) => (format!("_n > {n}"), n.to_string()),
-                (false, MaxOccurs::Unbounded) => {
-                    unreachable!("needs_len_check requires min>0 or bounded max")
-                }
-            };
-            out.push_str(&format!(
-                "    {{\n\
-                 \x20       let _n = self.{field_name}.len();\n\
-                 \x20       if {cond} {{\n\
-                 \x20           return Err(crate::uci::ValidationError {{\n\
-                 \x20               path: format!(\"{{path}}.{xsd_name}\"),\n\
-                 \x20               reason: format!(\"incorrect number of elements: got {{_n}}, expected {min}..={max_desc}\"),\n\
-                 \x20           }});\n\
-                 \x20       }}\n\
-                 \x20   }}\n"
-            ));
-        }
+        // Delegate cardinality check to BoundedList::is_valid_at (CERT CXX-005224/005233).
+        // For unconstrained fields (MIN=0, MAX=usize::MAX) the method is a no-op at runtime.
+        out.push_str(&format!(
+            "    self.{field_name}.is_valid_at(&format!(\"{{path}}.{xsd_name}\"))?;\n"
+        ));
 
         // Recurse into Vec elements if they have their own is_valid().
         if is_validatable_type(&rust_type, enum_names, &type_local) {
@@ -1587,11 +1574,12 @@ fn gen_struct(
             dyn_type(&rust_type)
         };
         if f.is_vec() {
+            let full_type = field_rust_type(f, simple_map, resolver);
             trait_methods.push_str(&format!(
                 "    /// Returns the XSD element sequence `{elem}`.\n\
                  \x20   fn {field_name}(&self) -> &[{rust_type}];\n\
                  \x20   /// Returns a mutable reference to the XSD element sequence `{elem}`.\n\
-                 \x20   fn {field_name}_mut(&mut self) -> &mut crate::uci::base::BoundedList<{rust_type}>;\n",
+                 \x20   fn {field_name}_mut(&mut self) -> &mut {full_type};\n",
                 elem = f.name,
             ));
         } else if f.is_optional() {
@@ -1715,9 +1703,10 @@ fn gen_struct(
                 dyn_type(&rust_type)
             };
             if f.is_vec() {
+                let full_type = field_rust_type(f, simple_map, resolver);
                 format!(
                     "    fn {field_name}(&self) -> &[{rust_type}] {{ &self.{field_name} }}\n\
-                     fn {field_name}_mut(&mut self) -> &mut crate::uci::base::BoundedList<{rust_type}> {{ &mut self.{field_name} }}\n"
+                     fn {field_name}_mut(&mut self) -> &mut {full_type} {{ &mut self.{field_name} }}\n"
                 )
             } else if f.is_optional() {
                 if is_choice_field {
@@ -1763,9 +1752,10 @@ fn gen_struct(
                         dyn_type(&rust_type)
                     };
                     if f.is_vec() {
+                        let full_type = field_rust_type(f, simple_map, resolver);
                         format!(
                             "    fn {field_name}(&self) -> &[{rust_type}] {{ &self.{field_name} }}\n\
-                             fn {field_name}_mut(&mut self) -> &mut crate::uci::base::BoundedList<{rust_type}> {{ &mut self.{field_name} }}\n"
+                             fn {field_name}_mut(&mut self) -> &mut {full_type} {{ &mut self.{field_name} }}\n"
                         )
                     } else if f.is_optional() {
                         if is_choice_field {
