@@ -338,7 +338,7 @@ pub trait AbstractServiceBus: Send + Sync {
     /// the `RCAL_ASB_CONNECTION_VERSION` environment variable during the build.
     ///
     /// CERT CXX-011176 (`getAbstractServiceBusConnectionVersion()`).
-    fn get_abstract_service_bus_connection_version(&self) -> &str;
+    fn get_asb_connection_version(&self) -> &str;
 
     /// Version string identifying the OMS API against which this CAL was built.
     ///

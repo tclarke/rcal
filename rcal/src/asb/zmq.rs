@@ -310,7 +310,7 @@ impl AbstractServiceBus for ZmqAsb {
         self.config.system.label.as_deref()
     }
 
-    fn get_abstract_service_bus_connection_version(&self) -> &str {
+    fn get_asb_connection_version(&self) -> &str {
         env!("RCAL_ASB_CONNECTION_VERSION")
     }
 
@@ -941,7 +941,7 @@ mod tests {
     async fn test_version_and_label_methods() {
         let a = make_bus(logger).await;
         // Version strings are non-empty (defaults to package/version).
-        assert!(!a.get_abstract_service_bus_connection_version().is_empty());
+        assert!(!a.get_asb_connection_version().is_empty());
         assert!(!a.get_oms_api_version().is_empty());
         // Label comes from calconfig_sample.toml.
         assert_eq!(a.get_system_label(), Some("OMS Test System"));
