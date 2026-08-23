@@ -9,6 +9,8 @@ fn main() {
     println!("cargo::rerun-if-env-changed=RCAL_XSD_PATH");
     println!("cargo::rerun-if-env-changed=RCAL_SCHEMA_VERSION");
     println!("cargo::rerun-if-env-changed=RCAL_OMS_COMPILER_VERSION");
+    println!("cargo::rerun-if-env-changed=RCAL_ASB_CONNECTION_VERSION");
+    println!("cargo::rerun-if-env-changed=RCAL_OMS_API_VERSION");
     println!("cargo::rerun-if-env-changed=RCAL_CALCONFIG_PATH");
     println!("cargo::rerun-if-env-changed=RCAL_CALCONFIG_SERVICES");
 
@@ -20,6 +22,20 @@ fn main() {
         let compiler_version = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         println!("cargo::rustc-env=RCAL_OMS_COMPILER_VERSION={compiler_version}");
         eprintln!("OMS compiler version={compiler_version}");
+    }
+
+    if let Ok(asb_ver) = std::env::var("RCAL_ASB_CONNECTION_VERSION") {
+        println!("cargo::rustc-env=RCAL_ASB_CONNECTION_VERSION={asb_ver}");
+    } else {
+        let asb_ver = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        println!("cargo::rustc-env=RCAL_ASB_CONNECTION_VERSION={asb_ver}");
+    }
+
+    if let Ok(api_ver) = std::env::var("RCAL_OMS_API_VERSION") {
+        println!("cargo::rustc-env=RCAL_OMS_API_VERSION={api_ver}");
+    } else {
+        let api_ver = format!("{}/{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        println!("cargo::rustc-env=RCAL_OMS_API_VERSION={api_ver}");
     }
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
