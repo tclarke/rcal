@@ -24,6 +24,7 @@
 //! | `xs:time`          | `i64` (ns since 00:00Z) | **CERT CAL-016029**        |
 //! | `xs:string`        | `String`                | OMSC-SPC-008 Table 9.1-2   |
 //! | `xs:hexBinary`     | `Vec<u8>`               | OMSC-SPC-008 Table 9.1-3   |
+//! | `xs:base64Binary`  | `Vec<u8>`               | OMSC-SPC-008 Table 9.1-3   |
 //!
 //! ## `String` vs `&str`
 //!
@@ -176,6 +177,13 @@ pub type StringAccessor = String;
 /// `xs:hexBinary` — a binary blob represented as an owned byte vector.
 pub type HexBinary = Vec<u8>;
 
+/// `xs:base64Binary` — a binary blob represented as an owned byte vector.
+///
+/// In-memory representation is identical to [`HexBinary`]; the distinction
+/// matters only during serialisation (base64 encoding vs hex encoding).
+/// OMSC-SPC-008 Table 9.1-3.
+pub type Base64Binary = Vec<u8>;
+
 // ════════════════════════════════════════════════════════════════════════════
 // Unit tests
 // ════════════════════════════════════════════════════════════════════════════
@@ -230,5 +238,14 @@ mod tests {
         fn assert_send<T: Send>(_: T) {}
         let s: XsString = String::from("hello");
         assert_send(s);
+    }
+
+    #[test]
+    fn binary_types_are_vec_u8() {
+        // OMSC-SPC-008 Table 9.1-3: both binary types map to Vec<u8>
+        let hex: HexBinary = vec![0xDE, 0xAD];
+        let b64: Base64Binary = vec![0xBE, 0xEF];
+        assert_eq!(hex.len(), 2);
+        assert_eq!(b64.len(), 2);
     }
 }
