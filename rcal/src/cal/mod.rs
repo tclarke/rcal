@@ -23,6 +23,7 @@ use std::time::Duration;
 
 #[cfg(feature = "zmq")]
 use crate::asb::zmq::{ZMQ_ASB_ID, ZmqAsb};
+use crate::asb::file::{FILE_ASB_ID, FileAsb};
 
 // ════════════════════════════════════════════════════════════════════════════
 // MessageHeaderDefaults
@@ -409,6 +410,16 @@ pub async fn get_cal(
         #[cfg(feature = "zmq")]
         ZMQ_ASB_ID => Arc::new(Mutex::new(
             ZmqAsb::new(
+                key.service_identifier.clone(),
+                key.asb_identifier.clone(),
+                logger,
+                Arc::clone(&config),
+                transport,
+            )
+            .await?,
+        )),
+        FILE_ASB_ID => Arc::new(Mutex::new(
+            FileAsb::new(
                 key.service_identifier.clone(),
                 key.asb_identifier.clone(),
                 logger,

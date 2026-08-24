@@ -77,6 +77,7 @@ required-features = ["zmq"]
 
 [dev-dependencies]
 serde_json = "1.0.151"
+tempfile = "3.27.0"
 
 [workspace.metadata.release]
 allow-branch = [ "main" ]
