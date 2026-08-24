@@ -688,7 +688,7 @@ mod tests {
     #[init_test_logger]
     #[tokio::test]
     async fn test_uuid_identity_methods() {
-        let a = make_bus(logger).await;
+        let (a, _f) = make_bus(logger).await;
         // System UUID is derived from the port in test_config_on_ports.
         assert!(!a.get_system_uuid().is_nil());
         // "Test Service" has no [[service]] entry in the test config → all None.
@@ -899,7 +899,7 @@ mod tests {
 
         tempfile.rewind().expect("Unable to rewind file");
         let mut buf = Vec::new();
-        tempfile.read_to_end(&mut buf);
+        tempfile.read_to_end(&mut buf).unwrap();
         let xml = std::str::from_utf8(&buf).unwrap();
         assert!(
             xml.contains("hello"),
