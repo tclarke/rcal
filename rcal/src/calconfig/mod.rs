@@ -2,6 +2,7 @@
 use crate::uci::base::UUID;
 use crate::uci::{CalError, CalImplementationErrorKind, CalResult};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 
@@ -13,6 +14,12 @@ pub struct CalConfig {
     pub uuidfactory: UUIDFactory,
     pub transport: Vec<Transport>,
     pub service: Vec<Service>,
+    /// Named externalizer configurations.
+    ///
+    /// Use the short built-in names `"xml"` or (with feature `compression`) `"compression"`
+    /// without a section for defaults.  Add a `[externalizer.<name>]` section to override
+    /// options or to define a named chain.
+    pub externalizer: HashMap<String, ExternalizerConfig>,
 }
 
 impl CalConfig {
@@ -162,7 +169,10 @@ pub struct UUIDFactory {
     pub node: Option<mac_address::MacAddress>,
 }
 
-/// Serialization format used for CAL Messages on a transport.
+/// Serialization format used internally by [`XmlExternalizer`][crate::externalizer::XmlExternalizer].
+///
+/// This type controls XML whitespace only.  Transport-level externalizer selection
+/// is configured via [`Transport::externalizer`] and [`CalConfig::externalizer`].
 #[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SerializationFormat {
@@ -173,6 +183,69 @@ pub enum SerializationFormat {
     PrettyXml,
 }
 
+/// Configuration for a named externalizer.
+///
+/// Reference the name in [`Transport::externalizer`].
+/// Built-in names (`"xml"`, and with feature `compression`: `"compression"`) work
+/// without a section entry; add a section only to override defaults or build a chain.
+///
+/// # Examples (TOML)
+/// ```toml
+/// [externalizer.pretty]
+/// type = "xml"
+/// pretty = true
+///
+/// [externalizer.gzip_xml]
+/// type = "compression"
+/// inner = "xml"          # which externalizer to wrap (default: "xml")
+/// compression_type = "gzip"   # gzip | deflate | zlib  (default: "gzip")
+/// [externalizer.gzip_xml.options]
+/// level = 6              # 0–9, default per algorithm
+/// ```
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ExternalizerConfig {
+    /// XML serialization.
+    Xml {
+        /// Use indented, human-readable XML (default: `false`).
+        #[serde(default)]
+        pretty: bool,
+    },
+    /// Byte-level compression chain wrapping an inner externalizer.
+    ///
+    /// Requires the `compression` feature.
+    #[cfg(feature = "compression")]
+    Compression {
+        /// Name of the inner externalizer to wrap (default: `"xml"`).
+        #[serde(default = "default_inner_externalizer")]
+        inner: String,
+        /// Compression algorithm (default: `"gzip"`).
+        #[serde(default)]
+        compression_type: CompressionType,
+        /// Algorithm-specific options (e.g. `level = 6`).
+        #[serde(default)]
+        options: HashMap<String, toml::Value>,
+    },
+}
+
+#[cfg(feature = "compression")]
+fn default_inner_externalizer() -> String {
+    "xml".to_string()
+}
+
+/// Compression algorithm for [`ExternalizerConfig::Compression`].
+///
+/// All variants are enabled by `flate2`'s default features.
+#[cfg(feature = "compression")]
+#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CompressionType {
+    #[default]
+    Gzip,
+    Deflate,
+    Zlib,
+}
+
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
 pub struct Transport {
@@ -180,8 +253,11 @@ pub struct Transport {
     #[serde(rename = "type")]
     pub type_: String,
     pub uri: String,
-    /// Serialization format for CAL Messages on this transport (default: `xml`).
-    pub format: SerializationFormat,
+    /// Name of the externalizer to use for this transport (default: `"xml"`).
+    ///
+    /// Use a built-in name (`"xml"`, `"compression"`) or reference a
+    /// `[externalizer.<name>]` section in `CalConfig`.
+    pub externalizer: Option<String>,
 }
 
 /// A name-to-UUID mapping used for components and capabilities (CAL-005203).

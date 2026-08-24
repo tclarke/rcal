@@ -15,7 +15,11 @@ level = "info"
 id = "main-bus"
 type = "zmq"
 uri = "tcp://127.0.0.1:2100"
-format = "pretty_xml"
+externalizer = "pretty_xml"
+
+[externalizer.pretty_xml]
+type = "xml"
+pretty = true
 
 [[service]]
 id = "basic-example"

@@ -16,8 +16,8 @@ use crate::cal::{
     AbstractCal, AbstractCalExt, AbstractReader, AbstractWriter, MessageHeaderDefaults,
     MessageListener, TopicQos,
 };
-use crate::calconfig::{CalConfig, SerializationFormat, Transport};
-use crate::externalizer::{Externalizer, XmlExternalizer};
+use crate::calconfig::{CalConfig, Transport};
+use crate::externalizer::{Externalizer, build_externalizer};
 use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
 use serde::Deserialize as _;
 use serde::de::IntoDeserializer;
@@ -104,8 +104,8 @@ pub struct ZmqAsb {
     /// Populate with [`add_receive_peer`] for multi-process topologies.
     peer_uris: Vec<String>,
 
-    /// Serialization format for messages on this transport.
-    serialization_format: SerializationFormat,
+    /// Externalizer name for messages on this transport (references `CalConfig::externalizer`).
+    externalizer_name: String,
 
     /// Registered connection-status listeners.
     listeners: Vec<Arc<dyn AsbStatusListener>>,
@@ -180,7 +180,10 @@ impl ZmqAsb {
             config,
             transport_uri,
             peer_uris: Vec::new(),
-            serialization_format: tconfig.format.clone(),
+            externalizer_name: tconfig
+                .externalizer
+                .clone()
+                .unwrap_or_else(|| "xml".to_string()),
             listeners: Vec::new(),
             shutdown_tx,
             #[cfg(test)]
@@ -435,9 +438,9 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
                 "message failed schema validation",
             )
         })?;
-        let xml = self.externalizer.write_to_string(message)?;
+        let payload = self.externalizer.write_to_bytes(message)?;
         // RADIO/DISH: part[0] = group (topic for DISH filtering), part[1] = payload
-        let msg = Message::multipart([self.topic.clone(), xml]);
+        let msg = Message::multipart([self.topic.as_bytes().to_vec(), payload]);
         match &self.writer_buf {
             Some(buf) => {
                 let max = self.writer_max.unwrap();
@@ -660,10 +663,11 @@ where
             (Some(tx), None, None, None)
         };
 
-        let externalizer: Arc<dyn Externalizer<M>> = Arc::new(XmlExternalizer::new(
-            self.serialization_format.clone(),
+        let externalizer: Arc<dyn Externalizer<M>> = Arc::from(build_externalizer(
+            &self.externalizer_name,
+            &self.config,
             cal_topic.to_string(),
-        ));
+        )?);
         trace!(self.logger, "ZmqAsb::create_writer()"; "topic" => cal_topic);
         Ok(Box::new(ZmqWriter {
             topic: cal_topic.to_string(),
@@ -715,10 +719,11 @@ where
         let poll_state_task = Arc::clone(&poll_state);
         let task_alive_task = Arc::clone(&task_alive);
         let topic_str = cal_topic.to_string();
-        let externalizer: Arc<dyn Externalizer<M>> = Arc::new(XmlExternalizer::new(
-            self.serialization_format.clone(),
+        let externalizer: Arc<dyn Externalizer<M>> = Arc::from(build_externalizer(
+            &self.externalizer_name,
+            &self.config,
             cal_topic.to_string(),
-        ));
+        )?);
         let ext_task = Arc::clone(&externalizer);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let reader_logger = self.logger.new(slog::o!("topic" => cal_topic.to_string()));
@@ -1347,7 +1352,7 @@ mod tests {
         let ns = UUID::parse_str(BASE_UUID).unwrap();
         let sys_uuid = UUID::generate_v3(&ns, port.to_string().as_bytes());
         let toml = format!(
-            "[system]\nid = \"TestSystem\"\nlabel = \"OMS Test System\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n\n[[transport]]\nid = \"TestZmq\"\ntype = \"zmq\"\nuri = \"tcp://127.0.0.1:{port}\"\nformat = \"pretty_xml\"\n"
+            "[system]\nid = \"TestSystem\"\nlabel = \"OMS Test System\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n\n[[transport]]\nid = \"TestZmq\"\ntype = \"zmq\"\nuri = \"tcp://127.0.0.1:{port}\"\nexternalizer = \"pretty\"\n\n[externalizer.pretty]\ntype = \"xml\"\npretty = true\n"
         );
         let config = Arc::new(calconfig::parse_config(&toml).unwrap());
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();

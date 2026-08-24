@@ -34,6 +34,15 @@ async fn main() {
         .unwrap_or_else(|| panic!("transport '{transport_id}' not in config"))
         .clone();
 
+    // Determine pretty-print flag before config is moved into ZmqAsb.
+    let pretty = {
+        let ext_name = tconfig.externalizer.as_deref().unwrap_or("xml");
+        matches!(
+            config.externalizer.get(ext_name),
+            Some(rcal::calconfig::ExternalizerConfig::Xml { pretty: true })
+        )
+    };
+
     let mut bus = ZmqAsb::new(
         "SystemStatusExample",
         transport_id,
@@ -61,7 +70,6 @@ async fn main() {
 
     // Spawn a blocking thread: read → validate → print XML.
     // Loop exits when the ASB closes (Err return from read).
-    let pretty = tconfig.format == rcal::uci::base::SerializationFormat::PrettyXml;
     let reader_handle = tokio::task::spawn_blocking(move || {
         let expected_type = SystemStatus_::message_type_name();
         loop {

@@ -5,7 +5,9 @@
 
 #![warn(missing_docs)]
 
-use crate::calconfig::SerializationFormat;
+#[cfg(feature = "compression")]
+use crate::calconfig::CompressionType;
+use crate::calconfig::{CalConfig, ExternalizerConfig, SerializationFormat};
 use crate::uci::{CalError, CalErrorKind, CalMessage, CalResult};
 use std::io::{Read, Write};
 
@@ -247,13 +249,310 @@ where
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// ChainExternalizer<M>
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Byte transform function used by [`ChainExternalizer`].
+type ByteTransform = Box<dyn Fn(&[u8]) -> CalResult<Vec<u8>> + Send + Sync>;
+
+/// Byte-level pipeline wrapper around an [`Externalizer`].
+///
+/// Applies `encode` to serialized bytes before writing, and `decode` to raw
+/// bytes before deserializing. Use this to add compression, encryption, or any
+/// other byte transform without changing the inner externalizer.
+///
+/// **Implicit chaining** is also available: pass a wrapping `impl Write`
+/// (e.g. a gzip encoder) to [`write_to_writer`][Externalizer::write_to_writer]
+/// and a wrapping `impl Read` to [`read_from_reader`][Externalizer::read_from_reader]
+/// directly — no `ChainExternalizer` needed.
+///
+/// # Example (conceptual)
+/// ```text
+/// let chain = ChainExternalizer::new(
+///     Box::new(XmlExternalizer::new(SerializationFormat::Xml, "Msg")),
+///     |bytes| gzip_compress(bytes),
+///     |bytes| gzip_decompress(bytes),
+/// );
+/// // write path: XML → gzip bytes
+/// // read path:  gzip bytes → XML → M
+/// ```
+pub struct ChainExternalizer<M: CalMessage> {
+    inner: Box<dyn Externalizer<M>>,
+    encode: ByteTransform,
+    decode: ByteTransform,
+}
+
+impl<M: CalMessage> ChainExternalizer<M> {
+    /// Construct a chained externalizer.
+    ///
+    /// `encode` transforms bytes *after* serialization (e.g. compress/encrypt).
+    /// `decode` transforms bytes *before* deserialization (e.g. decompress/decrypt).
+    pub fn new(
+        inner: Box<dyn Externalizer<M>>,
+        encode: impl Fn(&[u8]) -> CalResult<Vec<u8>> + Send + Sync + 'static,
+        decode: impl Fn(&[u8]) -> CalResult<Vec<u8>> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            inner,
+            encode: Box::new(encode),
+            decode: Box::new(decode),
+        }
+    }
+}
+
+impl<M: CalMessage> Externalizer<M> for ChainExternalizer<M> {
+    fn read_from_reader(&self, reader: &mut dyn Read) -> CalResult<M> {
+        let mut buf = Vec::new();
+        reader
+            .read_to_end(&mut buf)
+            .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
+        self.read_from_bytes(&buf)
+    }
+
+    fn read_from_str(&self, s: &str) -> CalResult<M> {
+        self.read_from_bytes(s.as_bytes())
+    }
+
+    fn read_from_bytes(&self, bytes: &[u8]) -> CalResult<M> {
+        let decoded = (self.decode)(bytes)?;
+        self.inner.read_from_bytes(&decoded)
+    }
+
+    fn write_to_writer(&self, msg: &M, writer: &mut dyn Write) -> CalResult<()> {
+        let encoded = self.write_to_bytes(msg)?;
+        writer
+            .write_all(&encoded)
+            .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))
+    }
+
+    fn write_to_string(&self, msg: &M) -> CalResult<String> {
+        let bytes = self.write_to_bytes(msg)?;
+        String::from_utf8(bytes)
+            .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))
+    }
+
+    fn write_to_bytes(&self, msg: &M) -> CalResult<Vec<u8>> {
+        let raw = self.inner.write_to_bytes(msg)?;
+        (self.encode)(&raw)
+    }
+
+    fn get_cal_api_version(&self) -> &str {
+        self.inner.get_cal_api_version()
+    }
+
+    fn get_encoding(&self) -> &str {
+        self.inner.get_encoding()
+    }
+
+    fn get_schema_version(&self) -> &str {
+        self.inner.get_schema_version()
+    }
+
+    fn get_vendor_version(&self) -> &str {
+        self.inner.get_vendor_version()
+    }
+
+    fn get_vendor(&self) -> &str {
+        self.inner.get_vendor()
+    }
+
+    fn message_read_only(&self) -> bool {
+        self.inner.message_read_only()
+    }
+
+    fn message_write_only(&self) -> bool {
+        self.inner.message_write_only()
+    }
+
+    fn supports_object_read(&self) -> bool {
+        self.inner.supports_object_read()
+    }
+
+    fn supports_object_write(&self) -> bool {
+        self.inner.supports_object_write()
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CompressionExternalizer (feature = "compression")
+// ════════════════════════════════════════════════════════════════════════════
+
+/// A [`ChainExternalizer`] pre-configured with a compression codec.
+///
+/// Construct with [`new_gzip_externalizer`] or via [`build_externalizer`] with
+/// a `[externalizer.<name>]` section of `type = "compression"` in config.
+///
+/// Requires the `compression` feature.
+#[cfg(feature = "compression")]
+pub type CompressionExternalizer<M> = ChainExternalizer<M>;
+
+/// Encoding identifier for XML + gzip (used by [`XmlExternalizerLoader`]).
+#[cfg(feature = "compression")]
+pub const XML_GZIP_EXTERNALIZER_ENCODING: &str = "xml+gzip";
+
+#[cfg(feature = "compression")]
+fn compress(bytes: &[u8], level: flate2::Compression, ct: &CompressionType) -> CalResult<Vec<u8>> {
+    use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
+    macro_rules! enc {
+        ($T:ident) => {{
+            let mut e = $T::new(Vec::new(), level);
+            e.write_all(bytes)
+                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
+            e.finish()
+                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))
+        }};
+    }
+    match ct {
+        CompressionType::Gzip => enc!(GzEncoder),
+        CompressionType::Deflate => enc!(DeflateEncoder),
+        CompressionType::Zlib => enc!(ZlibEncoder),
+    }
+}
+
+#[cfg(feature = "compression")]
+fn decompress(bytes: &[u8], ct: &CompressionType) -> CalResult<Vec<u8>> {
+    use flate2::read::{DeflateDecoder, GzDecoder, ZlibDecoder};
+    macro_rules! dec {
+        ($T:ident) => {{
+            let mut d = $T::new(bytes);
+            let mut out = Vec::new();
+            d.read_to_end(&mut out)
+                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
+            Ok(out)
+        }};
+    }
+    match ct {
+        CompressionType::Gzip => dec!(GzDecoder),
+        CompressionType::Deflate => dec!(DeflateDecoder),
+        CompressionType::Zlib => dec!(ZlibDecoder),
+    }
+}
+
+#[cfg(feature = "compression")]
+fn level_from_options(
+    options: &std::collections::HashMap<String, toml::Value>,
+) -> flate2::Compression {
+    options
+        .get("level")
+        .and_then(|v| v.as_integer())
+        .map(|l| flate2::Compression::new(l.clamp(0, 9) as u32))
+        .unwrap_or_default()
+}
+
+#[cfg(feature = "compression")]
+fn make_codec(ct: CompressionType, level: flate2::Compression) -> (ByteTransform, ByteTransform) {
+    let ct2 = ct.clone();
+    let encoder: ByteTransform = Box::new(move |b| compress(b, level, &ct));
+    let decoder: ByteTransform = Box::new(move |b| decompress(b, &ct2));
+    (encoder, decoder)
+}
+
+/// Wrap `inner` in a gzip [`ChainExternalizer`] with default compression level.
+///
+/// For custom compression type or level, use [`build_externalizer`] with a
+/// `[externalizer.<name>]` config section.
+///
+/// Requires the `compression` feature.
+#[cfg(feature = "compression")]
+pub fn new_gzip_externalizer<M: CalMessage>(
+    inner: Box<dyn Externalizer<M>>,
+) -> CompressionExternalizer<M> {
+    let (enc, dec) = make_codec(CompressionType::Gzip, flate2::Compression::default());
+    ChainExternalizer::new(inner, enc, dec)
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// build_externalizer — config-driven factory
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Build an [`Externalizer`] by name from [`CalConfig`].
+///
+/// Lookup order:
+/// 1. If `name` appears in `config.externalizer`, use that section's settings.
+/// 2. Otherwise fall back to built-in defaults:
+///    - `"xml"` → [`XmlExternalizer`] (compact)
+///    - `"compression"` → gzip-wrapped `"xml"` (requires `compression` feature)
+///
+/// The `root` argument sets the XML root element name (typically the topic name).
+pub fn build_externalizer<M>(
+    name: &str,
+    config: &CalConfig,
+    root: impl Into<String>,
+) -> CalResult<Box<dyn Externalizer<M>>>
+where
+    M: CalMessage + serde::Serialize + serde::de::DeserializeOwned,
+{
+    let root = root.into();
+    match config.externalizer.get(name) {
+        Some(ext_cfg) => build_from_config(ext_cfg, config, root),
+        None => build_builtin(name, config, root),
+    }
+}
+
+fn build_from_config<M>(
+    ext_cfg: &ExternalizerConfig,
+    _config: &CalConfig,
+    root: String,
+) -> CalResult<Box<dyn Externalizer<M>>>
+where
+    M: CalMessage + serde::Serialize + serde::de::DeserializeOwned,
+{
+    match ext_cfg {
+        ExternalizerConfig::Xml { pretty } => {
+            let format = if *pretty {
+                SerializationFormat::PrettyXml
+            } else {
+                SerializationFormat::Xml
+            };
+            Ok(Box::new(XmlExternalizer::new(format, root)))
+        }
+        #[cfg(feature = "compression")]
+        ExternalizerConfig::Compression {
+            inner,
+            compression_type,
+            options,
+        } => {
+            let level = level_from_options(options);
+            let inner_ext = build_externalizer::<M>(inner, _config, root)?;
+            let (enc, dec) = make_codec(compression_type.clone(), level);
+            Ok(Box::new(ChainExternalizer::new(inner_ext, enc, dec)))
+        }
+    }
+}
+
+fn build_builtin<M>(
+    name: &str,
+    _config: &CalConfig,
+    root: String,
+) -> CalResult<Box<dyn Externalizer<M>>>
+where
+    M: CalMessage + serde::Serialize + serde::de::DeserializeOwned,
+{
+    match name {
+        "xml" => Ok(Box::new(XmlExternalizer::new(
+            SerializationFormat::Xml,
+            root,
+        ))),
+        #[cfg(feature = "compression")]
+        "compression" => {
+            let inner: Box<dyn Externalizer<M>> = build_builtin("xml", _config, root)?;
+            Ok(Box::new(new_gzip_externalizer(inner)))
+        }
+        other => Err(CalError::new(
+            CalErrorKind::SerializationError,
+            format!("unknown externalizer: '{other}'"),
+        )),
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // XmlExternalizerLoader
 // ════════════════════════════════════════════════════════════════════════════
 
 /// [`ExternalizerLoader`] that produces [`XmlExternalizer`] instances.
 ///
-/// Supports `"xml"` encoding only. Returns [`CalErrorKind::SerializationError`]
-/// for unrecognised encoding strings.
+/// Supports `"xml"` encoding (and `"xml+gzip"` with the `compression` feature).
+/// Returns [`CalErrorKind::SerializationError`] for unrecognised encoding strings.
 #[derive(Default)]
 pub struct XmlExternalizerLoader;
 
@@ -272,6 +571,13 @@ where
                 SerializationFormat::default(),
                 M::message_type_name().local().to_string(),
             ))),
+            #[cfg(feature = "compression")]
+            XML_GZIP_EXTERNALIZER_ENCODING => Ok(Box::new(new_gzip_externalizer(Box::new(
+                XmlExternalizer::new(
+                    SerializationFormat::default(),
+                    M::message_type_name().local().to_string(),
+                ),
+            )))),
             other => Err(CalError::new(
                 CalErrorKind::SerializationError,
                 format!("unsupported externalizer encoding: '{other}'"),
@@ -349,6 +655,22 @@ mod tests {
         let ext: Box<dyn Externalizer<TestMsg>> =
             loader.get_externalizer("xml", "2.5", "1.0").unwrap();
         assert_eq!(ext.get_encoding(), "xml");
+    }
+
+    #[test]
+    fn chain_externalizer_round_trip() {
+        // trivial rot-0 "transform" (identity) to verify the chain plumbing
+        let inner: Box<dyn Externalizer<TestMsg>> =
+            Box::new(XmlExternalizer::new(SerializationFormat::Xml, "TestMsg"));
+        let chain = ChainExternalizer::new(
+            inner,
+            |b| Ok(b.iter().map(|x| x.wrapping_add(1)).collect()),
+            |b| Ok(b.iter().map(|x| x.wrapping_sub(1)).collect()),
+        );
+        let msg = TestMsg { value: 55 };
+        let bytes = chain.write_to_bytes(&msg).unwrap();
+        let decoded: TestMsg = chain.read_from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, msg);
     }
 
     #[test]
