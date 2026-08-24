@@ -332,6 +332,34 @@ impl Service {
     }
 }
 
+/// Reliability policy in TOML config — mirrors `cal::Reliability` but serde-friendly.
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReliabilityConfig {
+    #[default]
+    BestEffort,
+    Reliable,
+}
+
+/// Per-topic Quality of Service settings (CERT CAL-005210).
+///
+/// All fields are optional; absent fields leave the corresponding `TopicQos` field at its
+/// default value.
+#[derive(Deserialize, Serialize, Default, Debug, Clone)]
+#[serde(default)]
+pub struct TopicQosConfig {
+    /// Reliability policy (`best_effort` or `reliable`).
+    pub reliability: Option<ReliabilityConfig>,
+    /// Minimum inter-message gap in milliseconds (CAL-005431).
+    pub time_based_filter_ms: Option<u64>,
+    /// Maximum message age in milliseconds before eviction from the reader buffer (CAL-005437).
+    pub expiration_ms: Option<u64>,
+    /// Maximum writer-side buffered messages (CAL-005444, CAL-005445).
+    pub writer_buffer: Option<usize>,
+    /// Maximum reader-side buffered messages (CAL-015746, CAL-016079).
+    pub reader_buffer: Option<usize>,
+}
+
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
 pub struct Topic {
@@ -339,6 +367,8 @@ pub struct Topic {
     #[serde(rename = "type")]
     pub type_: Option<String>,
     pub topic: Option<String>,
+    /// Optional per-topic QoS defaults (CAL-005210).
+    pub qos: Option<TopicQosConfig>,
 }
 
 pub fn parse_config_from_file(filename: &str) -> CalResult<CalConfig> {
@@ -393,5 +423,43 @@ mod tests {
         parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"Random\"\n").unwrap();
         parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\n").unwrap();
         parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\nnode=\"00:11:22:33:44:55\"\n").unwrap();
+    }
+
+    #[test]
+    fn test_topic_qos_config_parses() {
+        let toml = r#"
+[system]
+id = "test"
+
+[[service]]
+id = "Svc"
+
+[[service.topic]]
+id = "SystemStatus"
+
+[service.topic.qos]
+reliability = "best_effort"
+time_based_filter_ms = 100
+expiration_ms = 5000
+reader_buffer = 10
+writer_buffer = 5
+"#;
+        let cfg = parse_config(toml).unwrap();
+        let svc = cfg.get_service("Svc").unwrap();
+        let topic = svc.topic.iter().find(|t| t.id == "SystemStatus").unwrap();
+        let qos = topic.qos.as_ref().unwrap();
+        assert_eq!(qos.reliability, Some(ReliabilityConfig::BestEffort));
+        assert_eq!(qos.time_based_filter_ms, Some(100));
+        assert_eq!(qos.expiration_ms, Some(5000));
+        assert_eq!(qos.reader_buffer, Some(10));
+        assert_eq!(qos.writer_buffer, Some(5));
+    }
+
+    #[test]
+    fn test_topic_without_qos_parses() {
+        let toml = "[system]\nid=\"foo\"\n[[service]]\nid=\"Svc\"\n[[service.topic]]\nid=\"T\"\n";
+        let cfg = parse_config(toml).unwrap();
+        let topic = &cfg.get_service("Svc").unwrap().topic[0];
+        assert!(topic.qos.is_none());
     }
 }

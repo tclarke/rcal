@@ -23,3 +23,12 @@ id = "SubsystemStatus"
 id = "SubsystemStatus2"
 type = "SubsystemStatus"
 topic = "SubsystemStatus_Internal"
+
+[[service.topic]]
+id = "StatusWithQos"
+
+[service.topic.qos]
+time_based_filter_ms = 100
+expiration_ms = 5000
+reader_buffer = 10
+writer_buffer = 5
