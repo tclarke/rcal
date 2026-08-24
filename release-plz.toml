@@ -1,0 +1,19 @@
+[workspace]
+manifest_path = "rcal/Cargo.toml"
+changelog_config = "cliff.toml"
+git_release_enable = true
+git_tag_name = "{{ package }}-v{{ version }}"
+
+[[package]]
+name = "rcal_macros"
+changelog_update = false
+
+[[package]]
+name = "simple_two_service"
+release = false
+changelog_update = false
+
+[[package]]
+name = "rcal-xsd-subset"
+release = false
+changelog_update = false
