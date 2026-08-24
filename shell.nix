@@ -1,6 +1,17 @@
-import <nixpkgs> { overlays = [ rust-overlay ]; }
-
-nixpkgs.mkShell {
+{
+  channel ? "stable",
+  profile ? "default",
+}:
+with import <nixpkgs> { overlays = [ (import <rust-overlay>) ]; };
+mkShell {
+  nativeBuildInputs = [
+    (
+      if channel == "nightly" then
+        rust-bin.selectLatestNightlyWith (toolchain: toolchain.${profile})
+      else
+        rust-bin.${channel}.latest.${profile}
+    )
+  ];
   packages = with pkgs; [
     claude-code
     nodejs
