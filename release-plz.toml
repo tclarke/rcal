@@ -15,4 +15,5 @@ changelog_update = false
 [[package]]
 name = "rcal-xsd-subset"
 release = false
+publish = false
 changelog_update = false
