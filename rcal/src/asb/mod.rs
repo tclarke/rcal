@@ -370,7 +370,7 @@ pub trait AbstractServiceBus: Send + Sync {
 
 /// Refreshes the `MessageHeader.Timestamp` field to the current UTC time.
 ///
-/// Accepts any mutable reference to a type that implements [`CalMessage`] with
+/// Accepts any mutable reference to a type that implements [`crate::uci::CalMessage`] with
 /// an accessible `MessageType` (i.e. any generated top-level message wrapper).
 /// No-op for message types that do not expose a `MessageType` interface.
 ///

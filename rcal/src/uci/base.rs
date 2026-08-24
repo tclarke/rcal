@@ -10,7 +10,7 @@
 //!
 //! ## Design notes
 //! * [`AbstractServiceBus`] is object-safe; generic factory methods live in
-//!   the non-object-safe extension trait [`AbstractServiceBusExt`].
+//!   the non-object-safe extension trait [`AbstractCalExt`].
 //! * `Send + Sync` is required on all shared types (§5.1.1, CAL-016015).
 //! * `Box<Self>` receivers are used for consuming trait-object methods, which
 //!   is the Rust equivalent of C++ destructors and `shutdown()` calls.
