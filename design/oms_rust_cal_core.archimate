@@ -99,18 +99,32 @@
         <documentation>Reader-side minimum inter-arrival filter. Messages received within min_separation of the last accepted message are dropped (CAL-005431). Field: min_separation: Option(Duration). CERT: CAL-005431.</documentation>
       </element>
     </folder>
+    <folder name="Externalizer" id="f-ext">
+      <element xsi:type="archimate:ApplicationInterface" name="Externalizer(M)" id="e-externalizer">
+        <documentation>Abstract serialization/deserialization interface. Generic over M: CalMessage. Object-safe per concrete M — dyn Externalizer(M) is valid. I/O methods: read_from_reader(&amp;mut dyn io::Read), read_from_str(&amp;str), read_from_bytes(&amp;[u8]), write_to_writer(&amp;M, &amp;mut dyn io::Write), write_to_string(&amp;M), write_to_bytes(&amp;M). Identity methods: get_cal_api_version, get_encoding, get_schema_version, get_vendor_version, get_vendor. Capability methods: message_read_only, message_write_only, supports_object_read, supports_object_write. Rust equivalent of uci::base::Externalizer in OMSC-SPC-008 §9.13. CERTs: CXX-012071, CXX-012099, CXX-012115, CXX-012131, CXX-012146, CXX-012161, CXX-012176, CXX-012238, CXX-012252, CXX-012266, CXX-012280, CXX-012294, CXX-012688, CXX-012689, CXX-012690, CXX-012691.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="ExternalizerLoader(M)" id="e-extloader">
+        <documentation>Factory trait for obtaining Externalizer instances by encoding string. Generic over M: CalMessage. Method: get_externalizer(encoding: &amp;str, schema_version: &amp;str, vendor_version: &amp;str) returning CalResult(Box(dyn Externalizer(M))). destroy_externalizer is a no-op in Rust (Box drop). Rust equivalent of uci::base::ExternalizerLoader in OMSC-SPC-008 §9.14. CERTs: CXX-012338, CXX-012367, CXX-012381.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationComponent" name="XmlExternalizer" id="e-xmlext">
+        <documentation>Concrete Externalizer using quick_xml for serialization. Blanket impl over M: CalMessage + Serialize + DeserializeOwned. Stores format: SerializationFormat and root: String (XML root element name, typically the topic name). Implements all Externalizer(M) methods. get_encoding() returns "xml". Moved from private functions in zmq.rs. Lives in rcal::externalizer module.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationComponent" name="XmlExternalizerLoader" id="e-xmlextloader">
+        <documentation>Concrete ExternalizerLoader. get_externalizer("xml", ...) returns XmlExternalizer; returns SerializationError for unrecognised encodings. Global function get_externalizer_loader() returns Box(dyn ExternalizerLoader(M)) wrapping XmlExternalizerLoader (CXX-012434). destroy_externalizer_loader() is a no-op (CXX-012446). Lives in rcal::externalizer module.</documentation>
+      </element>
+    </folder>
     <folder name="ZMQ Implementation" id="f-zmq">
       <element xsi:type="archimate:ApplicationComponent" name="ZmqAsb" id="e-zmqasb">
-        <documentation>omq-tokio RADIO/DISH-backed concrete implementation of AbstractServiceBus and AbstractServiceBusExt. Owns a RADIO socket via a background tokio task; ZmqWriters enqueue through a channel. Each ZmqReader owns an independent DISH socket in its own background task. Transport URI from CalConfig [[transport]]. For multi-process topologies, peer RADIO URIs are registered via add_receive_peer(); readers connect DISH to all peers. RADIO binds for TCP/inproc; RADIO connects for UDP (DISH binds for UDP). Serialization controlled by SerializationFormat in transport config.</documentation>
+        <documentation>omq-tokio RADIO/DISH-backed concrete implementation of AbstractServiceBus and AbstractServiceBusExt. Owns a RADIO socket via a background tokio task; ZmqWriters enqueue through a channel. Each ZmqReader owns an independent DISH socket in its own background task. Transport URI from CalConfig [[transport]]. For multi-process topologies, peer RADIO URIs are registered via add_receive_peer(); readers connect DISH to all peers. RADIO binds for TCP/inproc; RADIO connects for UDP (DISH binds for UDP). Creates XmlExternalizer (from transport SerializationFormat config) and passes it to ZmqWriter/ZmqReader.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationComponent" name="ZmqWriter(M)" id="e-zmqwriter">
-        <documentation>Concrete AbstractWriter for the ZMQ transport. Serializes M to XML (compact or indented per SerializationFormat), assembles a two-part RADIO/DISH message [group=topic, payload=XML], and sends via the shared ZmqAsb write channel. Close is a no-op — channel is shared with ZmqAsb. CERTs realized: CAL-005368, CAL-005369, CAL-016043.</documentation>
+        <documentation>Concrete AbstractWriter for the ZMQ transport. Delegates serialization to Arc(dyn Externalizer(M)) (replacing hardcoded SerializationFormat). Assembles a two-part RADIO/DISH message [group=topic, payload=serialized bytes], and sends via the shared ZmqAsb write channel. Close is a no-op — channel is shared with ZmqAsb. CERTs realized: CAL-005368, CAL-005369, CAL-016043.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationComponent" name="ZmqReader(M)" id="e-zmqreader">
-        <documentation>Concrete AbstractReader for the ZMQ transport. Owns a DISH socket in a background tokio task that connects to registered peer RADIO URIs and joins the topic group. Dispatches to registered MessageListeners (callback mode) or buffers in a std::sync::mpsc channel (polling mode). Callback and polling modes are mutually exclusive (CAL-016050). Close aborts the background task. CERTs realized: CAL-005378, CAL-005379, CAL-005380, CAL-005391, CAL-005392, CAL-005394, CAL-016044, CAL-016045, CAL-016049, CAL-016050, CAL-016052.</documentation>
+        <documentation>Concrete AbstractReader for the ZMQ transport. Delegates deserialization to Arc(dyn Externalizer(M)) (replacing hardcoded SerializationFormat). Owns a DISH socket in a background tokio task that connects to registered peer RADIO URIs and joins the topic group. Dispatches to registered MessageListeners (callback mode) or buffers in a std::sync::mpsc channel (polling mode). Callback and polling modes are mutually exclusive (CAL-016050). Close aborts the background task. CERTs realized: CAL-005378, CAL-005379, CAL-005380, CAL-005391, CAL-005392, CAL-005394, CAL-016044, CAL-016045, CAL-016049, CAL-016050, CAL-016052.</documentation>
       </element>
       <element xsi:type="archimate:DataObject" name="SerializationFormat" id="e-serformat">
-        <documentation>Enum controlling XML serialization style on a ZMQ transport. Variants: Xml (compact, no whitespace), PrettyXml (indented, human-readable). Configured per transport via the 'format' key in [[transport]] TOML. Default: Xml.</documentation>
+        <documentation>Enum controlling XML serialization style. Variants: Xml (compact, no whitespace), PrettyXml (indented, human-readable). Configured per transport via the 'format' key in [[transport]] TOML. Default: Xml. Now stored in XmlExternalizer rather than directly in ZmqWriter/ZmqReader.</documentation>
       </element>
     </folder>
   </folder>
@@ -190,6 +204,14 @@
     <element xsi:type="archimate:CompositionRelationship" id="r-qos-expiration" source="e-topicqos" target="e-expiration"/>
     <element xsi:type="archimate:CompositionRelationship" id="r-qos-reliability" source="e-topicqos" target="e-reliability"/>
     <element xsi:type="archimate:CompositionRelationship" id="r-qos-tbf" source="e-topicqos" target="e-tbf"/>
+    <!-- Externalizer interfaces -->
+    <element xsi:type="archimate:AssociationRelationship" id="r-ext-calmessage" source="e-externalizer" target="e-calmessage"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-extloader-ext" source="e-extloader" target="e-externalizer"/>
+    <!-- XmlExternalizer/XmlExternalizerLoader realizations -->
+    <element xsi:type="archimate:RealizationRelationship" id="r-xmlext-real" source="e-xmlext" target="e-externalizer"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-xmlextloader-real" source="e-xmlextloader" target="e-extloader"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-xmlext-serformat" source="e-xmlext" target="e-serformat"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-xmlextloader-xmlext" source="e-xmlextloader" target="e-xmlext"/>
     <!-- ZMQ implementation -->
     <element xsi:type="archimate:RealizationRelationship" id="r-zmqasb-real-asb" source="e-zmqasb" target="e-asb"/>
     <element xsi:type="archimate:RealizationRelationship" id="r-zmqasb-real-cal" source="e-zmqasb" target="e-abstractcal"/>
@@ -199,6 +221,9 @@
     <element xsi:type="archimate:AssociationRelationship" id="r-zmqasb-writer" source="e-zmqasb" target="e-zmqwriter"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-zmqasb-reader" source="e-zmqasb" target="e-zmqreader"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-zmqasb-serformat" source="e-zmqasb" target="e-serformat"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-zmqwriter-ext" source="e-zmqwriter" target="e-externalizer"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-zmqreader-ext" source="e-zmqreader" target="e-externalizer"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-zmqasb-xmlextloader" source="e-zmqasb" target="e-xmlextloader"/>
     <!-- CERT realizations: AbstractServiceBusExt -->
     <element xsi:type="archimate:RealizationRelationship" id="r-asbext-c005364" source="e-asbext" target="req-cal-005364"/>
     <element xsi:type="archimate:RealizationRelationship" id="r-asbext-c005374" source="e-asbext" target="req-cal-005374"/>

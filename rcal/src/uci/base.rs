@@ -35,6 +35,7 @@ pub use crate::cal::{
     TimeBasedFilter, TopicQos,
 };
 pub use crate::calconfig::SerializationFormat;
+pub use crate::externalizer::{Externalizer, ExternalizerLoader};
 
 /// Re-exported [`uuid::Timestamp`] so callers can build version-1 UUID
 /// timestamps without declaring a direct `uuid` crate dependency.

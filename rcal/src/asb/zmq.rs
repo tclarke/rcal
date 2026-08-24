@@ -17,36 +17,13 @@ use crate::cal::{
     MessageListener, TopicQos,
 };
 use crate::calconfig::{CalConfig, SerializationFormat, Transport};
+use crate::externalizer::{Externalizer, XmlExternalizer};
 use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
 use serde::Deserialize as _;
 use serde::de::IntoDeserializer;
 
 /// ASB identifier string for the ZeroMQ-compatible transport.
 pub const ZMQ_ASB_ID: &str = "zmq";
-
-// ════════════════════════════════════════════════════════════════════════════
-// Serialization helpers
-// ════════════════════════════════════════════════════════════════════════════
-
-fn serialize_message<M: serde::Serialize>(
-    msg: &M,
-    root: &str,
-    format: &SerializationFormat,
-) -> CalResult<String> {
-    match format {
-        SerializationFormat::Xml => quick_xml::se::to_string_with_root(root, msg)
-            .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string())),
-        SerializationFormat::PrettyXml => {
-            let mut buf = String::new();
-            let mut ser = quick_xml::se::Serializer::with_root(&mut buf, Some(root))
-                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
-            ser.indent(' ', 4);
-            msg.serialize(ser)
-                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
-            Ok(buf)
-        }
-    }
-}
 
 /// Validates that message type `M` matches the topic's registered type in
 /// the service config, if one is configured. No-op when the service or topic
@@ -89,13 +66,6 @@ fn resolve_topic<'a>(config: &'a CalConfig, service_id: &str, topic: &'a str) ->
         .and_then(|s| s.topic.iter().find(|t| t.id == topic))
         .and_then(|t| t.topic.as_deref())
         .unwrap_or(topic)
-}
-
-fn deserialize_message<M: serde::de::DeserializeOwned>(xml: &[u8]) -> CalResult<M> {
-    let xml_str = std::str::from_utf8(xml)
-        .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
-    quick_xml::de::from_str(xml_str)
-        .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -443,7 +413,7 @@ type PollState<M> = Arc<(Mutex<VecDeque<(Instant, Arc<M>)>>, Condvar)>;
 pub struct ZmqWriter<M: CalMessage> {
     topic: String,
     logger: Logger,
-    format: SerializationFormat,
+    externalizer: Arc<dyn Externalizer<M>>,
     direct_tx: Option<tokio::sync::mpsc::UnboundedSender<Message>>,
     writer_buf: Option<Arc<Mutex<VecDeque<Message>>>>,
     writer_notify: Option<Arc<tokio::sync::Notify>>,
@@ -465,7 +435,7 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
                 "message failed schema validation",
             )
         })?;
-        let xml = serialize_message(message, &self.topic, &self.format)?;
+        let xml = self.externalizer.write_to_string(message)?;
         // RADIO/DISH: part[0] = group (topic for DISH filtering), part[1] = payload
         let msg = Message::multipart([self.topic.clone(), xml]);
         match &self.writer_buf {
@@ -532,6 +502,7 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
 pub struct ZmqReader<M: CalMessage> {
     topic: String,
     logger: Logger,
+    externalizer: Arc<dyn Externalizer<M>>,
     listeners: Arc<Mutex<Vec<Arc<dyn MessageListener<M>>>>>,
     /// Shared queue + condvar for poll-mode delivery with expiration support.
     poll_state: PollState<M>,
@@ -689,11 +660,15 @@ where
             (Some(tx), None, None, None)
         };
 
+        let externalizer: Arc<dyn Externalizer<M>> = Arc::new(XmlExternalizer::new(
+            self.serialization_format.clone(),
+            cal_topic.to_string(),
+        ));
         trace!(self.logger, "ZmqAsb::create_writer()"; "topic" => cal_topic);
         Ok(Box::new(ZmqWriter {
             topic: cal_topic.to_string(),
             logger: self.logger.new(slog::o!("topic" => cal_topic.to_string())),
-            format: self.serialization_format.clone(),
+            externalizer,
             direct_tx,
             writer_buf,
             writer_notify,
@@ -740,7 +715,11 @@ where
         let poll_state_task = Arc::clone(&poll_state);
         let task_alive_task = Arc::clone(&task_alive);
         let topic_str = cal_topic.to_string();
-        let _format = self.serialization_format.clone(); // ponytail: deserialization is format-agnostic (XML only); extend if binary formats are added
+        let externalizer: Arc<dyn Externalizer<M>> = Arc::new(XmlExternalizer::new(
+            self.serialization_format.clone(),
+            cal_topic.to_string(),
+        ));
+        let ext_task = Arc::clone(&externalizer);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let reader_logger = self.logger.new(slog::o!("topic" => cal_topic.to_string()));
 
@@ -766,7 +745,7 @@ where
                     _ = shutdown_rx.changed() => break,
                 };
                 let payload = raw.part_bytes(1).unwrap_or_default();
-                let m = match deserialize_message::<M>(&payload) {
+                let m = match ext_task.read_from_bytes(&payload) {
                     Ok(m) => m,
                     Err(e) => {
                         slog::warn!(reader_logger, "deserialize failed"; "error" => %e);
@@ -813,6 +792,7 @@ where
         Ok(Box::new(ZmqReader {
             topic: topic.to_string(),
             logger: self.logger.new(slog::o!("topic" => topic.to_string())),
+            externalizer,
             listeners,
             poll_state,
             task_alive,
