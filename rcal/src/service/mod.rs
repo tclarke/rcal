@@ -298,10 +298,13 @@ impl<A: AbstractServiceBus> AbstractService for AbstractServiceImpl<A> {
         trace!(self.logger, "AbstractService::reset";
             "service_id" => &self.service_id,
         );
-        Err(crate::uci::CalError::new(
-            crate::uci::CalErrorKind::OperationNotPermitted,
-            format!("reset() not implemented for service '{}'", self.service_id),
-        ))
+        let _guard = self.__monitor_mutex.lock().unwrap();
+        self.state = ServiceLifecycleState::Inactive;
+        self._readers.lock().unwrap().clear();
+        info!(self.logger, "service reset";
+            "service_id" => &self.service_id,
+        );
+        Ok(())
     }
 }
 
@@ -368,6 +371,102 @@ fn parse_duration(s: &str) -> Result<Duration, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::asb::{AsbStatus, AsbStatusListener, MessageHeaderDefaults};
+    use crate::calconfig::CalConfig;
+    use crate::uci::base::UUID;
+
+    struct NullAsb;
+
+    impl AbstractServiceBus for NullAsb {
+        fn get_logger(&self) -> &slog::Logger {
+            unimplemented!()
+        }
+        fn service_identifier(&self) -> &str {
+            "null"
+        }
+        fn asb_identifier(&self) -> &str {
+            "null"
+        }
+        fn get_system_uuid(&self) -> UUID {
+            unimplemented!()
+        }
+        fn get_service_uuid(&self) -> Option<UUID> {
+            None
+        }
+        fn get_subsystem_uuid(&self) -> Option<UUID> {
+            None
+        }
+        fn get_component_uuid(&self, _: &str) -> Option<UUID> {
+            None
+        }
+        fn get_capability_uuid(&self, _: &str) -> Option<UUID> {
+            None
+        }
+        fn oms_schema_version(&self) -> &str {
+            ""
+        }
+        fn oms_schema_compiler_version(&self) -> &str {
+            ""
+        }
+        fn get_system_label(&self) -> Option<&str> {
+            None
+        }
+        fn get_asb_connection_version(&self) -> &str {
+            ""
+        }
+        fn get_oms_api_version(&self) -> &str {
+            ""
+        }
+        fn connection_status(&self) -> &AsbStatus {
+            unimplemented!()
+        }
+        fn register_status_listener(
+            &mut self,
+            _: Arc<dyn AsbStatusListener>,
+        ) -> crate::uci::CalResult<()> {
+            Ok(())
+        }
+        fn unregister_status_listener(
+            &mut self,
+            _: &Arc<dyn AsbStatusListener>,
+        ) -> crate::uci::CalResult<()> {
+            Ok(())
+        }
+        fn close(&mut self) -> crate::uci::CalResult<()> {
+            Ok(())
+        }
+        fn message_header_defaults(&self) -> MessageHeaderDefaults {
+            unimplemented!()
+        }
+    }
+
+    fn make_svc() -> AbstractServiceImpl<NullAsb> {
+        let logger = slog::Logger::root(slog::Discard, slog::o!());
+        AbstractServiceImpl::new(
+            "svc",
+            "sys",
+            vec![],
+            NullAsb,
+            Arc::new(CalConfig::default()),
+            logger,
+        )
+    }
+
+    #[test]
+    fn test_reset_sets_state_inactive() {
+        let mut svc = make_svc();
+        svc.activate().unwrap();
+        assert_eq!(svc.lifecycle_state(), ServiceLifecycleState::Active);
+        svc.reset().unwrap();
+        assert_eq!(svc.lifecycle_state(), ServiceLifecycleState::Inactive);
+    }
+
+    #[test]
+    fn test_reset_idempotent_when_inactive() {
+        let mut svc = make_svc();
+        assert!(svc.reset().is_ok());
+        assert_eq!(svc.lifecycle_state(), ServiceLifecycleState::Inactive);
+    }
 
     #[test]
     fn test_parse_duration_seconds() {
