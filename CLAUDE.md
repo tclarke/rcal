@@ -43,6 +43,7 @@ Always perform "Coding review and checks" when finished implementing.
 Always update the issue start date and set status to "In Progress" when starting a new task
 Always set the issue status to "In Review" when a PR has been created.
 Always update the end date after the PR has been merged.
+Always mention the issue number in a PR so that they are linked in github.
 
 # Coding review and checks
  - After implementing a new feature and before creating a PR, run the following tools.
