@@ -19,8 +19,20 @@
 
 use rcal::service::{AbstractService, AbstractServiceImpl};
 
-struct CalConfigService(AbstrctServiceImple) {
+struct CalConfigService(AbstrctServiceImpl);
 
+impl CalConfigService {
+    pub fn new(
+        service_id: impl Into<String>,
+        system_id: impl Into<String>,
+        subsystem_ids: Vec<String>,
+        asb: A,
+        config: Arc<CalConfig>,
+        logger: Logger,
+    ) -> Self {
+        let asi = AbstractServiceImpl::new(service_id, system_id, subsystem_ids, asb, config, logger);
+        CalConfigService(asi)
+    }
 }
 
 impl Deref for CalConfigService {
