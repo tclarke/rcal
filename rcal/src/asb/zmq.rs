@@ -11,9 +11,10 @@ use std::time::{Duration, Instant};
 
 use omq_tokio::{Endpoint, Message, Options, Socket, SocketType};
 
-use super::{
-    AbstractReader, AbstractServiceBus, AbstractServiceBusExt, AbstractWriter, AsbConnectionState,
-    AsbStatus, AsbStatusListener, MessageHeaderDefaults, MessageListener, TopicQos,
+use super::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
+use crate::cal::{
+    AbstractCal, AbstractCalExt, AbstractReader, AbstractWriter, MessageHeaderDefaults,
+    MessageListener, TopicQos,
 };
 use crate::calconfig::{CalConfig, SerializationFormat, Transport};
 use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
@@ -219,7 +220,7 @@ impl ZmqAsb {
 
     /// Registers a remote RADIO URI whose messages this ASB should receive.
     ///
-    /// Readers created via [`AbstractServiceBusExt::create_reader`] will
+    /// Readers created via [`AbstractCalExt::create_reader`] will
     /// connect their DISH sockets to every registered peer URI.  If no peers
     /// are registered the DISH connects to this ASB's own `transport_uri`,
     /// which is the correct behaviour for single-process tests.
@@ -371,7 +372,13 @@ impl AbstractServiceBus for ZmqAsb {
         self.write_tx = None;
         Ok(())
     }
+}
 
+// ════════════════════════════════════════════════════════════════════════════
+// AbstractCal implementation
+// ════════════════════════════════════════════════════════════════════════════
+
+impl AbstractCal for ZmqAsb {
     fn message_header_defaults(&self) -> MessageHeaderDefaults {
         use crate::uci::types::{
             ClassificationEnum, MessageModeEnum, OwnerProducerChoiceType_, OwnerProducerEnum,
@@ -627,10 +634,10 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// AbstractServiceBusExt implementation
+// AbstractCalExt implementation
 // ════════════════════════════════════════════════════════════════════════════
 
-impl<M> AbstractServiceBusExt<M> for ZmqAsb
+impl<M> AbstractCalExt<M> for ZmqAsb
 where
     M: CalMessage + serde::Serialize + serde::de::DeserializeOwned,
 {
@@ -821,7 +828,7 @@ where
 
 /// Builds a [`CalConfig`] with one TCP transport entry per port in `ports`.
 #[cfg(test)]
-pub(super) fn test_config_on_ports(ports: &[u16]) -> Arc<CalConfig> {
+pub(crate) fn test_config_on_ports(ports: &[u16]) -> Arc<CalConfig> {
     use crate::calconfig;
     use crate::uci::base::UUID;
     const BASE_UUID: &str = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b";
@@ -865,6 +872,7 @@ pub(super) fn test_config_inproc(name: &str) -> Arc<CalConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cal::{Expiration, MessageBuffer, TimeBasedFilter};
     use omq_tokio::endpoint::Host;
     use omq_tokio::{Endpoint, Message, MonitorEvent, Options, Socket, SocketType};
     use rcal_macros::init_test_logger;
@@ -1246,7 +1254,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+        let result = <ZmqAsb as AbstractCalExt<TestMsg>>::create_writer(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1267,7 +1275,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+        let result = <ZmqAsb as AbstractCalExt<TestMsg>>::create_reader(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1289,7 +1297,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+            <ZmqAsb as AbstractCalExt<TestMsg>>::create_writer(
                 &mut asb,
                 "test.topic",
                 TopicQos::default(),
@@ -1322,7 +1330,7 @@ mod tests {
         .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+        let mut writer = <ZmqAsb as AbstractCalExt<TestMsg>>::create_writer(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1378,7 +1386,7 @@ mod tests {
         .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+        let mut writer = <ZmqAsb as AbstractCalExt<TestMsg>>::create_writer(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1417,7 +1425,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+        let mut reader = <ZmqAsb as AbstractCalExt<TestMsg>>::create_reader(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1428,7 +1436,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Send a message via the RADIO (through ZmqAsb's write task)
-        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+        let mut writer = <ZmqAsb as AbstractCalExt<TestMsg>>::create_writer(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1460,7 +1468,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+        let mut reader = <ZmqAsb as AbstractCalExt<TestMsg>>::create_reader(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1483,7 +1491,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+        let mut reader = <ZmqAsb as AbstractCalExt<TestMsg>>::create_reader(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1507,7 +1515,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+        let mut reader = <ZmqAsb as AbstractCalExt<TestMsg>>::create_reader(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1544,7 +1552,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+        let mut reader = <ZmqAsb as AbstractCalExt<TestMsg>>::create_reader(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1570,7 +1578,7 @@ mod tests {
         // Allow DISH to connect
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+        let mut writer = <ZmqAsb as AbstractCalExt<TestMsg>>::create_writer(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1610,7 +1618,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+        let mut reader = <ZmqAsb as AbstractCalExt<TestMsg>>::create_reader(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1649,17 +1657,17 @@ mod tests {
             .unwrap();
 
         let qos = TopicQos {
-            time_based_filter: Some(super::super::TimeBasedFilter {
+            time_based_filter: Some(TimeBasedFilter {
                 min_separation: Duration::from_millis(200),
             }),
             ..TopicQos::default()
         };
         let mut reader =
-            <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(&mut asb, "test.topic", qos)
+            <ZmqAsb as AbstractCalExt<TestMsg>>::create_reader(&mut asb, "test.topic", qos)
                 .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+        let mut writer = <ZmqAsb as AbstractCalExt<TestMsg>>::create_writer(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1703,17 +1711,17 @@ mod tests {
             .unwrap();
 
         let qos = TopicQos {
-            expiration: Some(super::super::Expiration {
+            expiration: Some(Expiration {
                 max_age: Duration::from_millis(50),
             }),
             ..TopicQos::default()
         };
         let mut reader =
-            <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(&mut asb, "test.topic", qos)
+            <ZmqAsb as AbstractCalExt<TestMsg>>::create_reader(&mut asb, "test.topic", qos)
                 .unwrap();
         tokio::time::sleep(Duration::from_millis(30)).await;
 
-        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+        let mut writer = <ZmqAsb as AbstractCalExt<TestMsg>>::create_writer(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1746,15 +1754,15 @@ mod tests {
             .unwrap();
 
         let qos = TopicQos {
-            reader_buffer: Some(super::super::MessageBuffer { max_messages: 2 }),
+            reader_buffer: Some(MessageBuffer { max_messages: 2 }),
             ..TopicQos::default()
         };
         let mut reader =
-            <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(&mut asb, "test.topic", qos)
+            <ZmqAsb as AbstractCalExt<TestMsg>>::create_reader(&mut asb, "test.topic", qos)
                 .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
+        let mut writer = <ZmqAsb as AbstractCalExt<TestMsg>>::create_writer(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1796,17 +1804,14 @@ mod tests {
         let _hold = gate.lock().await;
 
         let writer_qos = TopicQos {
-            writer_buffer: Some(super::super::MessageBuffer { max_messages: 2 }),
+            writer_buffer: Some(MessageBuffer { max_messages: 2 }),
             ..TopicQos::default()
         };
-        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
-            &mut asb,
-            "test.topic",
-            writer_qos,
-        )
-        .unwrap();
+        let mut writer =
+            <ZmqAsb as AbstractCalExt<TestMsg>>::create_writer(&mut asb, "test.topic", writer_qos)
+                .unwrap();
 
-        let mut reader = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_reader(
+        let mut reader = <ZmqAsb as AbstractCalExt<TestMsg>>::create_reader(
             &mut asb,
             "test.topic",
             TopicQos::default(),
@@ -1851,15 +1856,12 @@ mod tests {
         let _hold = gate.lock().await; // freeze the forwarding task
 
         let writer_qos = TopicQos {
-            writer_buffer: Some(super::super::MessageBuffer { max_messages: 10 }),
+            writer_buffer: Some(MessageBuffer { max_messages: 10 }),
             ..TopicQos::default()
         };
-        let mut writer = <ZmqAsb as AbstractServiceBusExt<TestMsg>>::create_writer(
-            &mut asb,
-            "test.topic",
-            writer_qos,
-        )
-        .unwrap();
+        let mut writer =
+            <ZmqAsb as AbstractCalExt<TestMsg>>::create_writer(&mut asb, "test.topic", writer_qos)
+                .unwrap();
 
         writer
             .write(&TestMsg {

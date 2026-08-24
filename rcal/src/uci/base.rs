@@ -27,11 +27,12 @@ use std::fmt;
 use uuid::{Uuid, Variant as UuidVariant, Version as UuidVersion};
 
 /// Re-exports for uci::asb
-///
-pub use crate::asb::{
-    AbstractReader, AbstractServiceBus, AbstractServiceBusCreateMessage, AbstractServiceBusExt,
-    AbstractWriter, AsbConnectionState, AsbStatus, AsbStatusListener, Expiration, MessageBuffer,
-    MessageListener, Reliability, TimeBasedFilter, TopicQos,
+pub use crate::asb::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
+/// Re-exports for uci::cal
+pub use crate::cal::{
+    AbstractCal, AbstractCalCreateMessage, AbstractCalExt, AbstractReader, AbstractWriter,
+    Expiration, MessageBuffer, MessageHeaderDefaults, MessageListener, Reliability,
+    TimeBasedFilter, TopicQos,
 };
 pub use crate::calconfig::SerializationFormat;
 

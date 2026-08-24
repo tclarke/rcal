@@ -43,9 +43,6 @@
       </element>
     </folder>
     <folder name="Abstract Service Bus" id="f-asb">
-      <element xsi:type="archimate:DataObject" name="CalInstanceConfig" id="e-calinstanceconfig">
-        <documentation>Configuration parameters for initialising a CAL instance. Fields: service_identifier (String, CAL-005201), asb_identifier (String, CAL-005202), network_config_path (PathBuf, Section 4.7). CERTs: CAL-005201, CAL-005202.</documentation>
-      </element>
       <element xsi:type="archimate:DataObject" name="AsbConnectionState" id="e-asbstate">
         <documentation>Enum of ASB connection states per Table 5.9-1: Initializing (optional), Normal (required), Degraded (optional), Inoperable (optional), Failed (required). Provides validate_transition() enforcing the Figure 5.9-2 state machine rules.</documentation>
       </element>
@@ -56,10 +53,21 @@
         <documentation>Trait implemented by CAL Clients to receive ASB connection status change notifications via callback. Method: on_status_change(status: AsbStatus). Called immediately upon registration (CAL-016366), then on every subsequent state change.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationInterface" name="AbstractServiceBus" id="e-asb">
-        <documentation>Primary CAL instance interface (object-safe). Methods: service_id(), uuids() (CAL-005203), connection_status(), register_status_listener() (CAL-016366), unregister_status_listener(), close(). Generic factory methods (create_writer, create_reader) live in the non-object-safe extension trait AbstractServiceBusExt. CERTs: CAL-005201, CAL-005202, CAL-005203, CAL-016366.</documentation>
+        <documentation>Pure transport-layer interface (object-safe). Covers identity (service_identifier, asb_identifier, UUID retrieval — CAL-005203), connection status polling and callback (CAL-016366), and lifecycle (close()). Has no knowledge of message types. CAL-layer concerns (message creation, writers, readers) are in AbstractCal. CERTs: CAL-005201, CAL-005202, CAL-005203, CAL-016366.</documentation>
       </element>
-      <element xsi:type="archimate:ApplicationInterface" name="AbstractServiceBusExt(M)" id="e-asbext">
-        <documentation>Non-object-safe extension trait of AbstractServiceBus providing generic factory methods for typed Writers and Readers. Bounded by M: CalMessage + Serialize + DeserializeOwned at the impl site. Methods: create_writer(topic: &amp;str, qos: TopicQos) returning CalResult(Box(dyn AbstractWriter(M))), create_reader(topic: &amp;str, qos: TopicQos) returning CalResult(Box(dyn AbstractReader(M))). CERTs: CAL-005364, CAL-005374.</documentation>
+    </folder>
+    <folder name="CAL Layer" id="f-cal">
+      <element xsi:type="archimate:DataObject" name="CalInstanceConfig" id="e-calinstanceconfig">
+        <documentation>Configuration parameters for initialising a CAL instance. Fields: service_identifier (String, CAL-005201), asb_identifier (String, CAL-005202), network_config_path (PathBuf, Section 4.7). CERTs: CAL-005201, CAL-005202.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="AbstractCal" id="e-abstractcal">
+        <documentation>CAL application-layer interface. Supertrait of AbstractServiceBus — every AbstractCal IS-A AbstractServiceBus. Adds message_header_defaults() which sources system/service config for pre-populating MessageHeader and SecurityInformation fields. Applications obtain an instance via get_cal() (CAL-005201, CAL-005202). CERTs: CAL-005201, CAL-005202, CAL-005203.</documentation>
+      </element>
+      <element xsi:type="archimate:DataObject" name="MessageHeaderDefaults" id="e-msgheaderdefaults">
+        <documentation>Struct carrying default values for MessageHeader and SecurityInformation fields, sourced from CAL configuration. Fields: system_id (UUID), service_id (Option(UUID)), mission_id (Option(UUID)), schema_version (String), mode (MessageModeEnum), classification (ClassificationEnum), owner_producer (Vec(OwnerProducerChoiceType_)).</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationInterface" name="AbstractCalExt(M)" id="e-asbext">
+        <documentation>Non-object-safe extension trait of AbstractCal providing generic factory methods for typed Writers and Readers. Bounded by M: CalMessage + Serialize + DeserializeOwned at the impl site. Methods: create_writer(topic: &amp;str, qos: TopicQos) returning CalResult(Box(dyn AbstractWriter(M))), create_reader(topic: &amp;str, qos: TopicQos) returning CalResult(Box(dyn AbstractReader(M))). CERTs: CAL-005364, CAL-005374.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationInterface" name="AbstractWriter(M)" id="e-writer">
         <documentation>Trait for a CAL Writer associated with exactly one Client Topic (CAL-005368). M is a CalMessage type. Methods: topic() returning &amp;str, write(message: &amp;M) returning CalResult(()) — errors on topic unavailable (CAL-005369) or resources unavailable (CAL-016043), close() consuming Box(Self). Accepts TopicQos at creation (CAL-005210). CERTs: CAL-005364, CAL-005368, CAL-005369, CAL-016043.</documentation>
@@ -70,8 +78,8 @@
       <element xsi:type="archimate:ApplicationInterface" name="MessageListener(M)" id="e-msglistener">
         <documentation>Callback trait registered with AbstractReader to receive incoming CAL Messages (CAL-005391). Method: on_message(msg: &amp;Arc(M)) — called once per received message with a shared reference (CAL-005392). The reference remains valid for the duration of the call (CAL-016046). CERTs: CAL-005391, CAL-005392, CAL-016046.</documentation>
       </element>
-      <element xsi:type="archimate:ApplicationFunction" name="CalInstanceFactory" id="e-calfactory">
-        <documentation>Platform entry-point function for obtaining a fully initialised CAL instance. Signature: fn(config: CalInstanceConfig) returning CalResult of boxed AbstractServiceBus. CERTs: CAL-005201, CAL-005202.</documentation>
+      <element xsi:type="archimate:ApplicationFunction" name="CalFactory" id="e-calfactory">
+        <documentation>Platform entry-point function get_cal() for obtaining a fully initialised AbstractCal instance. Caches instances per (service_identifier, asb_identifier) key pair. Returns Arc(Mutex(dyn AbstractCal)). CERTs: CAL-005201, CAL-005202.</documentation>
       </element>
     </folder>
     <folder name="QoS" id="f-qos">
@@ -122,11 +130,14 @@
     <element xsi:type="archimate:AssociationRelationship" id="r-bnd-assoc" source="e-bndfield" target="e-calmessage"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-cho-assoc" source="e-choicefield" target="e-calmessage"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-msg-assoc" source="e-calmessage" target="e-calsubmessage"/>
-    <element xsi:type="archimate:AssociationRelationship" id="r-asb-cfg" source="e-asb" target="e-calinstanceconfig"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-asb-cfg" source="e-abstractcal" target="e-calinstanceconfig"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-asb-state" source="e-asb" target="e-asbstate"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-asb-status" source="e-asb" target="e-asbstatus"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-asb-listener" source="e-asb" target="e-asblistener"/>
-    <element xsi:type="archimate:AssociationRelationship" id="r-factory-asb" source="e-calfactory" target="e-asb"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-factory-cal" source="e-calfactory" target="e-abstractcal"/>
+    <!-- AbstractCal extends AbstractServiceBus -->
+    <element xsi:type="archimate:SpecializationRelationship" id="r-cal-extends-asb" source="e-abstractcal" target="e-asb"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-cal-msgheaderdefaults" source="e-abstractcal" target="e-msgheaderdefaults"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-asb-tech" source="e-asb" target="e-asbtech"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-tech-net" source="e-asbtech" target="e-netconfig"/>
     <element xsi:type="archimate:RealizationRelationship" id="id-e6e8c0bba8f24f15a5ab3d1452327d95" source="e-caluuid" target="req-cal-016479"/>
@@ -161,8 +172,8 @@
     <element xsi:type="archimate:RealizationRelationship" id="id-040cc6ac8bb54518bd613c20" source="e-calfactory" target="req-cal-005201"/>
     <element xsi:type="archimate:RealizationRelationship" id="id-efc0d27c03ba4717b3487dfc" source="e-calfactory" target="req-cal-005202"/>
     <element xsi:type="archimate:AssociationRelationship" id="id-11da5b76579a4dc38e718ca402b04fdc" source="e-serviceuuids" target="e-caluuid"/>
-    <!-- AbstractServiceBusExt -->
-    <element xsi:type="archimate:AssociationRelationship" id="r-asbext-asb" source="e-asbext" target="e-asb"/>
+    <!-- AbstractCalExt -->
+    <element xsi:type="archimate:AssociationRelationship" id="r-asbext-asb" source="e-asbext" target="e-abstractcal"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-asbext-writer" source="e-asbext" target="e-writer"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-asbext-reader" source="e-asbext" target="e-reader"/>
     <!-- AbstractWriter -->
@@ -181,6 +192,7 @@
     <element xsi:type="archimate:CompositionRelationship" id="r-qos-tbf" source="e-topicqos" target="e-tbf"/>
     <!-- ZMQ implementation -->
     <element xsi:type="archimate:RealizationRelationship" id="r-zmqasb-real-asb" source="e-zmqasb" target="e-asb"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-zmqasb-real-cal" source="e-zmqasb" target="e-abstractcal"/>
     <element xsi:type="archimate:RealizationRelationship" id="r-zmqasb-real-asbext" source="e-zmqasb" target="e-asbext"/>
     <element xsi:type="archimate:RealizationRelationship" id="r-zmqwriter-real" source="e-zmqwriter" target="e-writer"/>
     <element xsi:type="archimate:RealizationRelationship" id="r-zmqreader-real" source="e-zmqreader" target="e-reader"/>

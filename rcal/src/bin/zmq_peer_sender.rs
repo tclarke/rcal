@@ -10,9 +10,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rcal::QName;
+use rcal::asb::AbstractServiceBus;
 use rcal::asb::zmq::ZmqAsb;
 use rcal::uci::CalMessage;
-use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, TopicQos, UUID};
+use rcal::uci::base::{AbstractCalExt, TopicQos, UUID};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct IntMsg {
@@ -57,12 +58,9 @@ async fn main() {
         .await
         .unwrap();
 
-    let mut writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
-        &mut bus,
-        "data",
-        TopicQos::default(),
-    )
-    .unwrap();
+    let mut writer =
+        <ZmqAsb as AbstractCalExt<IntMsg>>::create_writer(&mut bus, "data", TopicQos::default())
+            .unwrap();
 
     // Allow receiver process to connect before publishing.
     // ponytail: fixed delay, use a ready-signal if startup variance matters
