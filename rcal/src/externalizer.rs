@@ -117,16 +117,13 @@ pub trait ExternalizerLoader<M: CalMessage>: Send + Sync {
 /// Return the default [`ExternalizerLoader`] for message type `M` (CXX-012434).
 ///
 /// The default loader supports `"xml"` encoding via [`XmlExternalizerLoader`].
+/// To release the loader, simply drop the returned `Box` — no explicit destroy
+/// call is needed (contrast with CXX-012446, which is a C++ memory-management
+/// artefact with no Rust equivalent).
 pub fn get_externalizer_loader<M: CalMessage + serde::Serialize + serde::de::DeserializeOwned>()
 -> Box<dyn ExternalizerLoader<M>> {
     Box::new(XmlExternalizerLoader)
 }
-
-/// Destroy an [`ExternalizerLoader`] obtained via [`get_externalizer_loader`] (CXX-012446).
-///
-/// In Rust, this is a no-op — ownership passed into the `Box` is dropped when
-/// it goes out of scope. This function exists purely for specification alignment.
-pub fn destroy_externalizer_loader<M: CalMessage>(_loader: Box<dyn ExternalizerLoader<M>>) {}
 
 // ════════════════════════════════════════════════════════════════════════════
 // XmlExternalizer
