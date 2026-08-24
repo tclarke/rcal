@@ -15,8 +15,8 @@ use std::time::Duration;
 use slog::{error, info, trace, warn};
 
 use crate::cal::{
-    AbstractCal, AbstractCalCreateMessage, AbstractCalExt, AbstractWriter, MessageListener,
-    TopicQos,
+    AbstractCal, AbstractCalCreateMessage, AbstractCalExt, AbstractReader, AbstractWriter,
+    MessageListener, TopicQos,
 };
 use crate::calconfig::CalConfig;
 use crate::uci::{CalMessage, CalResult};
@@ -206,6 +206,35 @@ impl<A: AbstractCal> AbstractServiceImpl<A> {
             .unwrap()
             .push(Box::new(reader) as Box<dyn Any + Send>);
         Ok(())
+    }
+
+    /// Creates a typed polling reader for `topic` (CAL-005380).
+    ///
+    /// Unlike [`create_reader`][Self::create_reader], the reader is returned to the caller
+    /// rather than stored internally. The caller uses [`AbstractReader::read`] /
+    /// [`AbstractReader::read_no_wait`] to poll and [`AbstractReader::close`] to release it.
+    pub fn create_polling_reader<M>(
+        &mut self,
+        topic: &str,
+        qos: TopicQos,
+    ) -> CalResult<Box<dyn AbstractReader<M>>>
+    where
+        M: CalMessage + 'static,
+        A: AbstractCalExt<M>,
+    {
+        trace!(self.logger, "AbstractServiceImpl::create_polling_reader";
+            "service_id" => &self.service_id,
+            "topic" => topic,
+        );
+        let _guard = self.__monitor_mutex.lock().unwrap();
+        self.asb.create_reader(topic, qos).map_err(|e| {
+            error!(self.logger, "create_polling_reader failed";
+                "service_id" => &self.service_id,
+                "topic" => topic,
+                "error" => %e,
+            );
+            e
+        })
     }
 
     /// Parses `status_delay` from the service config, returning `None` if absent or unparseable.
