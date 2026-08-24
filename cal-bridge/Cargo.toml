@@ -1,0 +1,10 @@
+[package]
+name = "cal-bridge"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4"
+rcal = { version = "2.0.0", path = "../rcal" }
+slog = "2"
+tokio = { version = "1", features = ["full"] }
