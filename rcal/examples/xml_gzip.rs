@@ -11,8 +11,7 @@ use std::collections::HashMap;
 use rcal::calconfig::SerializationFormat;
 use rcal::calconfig::{CalConfig, CompressionType, ExternalizerConfig};
 use rcal::externalizer::{
-    CompressionExternalizer, Externalizer, XML_GZIP_EXTERNALIZER_ENCODING, XmlExternalizer,
-    build_externalizer, new_gzip_externalizer,
+    XmlExternalizer, build_externalizer, new_gzip_externalizer, read_from_bytes, write_to_bytes,
 };
 use rcal::uci::CalMessage;
 use rcal::uci::types::SystemStatus_;
@@ -22,23 +21,18 @@ fn main() {
     let msg = SystemStatus_::cal_create();
 
     // ── 1. Direct construction ────────────────────────────────────────────────
-    let inner: Box<dyn Externalizer<SystemStatus_>> =
-        Box::new(XmlExternalizer::new(SerializationFormat::Xml, root.clone()));
-    let gzip_ext: CompressionExternalizer<SystemStatus_> = new_gzip_externalizer(inner);
+    let xml_ext = XmlExternalizer::new(SerializationFormat::Xml);
+    let gzip_ext = new_gzip_externalizer(Box::new(XmlExternalizer::new(SerializationFormat::Xml)));
 
-    let compressed = gzip_ext.write_to_bytes(&msg).expect("serialize failed");
-    let raw_len = XmlExternalizer::new(SerializationFormat::Xml, root.clone())
-        .write_to_bytes(&msg)
-        .unwrap()
-        .len();
+    let compressed = write_to_bytes(&gzip_ext, &msg, &root).expect("serialize failed");
+    let raw_len = write_to_bytes(&xml_ext, &msg, &root).unwrap().len();
     println!(
         "Direct gzip: {} bytes (raw XML: {} bytes)",
         compressed.len(),
         raw_len
     );
-    let _decoded: SystemStatus_ = gzip_ext
-        .read_from_bytes(&compressed)
-        .expect("deserialize failed");
+    let _decoded: SystemStatus_ =
+        read_from_bytes(&gzip_ext, &compressed).expect("deserialize failed");
 
     // ── 2. Config-driven via named externalizer section ───────────────────────
     //
@@ -63,39 +57,20 @@ fn main() {
         },
     );
 
-    let config_ext: Box<dyn Externalizer<SystemStatus_>> =
-        build_externalizer("gzip_xml", &config, root.clone()).expect("build failed");
-    let compressed2 = config_ext
-        .write_to_bytes(&msg)
-        .expect("config ext serialize failed");
-    let _decoded2: SystemStatus_ = config_ext
-        .read_from_bytes(&compressed2)
-        .expect("config ext deserialize failed");
+    let config_ext = build_externalizer("gzip_xml", &config).expect("build failed");
+    let compressed2 =
+        write_to_bytes(config_ext.as_ref(), &msg, &root).expect("config ext serialize failed");
+    let _decoded2: SystemStatus_ =
+        read_from_bytes::<SystemStatus_>(config_ext.as_ref(), &compressed2)
+            .expect("config ext deserialize failed");
     println!("Config-driven gzip_xml: {} bytes", compressed2.len());
 
     // ── 3. "compression" built-in (no config section needed) ─────────────────
-    let builtin_ext: Box<dyn Externalizer<SystemStatus_>> =
-        build_externalizer("compression", &CalConfig::default(), root.clone())
-            .expect("builtin build failed");
-    let compressed3 = builtin_ext
-        .write_to_bytes(&msg)
-        .expect("builtin serialize failed");
+    let builtin_ext =
+        build_externalizer("compression", &CalConfig::default()).expect("builtin build failed");
+    let compressed3 =
+        write_to_bytes(builtin_ext.as_ref(), &msg, &root).expect("builtin serialize failed");
     println!("Built-in \"compression\": {} bytes", compressed3.len());
-
-    // ── 4. Via ExternalizerLoader encoding string "xml+gzip" ──────────────────
-    use rcal::externalizer::{ExternalizerLoader, XmlExternalizerLoader};
-    let loader = XmlExternalizerLoader;
-    let loader_ext: Box<dyn Externalizer<SystemStatus_>> = loader
-        .get_externalizer(XML_GZIP_EXTERNALIZER_ENCODING, "2.5", "1.0")
-        .expect("loader failed");
-    let compressed4 = loader_ext
-        .write_to_bytes(&msg)
-        .expect("loader serialize failed");
-    println!(
-        "ExternalizerLoader \"{}\": {} bytes",
-        XML_GZIP_EXTERNALIZER_ENCODING,
-        compressed4.len()
-    );
 
     println!("All xml+gzip round-trips OK");
 }

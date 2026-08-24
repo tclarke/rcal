@@ -17,7 +17,7 @@ use crate::cal::{
     MessageListener, TopicQos,
 };
 use crate::calconfig::{CalConfig, Transport};
-use crate::externalizer::{Externalizer, build_externalizer};
+use crate::externalizer::{Externalizer, build_externalizer, read_from_bytes, write_to_bytes};
 use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
 use serde::Deserialize as _;
 use serde::de::IntoDeserializer;
@@ -416,7 +416,7 @@ type PollState<M> = Arc<(Mutex<VecDeque<(Instant, Arc<M>)>>, Condvar)>;
 pub struct ZmqWriter<M: CalMessage> {
     topic: String,
     logger: Logger,
-    externalizer: Arc<dyn Externalizer<M>>,
+    externalizer: Arc<dyn Externalizer>,
     direct_tx: Option<tokio::sync::mpsc::UnboundedSender<Message>>,
     writer_buf: Option<Arc<Mutex<VecDeque<Message>>>>,
     writer_notify: Option<Arc<tokio::sync::Notify>>,
@@ -438,7 +438,7 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
                 "message failed schema validation",
             )
         })?;
-        let payload = self.externalizer.write_to_bytes(message)?;
+        let payload = write_to_bytes(self.externalizer.as_ref(), message, &self.topic)?;
         // RADIO/DISH: part[0] = group (topic for DISH filtering), part[1] = payload
         let msg = Message::multipart([self.topic.as_bytes().to_vec(), payload]);
         match &self.writer_buf {
@@ -505,7 +505,7 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
 pub struct ZmqReader<M: CalMessage> {
     topic: String,
     logger: Logger,
-    externalizer: Arc<dyn Externalizer<M>>,
+    externalizer: Arc<dyn Externalizer>,
     listeners: Arc<Mutex<Vec<Arc<dyn MessageListener<M>>>>>,
     /// Shared queue + condvar for poll-mode delivery with expiration support.
     poll_state: PollState<M>,
@@ -663,11 +663,8 @@ where
             (Some(tx), None, None, None)
         };
 
-        let externalizer: Arc<dyn Externalizer<M>> = Arc::from(build_externalizer(
-            &self.externalizer_name,
-            &self.config,
-            cal_topic.to_string(),
-        )?);
+        let externalizer: Arc<dyn Externalizer> =
+            Arc::from(build_externalizer(&self.externalizer_name, &self.config)?);
         trace!(self.logger, "ZmqAsb::create_writer()"; "topic" => cal_topic);
         Ok(Box::new(ZmqWriter {
             topic: cal_topic.to_string(),
@@ -719,11 +716,8 @@ where
         let poll_state_task = Arc::clone(&poll_state);
         let task_alive_task = Arc::clone(&task_alive);
         let topic_str = cal_topic.to_string();
-        let externalizer: Arc<dyn Externalizer<M>> = Arc::from(build_externalizer(
-            &self.externalizer_name,
-            &self.config,
-            cal_topic.to_string(),
-        )?);
+        let externalizer: Arc<dyn Externalizer> =
+            Arc::from(build_externalizer(&self.externalizer_name, &self.config)?);
         let ext_task = Arc::clone(&externalizer);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let reader_logger = self.logger.new(slog::o!("topic" => cal_topic.to_string()));
@@ -750,7 +744,7 @@ where
                     _ = shutdown_rx.changed() => break,
                 };
                 let payload = raw.part_bytes(1).unwrap_or_default();
-                let m = match ext_task.read_from_bytes(&payload) {
+                let m = match read_from_bytes::<M>(ext_task.as_ref(), &payload) {
                     Ok(m) => m,
                     Err(e) => {
                         slog::warn!(reader_logger, "deserialize failed"; "error" => %e);

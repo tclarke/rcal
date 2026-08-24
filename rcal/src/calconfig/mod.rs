@@ -173,7 +173,7 @@ pub struct UUIDFactory {
 ///
 /// This type controls XML whitespace only.  Transport-level externalizer selection
 /// is configured via [`Transport::externalizer`] and [`CalConfig::externalizer`].
-#[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SerializationFormat {
     /// Whitespace-compressed XML (default).
@@ -226,6 +226,31 @@ pub enum ExternalizerConfig {
         #[serde(default)]
         options: HashMap<String, toml::Value>,
     },
+}
+
+#[cfg(feature = "compression")]
+impl CompressionType {
+    /// Returns the string identifier for this compression type.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Gzip => "gzip",
+            Self::Deflate => "deflate",
+            Self::Zlib => "zlib",
+        }
+    }
+}
+
+#[cfg(feature = "compression")]
+impl std::str::FromStr for CompressionType {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "gzip" => Ok(Self::Gzip),
+            "deflate" => Ok(Self::Deflate),
+            "zlib" => Ok(Self::Zlib),
+            _ => Err(()),
+        }
+    }
 }
 
 #[cfg(feature = "compression")]
