@@ -1603,7 +1603,11 @@ fn gen_struct(
                 "    /// Returns the optional XSD element `{elem}`.\n\
                  \x20   fn {field_name}(&self) -> Option<&{dyn_rt}>;\n\
                  \x20   /// Returns a mutable reference to the optional XSD element `{elem}`.\n\
-                 \x20   fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}>;\n",
+                 \x20   fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}>;\n\
+                 \x20   /// Enables the optional XSD element `{elem}` with the given value (CAL-005290).\n\
+                 \x20   fn {field_name}_set(&mut self, value: {rust_type});\n\
+                 \x20   /// Disables the optional XSD element `{elem}` (CAL-005290).\n\
+                 \x20   fn {field_name}_disable(&mut self);\n",
                 elem = f.name,
             ));
         } else {
@@ -1728,12 +1732,16 @@ fn gen_struct(
                 if is_choice_field {
                     format!(
                         "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref() }}\n\
-                         fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut() }}\n"
+                         fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut() }}\n\
+                         fn {field_name}_set(&mut self, value: {rust_type}) {{ self.{field_name} = Some(value); }}\n\
+                         fn {field_name}_disable(&mut self) {{ self.{field_name} = None; }}\n"
                     )
                 } else {
                     format!(
                         "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref().map(|v| v as &{dyn_rt}) }}\n\
-                         fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n"
+                         fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n\
+                         fn {field_name}_set(&mut self, value: {rust_type}) {{ self.{field_name} = Some(value); }}\n\
+                         fn {field_name}_disable(&mut self) {{ self.{field_name} = None; }}\n"
                     )
                 }
             } else {
@@ -1777,12 +1785,16 @@ fn gen_struct(
                         if is_choice_field {
                             format!(
                                 "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref() }}\n\
-                                 fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut() }}\n"
+                                 fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut() }}\n\
+                                 fn {field_name}_set(&mut self, value: {rust_type}) {{ self.{field_name} = Some(value); }}\n\
+                                 fn {field_name}_disable(&mut self) {{ self.{field_name} = None; }}\n"
                             )
                         } else {
                             format!(
                                 "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref().map(|v| v as &{dyn_rt}) }}\n\
-                                 fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n"
+                                 fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n\
+                                 fn {field_name}_set(&mut self, value: {rust_type}) {{ self.{field_name} = Some(value); }}\n\
+                                 fn {field_name}_disable(&mut self) {{ self.{field_name} = None; }}\n"
                             )
                         }
                     } else {
