@@ -1,5 +1,4 @@
 [workspace]
-manifest_path = "rcal/Cargo.toml"
 changelog_config = "cliff.toml"
 git_release_enable = true
 git_tag_name = "{{ package }}-v{{ version }}"
