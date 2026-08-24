@@ -1,3 +1,29 @@
+//! Developer tool to create a subset of a schema file.
+//!
+//! This tool extracts the specified messages from a schema file and writes them to another schema file.
+//! The specified message elements and all required types are included in the subset. After creating a subset.xsd
+//! you can use `export RCAL_XSD_PATH=/path/to/subset.xsd` to only generate the subset elements. Alternatively you can
+//! add the following to `.cargo/config.toml`
+//! ```toml
+//! [env]
+//! RCAL_XSD_PATH="/path/to/subset.xsd"
+//! ````
+//! # Note
+//! This is generally used to create a schema for a particular system containing all possible elements.
+//! If you are building a service and only want to build struct for the elements used in that service
+//! it is preferable to add this to `.cargo/config.toml` instead.
+//! ```toml
+//! [env]
+//! RCAL_CALCONFIG_PATH="/path/to/services/CALConfig.toml"
+//! ```
+//!
+//! This will extract, at compile time, the needed messages from the calconfig file used by the service.
+//!
+//! # Usage
+//!   cargo run --bin xsd-subset -- --schema </path/to/full.xsd> --output </path/to/subset.xsd> \[message...]
+//!
+//! where `message` is a the name of an OMS Message you want in the subset.
+
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;

@@ -14,9 +14,9 @@ use std::time::Duration;
 
 use slog::{error, info, trace, warn};
 
-use crate::asb::{
-    AbstractServiceBus, AbstractServiceBusCreateMessage, AbstractServiceBusExt, AbstractWriter,
-    MessageListener, TopicQos,
+use crate::cal::{
+    AbstractCal, AbstractCalCreateMessage, AbstractCalExt, AbstractWriter, MessageListener,
+    TopicQos,
 };
 use crate::calconfig::CalConfig;
 use crate::uci::{CalMessage, CalResult};
@@ -89,10 +89,10 @@ where
 // AbstractServiceImpl
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Concrete AbstractService implementation, generic over the ASB type `A`.
+/// Concrete AbstractService implementation, generic over the CAL type `A`.
 ///
-/// `A` is held directly (not via `dyn AbstractServiceBus`) so that the
-/// generic `AbstractServiceBusExt<M>` methods remain callable at the method level.
+/// `A` is held directly (not via `dyn AbstractCal`) so that the
+/// generic `AbstractCalExt<M>` methods remain callable at the method level.
 #[rcal_macros::monitor]
 pub struct AbstractServiceImpl<A> {
     service_id: String,
@@ -107,7 +107,7 @@ pub struct AbstractServiceImpl<A> {
     _readers: std::sync::Mutex<Vec<Box<dyn Any + Send>>>,
 }
 
-impl<A: AbstractServiceBus> AbstractServiceImpl<A> {
+impl<A: AbstractCal> AbstractServiceImpl<A> {
     /// Constructs a new `AbstractServiceImpl`.
     ///
     /// `subsystem_ids` may be empty; they are stored and returned via
@@ -139,7 +139,7 @@ impl<A: AbstractServiceBus> AbstractServiceImpl<A> {
         }
     }
 
-    /// Creates a typed message, pre-populated with ASB header defaults.
+    /// Creates a typed message, pre-populated with CAL header defaults.
     pub fn create_message<M: CalMessage>(&self) -> CalResult<M> {
         trace!(self.logger, "AbstractServiceImpl::create_message";
             "service_id" => &self.service_id,
@@ -155,7 +155,7 @@ impl<A: AbstractServiceBus> AbstractServiceImpl<A> {
     ) -> CalResult<Box<dyn AbstractWriter<M>>>
     where
         M: CalMessage,
-        A: AbstractServiceBusExt<M>,
+        A: AbstractCalExt<M>,
     {
         trace!(self.logger, "AbstractServiceImpl::create_writer";
             "service_id" => &self.service_id,
@@ -172,7 +172,7 @@ impl<A: AbstractServiceBus> AbstractServiceImpl<A> {
     pub fn create_reader<M, F>(&mut self, topic: &str, qos: TopicQos, callback: F) -> CalResult<()>
     where
         M: CalMessage + 'static,
-        A: AbstractServiceBusExt<M>,
+        A: AbstractCalExt<M>,
         F: Fn(Arc<M>, &str) + Send + Sync + 'static,
     {
         trace!(self.logger, "AbstractServiceImpl::create_reader";
@@ -237,7 +237,7 @@ impl<A: AbstractServiceBus> AbstractServiceImpl<A> {
     }
 }
 
-impl<A: AbstractServiceBus> AbstractService for AbstractServiceImpl<A> {
+impl<A: AbstractCal> AbstractService for AbstractServiceImpl<A> {
     fn system_id(&self) -> &str {
         &self.system_id
     }
@@ -371,7 +371,8 @@ fn parse_duration(s: &str) -> Result<Duration, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asb::{AsbStatus, AsbStatusListener, MessageHeaderDefaults};
+    use crate::asb::{AbstractServiceBus, AsbStatus, AsbStatusListener};
+    use crate::cal::MessageHeaderDefaults;
     use crate::calconfig::CalConfig;
     use crate::uci::base::UUID;
 
@@ -435,6 +436,9 @@ mod tests {
         fn close(&mut self) -> crate::uci::CalResult<()> {
             Ok(())
         }
+    }
+
+    impl AbstractCal for NullAsb {
         fn message_header_defaults(&self) -> MessageHeaderDefaults {
             unimplemented!()
         }

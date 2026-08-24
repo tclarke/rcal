@@ -37,10 +37,10 @@ This is a standard cargo layout. all `.rs` and `.toml` files can be used as inpu
  - Additional modules may be added for Rust specific tools, interfaces, and implementations. For example, the abstract service bus (ASB) interfaces will be in the `uci::base` module but ASB implementations can be in `uci::asb` or `asb` modules.
 
 # Starting a task
-When given a goal to complete a specific github issue, first create a branch for the issue.
+When given a goal to complete a specific github issue, first create a branch for the issue and move the issue to "In progress".
 Enter plan mode and come up with a design which implements the issue.
-Always perfor "Coding review and checks" when finished implementing.
-Always update the issue start date and set status to "In Progres" when starting a new task
+Always perform "Coding review and checks" when finished implementing.
+Always update the issue start date and set status to "In Progress" when starting a new task
 Always set the issue status to "In Review" when a PR has been created.
 Always update the end date after the PR has been merged.
 

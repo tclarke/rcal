@@ -5,6 +5,7 @@
 //! - OMSC-SPC-008 Rev K — C++ CAL Interface Generation Specification
 
 pub mod asb;
+pub mod cal;
 pub mod calconfig;
 pub mod logging;
 pub mod qname;

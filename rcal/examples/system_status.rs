@@ -11,10 +11,8 @@ use std::time::Duration;
 
 use slog::{error, info};
 
-use rcal::asb::zmq::ZmqAsb;
-use rcal::asb::{
-    AbstractServiceBus, AbstractServiceBusCreateMessage, AbstractServiceBusExt, TopicQos,
-};
+use rcal::asb::{AbstractServiceBus, zmq::ZmqAsb};
+use rcal::cal::{AbstractCalCreateMessage, AbstractCalExt, TopicQos};
 use rcal::uci::CalMessage;
 use rcal::uci::base::UUID;
 use rcal::uci::types::*;
@@ -47,14 +45,14 @@ async fn main() {
     .expect("ASB init failed");
 
     // Create reader before writer so no messages are missed.
-    let mut reader = <ZmqAsb as AbstractServiceBusExt<SystemStatus_>>::create_reader(
+    let mut reader = <ZmqAsb as AbstractCalExt<SystemStatus_>>::create_reader(
         &mut bus,
         TOPIC,
         TopicQos::default(),
     )
     .expect("create_reader failed");
 
-    let mut writer = <ZmqAsb as AbstractServiceBusExt<SystemStatus_>>::create_writer(
+    let mut writer = <ZmqAsb as AbstractCalExt<SystemStatus_>>::create_writer(
         &mut bus,
         TOPIC,
         TopicQos::default(),

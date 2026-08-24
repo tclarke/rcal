@@ -1,4 +1,4 @@
-//! System-level integration tests for [`ZmqAsb`] / [`AbstractServiceBusExt`].
+//! System-level integration tests for [`ZmqAsb`] / [`AbstractCalExt`].
 //!
 //! Each test creates real `ZmqAsb` instances and exercises the full
 //! writer → RADIO → DISH → reader path with XML serialization.
@@ -9,7 +9,7 @@ use std::time::Duration;
 use rcal::QName;
 use rcal::asb::zmq::ZmqAsb;
 use rcal::uci::CalMessage;
-use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, MessageListener, TopicQos};
+use rcal::uci::base::{AbstractCalExt, AbstractServiceBus, MessageListener, TopicQos};
 
 // ── port allocator (multiprocess test only) ───────────────────────────────────
 
@@ -106,44 +106,29 @@ impl MessageListener<IntMsg> for CollectListener {
 async fn test_three_clients_shared_bus() {
     let mut bus = make_bus("Sys", "shared-bus", logger).await;
 
-    let mut a_writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
-        &mut bus,
-        "data",
-        TopicQos::default(),
-    )
-    .unwrap();
+    let mut a_writer =
+        <ZmqAsb as AbstractCalExt<IntMsg>>::create_writer(&mut bus, "data", TopicQos::default())
+            .unwrap();
 
-    let mut b_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus,
-        "data",
-        TopicQos::default(),
-    )
-    .unwrap();
-    let mut b_writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
-        &mut bus,
-        "status",
-        TopicQos::default(),
-    )
-    .unwrap();
+    let mut b_reader =
+        <ZmqAsb as AbstractCalExt<IntMsg>>::create_reader(&mut bus, "data", TopicQos::default())
+            .unwrap();
+    let mut b_writer =
+        <ZmqAsb as AbstractCalExt<IntMsg>>::create_writer(&mut bus, "status", TopicQos::default())
+            .unwrap();
 
     let c_data_log: Arc<Mutex<Vec<i32>>> = Arc::new(Mutex::new(Vec::new()));
-    let mut c_data_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus,
-        "data",
-        TopicQos::default(),
-    )
-    .unwrap();
+    let mut c_data_reader =
+        <ZmqAsb as AbstractCalExt<IntMsg>>::create_reader(&mut bus, "data", TopicQos::default())
+            .unwrap();
     c_data_reader
         .add_listener(Arc::new(CollectListener {
             received: Arc::clone(&c_data_log),
         }))
         .unwrap();
-    let mut c_status_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus,
-        "status",
-        TopicQos::default(),
-    )
-    .unwrap();
+    let mut c_status_reader =
+        <ZmqAsb as AbstractCalExt<IntMsg>>::create_reader(&mut bus, "status", TopicQos::default())
+            .unwrap();
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -201,20 +186,14 @@ async fn test_three_clients_separate_radios() {
     bus_c.add_receive_peer("inproc://sep-client-a");
     bus_c.add_receive_peer("inproc://sep-client-b");
 
-    let mut a_writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
-        &mut bus_a,
-        "data",
-        TopicQos::default(),
-    )
-    .unwrap();
+    let mut a_writer =
+        <ZmqAsb as AbstractCalExt<IntMsg>>::create_writer(&mut bus_a, "data", TopicQos::default())
+            .unwrap();
 
-    let mut b_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus_b,
-        "data",
-        TopicQos::default(),
-    )
-    .unwrap();
-    let mut b_writer = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_writer(
+    let mut b_reader =
+        <ZmqAsb as AbstractCalExt<IntMsg>>::create_reader(&mut bus_b, "data", TopicQos::default())
+            .unwrap();
+    let mut b_writer = <ZmqAsb as AbstractCalExt<IntMsg>>::create_writer(
         &mut bus_b,
         "status",
         TopicQos::default(),
@@ -222,18 +201,15 @@ async fn test_three_clients_separate_radios() {
     .unwrap();
 
     let c_data_log: Arc<Mutex<Vec<i32>>> = Arc::new(Mutex::new(Vec::new()));
-    let mut c_data_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus_c,
-        "data",
-        TopicQos::default(),
-    )
-    .unwrap();
+    let mut c_data_reader =
+        <ZmqAsb as AbstractCalExt<IntMsg>>::create_reader(&mut bus_c, "data", TopicQos::default())
+            .unwrap();
     c_data_reader
         .add_listener(Arc::new(CollectListener {
             received: Arc::clone(&c_data_log),
         }))
         .unwrap();
-    let mut c_status_reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
+    let mut c_status_reader = <ZmqAsb as AbstractCalExt<IntMsg>>::create_reader(
         &mut bus_c,
         "status",
         TopicQos::default(),
@@ -296,12 +272,9 @@ async fn test_multiprocess_receive_peer() {
     let mut bus = make_tcp_bus("Receiver", port_r, logger).await;
     bus.add_receive_peer(format!("tcp://127.0.0.1:{port_s}"));
 
-    let mut reader = <ZmqAsb as AbstractServiceBusExt<IntMsg>>::create_reader(
-        &mut bus,
-        "data",
-        TopicQos::default(),
-    )
-    .unwrap();
+    let mut reader =
+        <ZmqAsb as AbstractCalExt<IntMsg>>::create_reader(&mut bus, "data", TopicQos::default())
+            .unwrap();
 
     // read() uses cvar.wait_timeout which blocks the tokio executor thread, preventing
     // the reader task from running. Sleep long enough for the sender process to start,

@@ -10,7 +10,7 @@ use std::time::Duration;
 use rcal::QName;
 use rcal::asb::zmq::ZmqAsb;
 use rcal::uci::CalMessage;
-use rcal::uci::base::{AbstractServiceBus, AbstractServiceBusExt, TopicQos};
+use rcal::uci::base::{AbstractCalExt, AbstractServiceBus, TopicQos};
 
 // ── shared port allocator ─────────────────────────────────────────────────────
 
@@ -76,14 +76,10 @@ async fn test_qos_time_based_filter() {
         ..TopicQos::default()
     };
     let mut reader =
-        <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos)
+        <ZmqAsb as AbstractCalExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos).unwrap();
+    let mut writer =
+        <ZmqAsb as AbstractCalExt<QosMsg>>::create_writer(&mut bus, "t", TopicQos::default())
             .unwrap();
-    let mut writer = <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_writer(
-        &mut bus,
-        "t",
-        TopicQos::default(),
-    )
-    .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Burst: only the first message should pass the filter
@@ -142,14 +138,10 @@ async fn test_qos_expiration() {
         ..TopicQos::default()
     };
     let mut reader =
-        <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos)
+        <ZmqAsb as AbstractCalExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos).unwrap();
+    let mut writer =
+        <ZmqAsb as AbstractCalExt<QosMsg>>::create_writer(&mut bus, "t", TopicQos::default())
             .unwrap();
-    let mut writer = <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_writer(
-        &mut bus,
-        "t",
-        TopicQos::default(),
-    )
-    .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Write 3 messages, wait for them to expire
@@ -206,14 +198,10 @@ async fn test_qos_reader_buffer() {
         ..TopicQos::default()
     };
     let mut reader =
-        <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos)
+        <ZmqAsb as AbstractCalExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos).unwrap();
+    let mut writer =
+        <ZmqAsb as AbstractCalExt<QosMsg>>::create_writer(&mut bus, "t", TopicQos::default())
             .unwrap();
-    let mut writer = <ZmqAsb as AbstractServiceBusExt<QosMsg>>::create_writer(
-        &mut bus,
-        "t",
-        TopicQos::default(),
-    )
-    .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     for i in 0..5u32 {
