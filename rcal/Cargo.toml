@@ -82,5 +82,4 @@ serde_json = "1.0.151"
 allow-branch = [ "main" ]
 sign-commit = true
 sign-tag = true
-publish = false
 verify = false
