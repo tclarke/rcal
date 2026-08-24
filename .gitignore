@@ -1,9 +1,11 @@
 *.archimate.bak
 .secrets/
 .env*
+!.envrc
 skills-lock.json
 .claude/settings.local.json
 .claude/skills
 rcal/.cargo/config.toml
 rcal/Cargo.lock
 rcal/target/
+.direnv
