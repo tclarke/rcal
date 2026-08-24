@@ -1967,6 +1967,9 @@ fn xsd_to_rust(ns: Option<&str>, local: &str) -> String {
             "dateTime" => return "crate::xs::DateTime".to_string(),
             "time" => return "crate::xs::Time".to_string(),
             "string" => return "crate::xs::XsString".to_string(),
+            "anyURI" => return "crate::xs::AnyUri".to_string(),
+            "normalizedString" => return "crate::xs::NormalizedString".to_string(),
+            "token" => return "crate::xs::Token".to_string(),
             "hexBinary" => return "crate::xs::HexBinary".to_string(),
             _ => {}
         }

@@ -23,6 +23,9 @@
 //! | `xs:dateTime`      | `DateTime` (chrono UTC) | **CERT CAL-016028**        |
 //! | `xs:time`          | `i64` (ns since 00:00Z) | **CERT CAL-016029**        |
 //! | `xs:string`        | `String`                | OMSC-SPC-008 Table 9.1-2   |
+//! | `xs:anyURI`        | `String`                | **CERT CXX-004940**        |
+//! | `xs:normalizedString` | `String`             | **CERT CXX-004940**        |
+//! | `xs:token`         | `String`                | **CERT CXX-004940**        |
 //! | `xs:hexBinary`     | `Vec<u8>`               | OMSC-SPC-008 Table 9.1-3   |
 //! | `xs:base64Binary`  | `Vec<u8>`               | OMSC-SPC-008 Table 9.1-3   |
 //!
@@ -171,6 +174,15 @@ pub type XsString = String;
 /// `xs:string` accessor — same as [`XsString`]; provided for symmetry with
 /// the C++ `StringAccessor` class.
 pub type StringAccessor = String;
+
+/// `xs:anyURI` — string-valued URI (CERT CXX-004940).
+pub type AnyUri = String;
+
+/// `xs:normalizedString` — whitespace-normalized string (CERT CXX-004940).
+pub type NormalizedString = String;
+
+/// `xs:token` — whitespace-collapsed string (CERT CXX-004940).
+pub type Token = String;
 
 // ── Binary types (OMSC-SPC-008 Table 9.1-3) ─────────────────────────────────
 
