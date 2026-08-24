@@ -586,7 +586,7 @@
       </child>
       <child xsi:type="archimate:DiagramObject" id="do-v1-calfactory" archimateElement="e-calfactory">
         <bounds x="380" y="520" width="140" height="55"/>
-        <sourceConnection xsi:type="archimate:Connection" id="con-v1-factory-asb" source="do-v1-calfactory" target="do-v1-asb" archimateRelationship="r-factory-asb"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v1-factory-asb" source="do-v1-calfactory" target="do-v1-asb" archimateRelationship="r-factory-cal"/>
       </child>
       <child xsi:type="archimate:DiagramObject" id="do-v1-asbtech" targetConnections="con-v1-asb-tech" archimateElement="e-asbtech">
         <bounds x="200" y="620" width="140" height="55"/>
@@ -646,7 +646,7 @@
     <element xsi:type="archimate:ArchimateDiagramModel" name="Detail - Abstract Service Bus" id="v5">
       <child xsi:type="archimate:DiagramObject" id="do-v5-calfactory" archimateElement="e-calfactory">
         <bounds x="504" y="384" width="140" height="55"/>
-        <sourceConnection xsi:type="archimate:Connection" id="con-v5-factory" source="do-v5-calfactory" target="do-v5-asb" archimateRelationship="r-factory-asb"/>
+        <sourceConnection xsi:type="archimate:Connection" id="con-v5-factory" source="do-v5-calfactory" target="do-v5-asb" archimateRelationship="r-factory-cal"/>
       </child>
       <child xsi:type="archimate:DiagramObject" id="do-v5-asb" targetConnections="con-v5-factory" archimateElement="e-asb">
         <bounds x="330" y="258" width="163" height="55"/>
