@@ -41,8 +41,8 @@ See the `examples/` folder for usage.
   - `claude plugin marketplace add JuliusBrussee/caveman`
   - `claude plugin install caveman@caveman`
 - Install PonyTail -- Ponytail is a code auditing plugin which looks for unnecessary implementation layers and provides suggestions on how to minimize code changes and still meet requirements.
-  - `claude plugin markeyplace add DietrichGebert/ponytail`
-  - `claude plugin install ponytail/ponytail`
+  - `claude plugin marketplace add DietrichGebert/ponytail`
+  - `claude plugin install ponytail@ponytail`
 - Optional: Install and configure OmniRoute -- OmniRoute allows you to send simple tasks (such as basic refactoring, creating unit tests, etc.) to a different model (often a free model) and only sending the more complex stuff to Claude.
   - `npm install -g omniroute`
   - `omniroute server`
@@ -57,8 +57,6 @@ See the `examples/` folder for usage.
   - `claude mcp add --scope user rust-mcp-server -- ~/.cargo/bin/rust-mcp-server`
 - filesystem: Perform filesystem tasks (read, write, cd, list directory, find, etc.) with MCP instead of bash commands
   - `claude mcp add filesystem -s user  -- npx -y @modelcontextprotocol/server-filesystem ~/rcal`
-- Optional: sequencial-thinking: This provides a dynamic workflow for complex design and reasoning which uses multiple sub-agents to do parallel research, etc. It uses a LOT of tokens so care should be used.
-  - `claude mcp add sequential-thinking -s user -- npx -y @modelcontextprotocol/server-sequential-thinking`
 
 ## Release Process
 
