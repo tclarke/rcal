@@ -7,6 +7,7 @@
 pub mod asb;
 pub mod cal;
 pub mod calconfig;
+pub mod externalizer;
 pub mod logging;
 pub mod qname;
 #[cfg(feature = "service")]

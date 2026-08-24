@@ -18,6 +18,7 @@ description = "OMS Critical Abstraction Layer (CAL) implementation for Rust"
 [features]
 service = []
 zmq = ["dep:omq-tokio"]
+compression = ["dep:flate2"]
 default = ["service", "zmq"]
 
 [dependencies]
@@ -33,6 +34,7 @@ slog-term = "2.9.2"
 toml = "1.1.4"
 uuid = { version = "1.24.0", features = ["v1", "v3", "v4", "slog", "serde", "rng"] }
 omq-tokio = { version = "0.21.1", optional = true }
+flate2 = { version = "1", optional = true }
 tokio = { version = "1.53.1", features = ["full"] }
 quick-xml = { version = "0.37", features = ["serialize"] }
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -53,6 +55,10 @@ name = "basic"
 
 [[example]]
 name = "custom_tokio"
+
+[[example]]
+name = "xml_gzip"
+required-features = ["compression"]
 
 [[test]]
 name = "zmq_radio_dish"
