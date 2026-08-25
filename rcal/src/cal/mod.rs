@@ -82,6 +82,23 @@ pub trait MessageListener<M: CalMessage>: Send + Sync {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// RawMessageListener
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Callback for raw wire-format bytes received on a subscribed topic.
+///
+/// Used by bridge/proxy services that forward messages without deserializing
+/// them. Register with [`AbstractCal::subscribe_raw`].
+pub trait RawMessageListener: Send + Sync {
+    /// Called once per received message.
+    ///
+    /// `topic` is the resolved wire-level topic string.
+    /// `payload` is in the same wire format that [`AbstractCal::publish_raw`]
+    /// accepts — pass it through unchanged for zero-copy bridging.
+    fn on_raw_message(&self, topic: &str, payload: &[u8]);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // AbstractWriter
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -257,6 +274,34 @@ pub trait AbstractCal: AbstractServiceBus {
     /// Sourced from the `[system]` and `[service]` sections of the CAL
     /// configuration file.
     fn message_header_defaults(&self) -> MessageHeaderDefaults;
+
+    /// Subscribes to raw wire-format bytes on `topic`.
+    ///
+    /// The listener is called from a background task with the unmodified
+    /// transport payload each time a message arrives. Implementations that
+    /// do not support raw forwarding return `Err(OperationNotPermitted)`.
+    fn subscribe_raw(
+        &mut self,
+        _topic: &str,
+        _listener: Arc<dyn RawMessageListener>,
+    ) -> CalResult<()> {
+        Err(CalError::new(
+            CalErrorKind::OperationNotPermitted,
+            "subscribe_raw not supported by this transport",
+        ))
+    }
+
+    /// Publishes raw wire-format bytes to `topic`.
+    ///
+    /// `payload` must be in the same format that [`subscribe_raw`](Self::subscribe_raw)
+    /// delivers to listeners. Implementations that do not support raw
+    /// forwarding return `Err(OperationNotPermitted)`.
+    fn publish_raw(&mut self, _topic: &str, _payload: &[u8]) -> CalResult<()> {
+        Err(CalError::new(
+            CalErrorKind::OperationNotPermitted,
+            "publish_raw not supported by this transport",
+        ))
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

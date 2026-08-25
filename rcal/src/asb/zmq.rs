@@ -14,7 +14,8 @@ use omq_tokio::{Endpoint, Message, Options, Socket, SocketType};
 use super::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
 use crate::cal::{
     AbstractCal, AbstractCalExt, AbstractReader, AbstractWriter, Expiration, MessageBuffer,
-    MessageHeaderDefaults, MessageListener, Reliability, TimeBasedFilter, TopicQos,
+    MessageHeaderDefaults, MessageListener, RawMessageListener, Reliability, TimeBasedFilter,
+    TopicQos,
 };
 use crate::calconfig::{CalConfig, ReliabilityConfig, Transport};
 use crate::externalizer::{Externalizer, build_externalizer, read_from_bytes, write_to_bytes};
@@ -444,6 +445,59 @@ impl AbstractCal for ZmqAsb {
             classification,
             owner_producer,
         }
+    }
+
+    fn subscribe_raw(
+        &mut self,
+        topic: &str,
+        listener: Arc<dyn RawMessageListener>,
+    ) -> CalResult<()> {
+        let cal_topic = resolve_topic(&self.config, &self.service_name, topic).to_string();
+        let connect_uris: Vec<String> = if self.peer_uris.is_empty() {
+            vec![self.transport_uri.clone()]
+        } else {
+            self.peer_uris.clone()
+        };
+        for uri in &connect_uris {
+            uri.parse::<Endpoint>().map_err(|e| {
+                CalError::new(
+                    CalErrorKind::InitializationFailure,
+                    format!("invalid transport URI '{uri}': {e}"),
+                )
+            })?;
+        }
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            let dish = Socket::new(SocketType::Dish, Options::default());
+            for uri in &connect_uris {
+                if let Ok(ep) = uri.parse::<Endpoint>() {
+                    let _ = dish.connect(ep).await;
+                }
+            }
+            let _ = dish.join(cal_topic.clone()).await;
+            loop {
+                let raw = tokio::select! {
+                    result = dish.recv() => match result { Ok(r) => r, Err(_) => break },
+                    _ = shutdown_rx.changed() => break,
+                };
+                let payload = raw.part_bytes(1).unwrap_or_default();
+                listener.on_raw_message(&cal_topic, &payload);
+            }
+        });
+        Ok(())
+    }
+
+    fn publish_raw(&mut self, topic: &str, payload: &[u8]) -> CalResult<()> {
+        let cal_topic = resolve_topic(&self.config, &self.service_name, topic);
+        let tx = self.write_tx.as_ref().ok_or_else(|| {
+            CalError::new(
+                CalErrorKind::InvalidState { current: self.status.state },
+                "ASB is closed",
+            )
+        })?;
+        let msg = Message::multipart([cal_topic.as_bytes().to_vec(), payload.to_vec()]);
+        tx.send(msg)
+            .map_err(|_| CalError::new(CalErrorKind::AsbFailed, "ASB write channel closed"))
     }
 }
 

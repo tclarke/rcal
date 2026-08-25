@@ -6,13 +6,36 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 
+/// Top-level CAL configuration loaded from a TOML file.
+///
+/// Corresponds to the root of a CAL config file.  All sections are optional;
+/// defaults are applied when a section is absent.
+///
+/// # Example (TOML)
+/// ```toml
+/// [system]
+/// id = "my-app"
+///
+/// [[transport]]
+/// id = "primary"
+/// type = "zmq"
+/// uri = "tcp://localhost:5555"
+///
+/// [[service]]
+/// id = "Svc"
+/// transport = "primary"
+/// ```
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
 pub struct CalConfig {
+    /// System identity and global settings (`[system]`).
     pub system: System,
+    /// UUID generation strategy (`[uuid-factory]`).
     #[serde(rename = "uuid-factory")]
     pub uuidfactory: UUIDFactory,
+    /// List of named transport endpoints (`[[transport]]`).
     pub transport: Vec<Transport>,
+    /// List of named services (`[[service]]`).
     pub service: Vec<Service>,
     /// Named externalizer configurations.
     ///
@@ -102,9 +125,12 @@ pub enum SinkType {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(default)]
 pub struct SinkConfig {
+    /// Destination: stdout, stderr, or a file path.
     #[serde(flatten)]
     pub sink_type: SinkType,
+    /// Minimum log level emitted to this sink.
     pub level: LogLevel,
+    /// Output format for this sink.
     pub format: LogFormat,
     /// Subsystem names to include; empty = accept all.
     pub subsystems: Vec<String>,
@@ -125,16 +151,23 @@ impl Default for SinkConfig {
 #[derive(Deserialize, Serialize, Debug, Clone, Default)]
 #[serde(default)]
 pub struct LoggingConfig {
+    /// One or more log sink destinations (`[[system.logging.sink]]`).
     pub sink: Vec<SinkConfig>,
 }
 
+/// System-wide identity and runtime settings (`[system]`).
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
 pub struct System {
+    /// Unique string identifier for this system instance.
     pub id: String,
+    /// Human-readable label (optional, for display only).
     pub label: Option<String>,
+    /// UUID assigned to this system.
     pub uuid: UUID,
+    /// Name of the transport used when a service does not specify one.
     pub default_transport: Option<String>,
+    /// Logging sink configuration (`[system.logging]`).
     pub logging: LoggingConfig,
     /// Optional MissionID UUID populated in message headers.
     pub mission_id: Option<UUID>,
@@ -146,18 +179,22 @@ pub struct System {
     pub owner_producer: Vec<String>,
 }
 
+/// UUID generation algorithm (`[uuid-factory]`).
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 pub enum UUIDFactoryType {
+    /// Version-4 random UUID (default).
     #[default]
     Random,
+    /// Version-1 time-based UUID.
     TimeBased,
 }
 
+/// UUID factory configuration (`[uuid-factory]`).
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
 pub struct UUIDFactory {
     #[serde(rename = "type")]
-    /// The factory type
+    /// UUID generation algorithm.
     pub type_: UUIDFactoryType,
 
     /// Namespace for "namespace' generators."
@@ -270,12 +307,16 @@ pub enum CompressionType {
     Zlib,
 }
 
+/// Named transport endpoint (`[[transport]]`).
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
 pub struct Transport {
+    /// Unique name referenced by services and the system default.
     pub id: String,
+    /// Transport type string (e.g. `"zmq"`, `"file"`).
     #[serde(rename = "type")]
     pub type_: String,
+    /// Endpoint URI (e.g. `"tcp://localhost:5555"`, a file path for file transport).
     pub uri: String,
     /// Name of the externalizer to use for this transport (default: `"xml"`).
     ///
@@ -293,11 +334,15 @@ pub struct NamedUuid {
     pub uuid: UUID,
 }
 
+/// Named service configuration (`[[service]]`).
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
 pub struct Service {
+    /// Unique service name; used to look up configuration at runtime.
     pub id: String,
+    /// Transport name override; falls back to `system.default_transport` when absent.
     pub transport: Option<String>,
+    /// Topics published or subscribed by this service (`[[service.topic]]`).
     pub topic: Vec<Topic>,
     /// Optional service UUID used to populate the ServiceID field in message headers.
     pub uuid: Option<UUID>,
@@ -343,8 +388,10 @@ impl Service {
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ReliabilityConfig {
+    /// Fire-and-forget delivery; no retransmission on loss (default).
     #[default]
     BestEffort,
+    /// Guaranteed in-order delivery with retransmission.
     Reliable,
 }
 
@@ -367,12 +414,16 @@ pub struct TopicQosConfig {
     pub reader_buffer: Option<usize>,
 }
 
+/// Named topic within a service (`[[service.topic]]`).
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
 pub struct Topic {
+    /// Logical topic name used by ASB writers/readers to resolve the topic.
     pub id: String,
+    /// UCI message type name for type-checking or routing (optional).
     #[serde(rename = "type")]
     pub type_: Option<String>,
+    /// Wire-level topic string override; defaults to `id` when absent.
     pub topic: Option<String>,
     /// Optional per-topic QoS defaults (CAL-005210).
     pub qos: Option<TopicQosConfig>,

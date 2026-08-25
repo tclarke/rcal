@@ -22,12 +22,27 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
-use rcal::cal::AbstractCal;
+use rcal::cal::{AbstractCal, RawMessageListener};
 use rcal::uci::{self, CalError, CalImplementationErrorKind};
 use rcal::{calconfig::CalConfig, service::ServiceLifecycleState};
-use rcal:: service::AbstractService;
+use rcal::service::AbstractService;
 use rcal_macros::rcal_trace;
 use slog::{Logger, warn};
+
+struct BridgeListener {
+    targets: Vec<Arc<Mutex<dyn AbstractCal>>>,
+    logger: Logger,
+}
+
+impl RawMessageListener for BridgeListener {
+    fn on_raw_message(&self, topic: &str, payload: &[u8]) {
+        for target in &self.targets {
+            if let Err(e) = target.lock().unwrap().publish_raw(topic, payload) {
+                warn!(self.logger, "Bridge forward failed"; "topic" => topic, "error" => %e);
+            }
+        }
+    }
+}
 
 pub struct CalBridgeService {
     logger: Logger,
@@ -89,6 +104,39 @@ impl AbstractService for CalBridgeService {
 
         for bridge in bridge_names.iter() {
             self.cals.push(uci::get_cal(self.service_name.as_str(), bridge.as_str(), Arc::clone(&self.config), self.logger.clone()).await?);
+        }
+
+        let topics: Vec<String> = self
+            .config
+            .get_service(self.service_name.as_str())
+            .unwrap()
+            .topic
+            .iter()
+            .map(|t| t.id.clone())
+            .collect();
+
+        let transport_names: Vec<String> = std::iter::once(main_transport.id.clone())
+            .chain(bridge_names.iter().cloned())
+            .collect();
+
+        for topic in &topics {
+            for (i, cal) in self.cals.iter().enumerate() {
+                let other_cals: Vec<_> = self
+                    .cals
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .map(|(_, c)| Arc::clone(c))
+                    .collect();
+                let listener = Arc::new(BridgeListener {
+                    targets: other_cals,
+                    logger: self.logger.clone(),
+                });
+                if let Err(e) = cal.lock().unwrap().subscribe_raw(topic, listener) {
+                    warn!(self.logger, "Cannot subscribe to topic on CAL";
+                        "topic" => topic.as_str(), "transport" => &transport_names[i], "error" => %e);
+                }
+            }
         }
 
         self.state = ServiceLifecycleState::Active;
