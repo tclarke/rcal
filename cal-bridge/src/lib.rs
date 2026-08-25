@@ -19,25 +19,26 @@
 #![allow(dead_code)]
 
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use rcal::cal::AbstractCal;
 use rcal::uci::{self, CalError, CalImplementationErrorKind};
 use rcal::{calconfig::CalConfig, service::ServiceLifecycleState};
 use rcal:: service::AbstractService;
-use slog::{Logger, warn};
+use slog::{Logger, trace, warn};
 
 pub struct CalBridgeService {
     logger: Logger,
     config: Arc<CalConfig>,
     service_name: String,
     state: ServiceLifecycleState,
-    cals: Vec<dyn AbstractCal>,
+    cals: Vec<Arc<Mutex<dyn AbstractCal>>>,
 }
 
 impl CalBridgeService {
     pub fn new(service_name: String, config: Arc<CalConfig>, logger: Logger) -> Result<Self> {
+        trace!(logger, "CalBridgeService::new");
         // Check that it's valid here so we can just unwrap() the Service everywhere else
         let _service_config = config.get_service(service_name.as_str())
             .ok_or(anyhow!("Service does not exist in config"))?;
@@ -53,6 +54,7 @@ impl CalBridgeService {
 
 impl AbstractService for CalBridgeService {
     fn system_id(&self) -> &str {
+        trace!(self.logger, "CalBridgeService::system_id");
         self.config.system.id.as_str()
     }
 
@@ -68,31 +70,31 @@ impl AbstractService for CalBridgeService {
         self.state
     }
 
-    fn activate(&mut self) -> rcal::uci::CalResult<()> {
+    async fn activate(&mut self) -> rcal::uci::CalResult<()> {
         if self.state == ServiceLifecycleState::Active {
             warn!(self.logger, "Service is already active");
         }
 
         // Create the CALs
         let service = self.config.get_service(self.service_name.as_str()).unwrap();
-        let main_transport = self.config.get_transport_for_service(self.service_name.as_str()).ok_or(|| {
+        let main_transport = self.config.get_transport_for_service(self.service_name.as_str()).ok_or(
                 CalError::new_impl(CalImplementationErrorKind::ConfigError, "Service transport is invalid.")
-            })?;
+            )?;
         let bridge_names: Vec<String> = service.get_option("bridge").unwrap_or_default();
         if bridge_names.is_empty() {
             return Err(CalError::new_impl(CalImplementationErrorKind::ConfigError, "Must be at least 1 service.bridge entry"));
         }
-        self.cals.push(uci::get_cal(self.service_name, main_transport.id, self.config, self.logger.clone())?);
+        self.cals.push(uci::get_cal(self.service_name.as_str(), main_transport.id.clone(), Arc::clone(&self.config), self.logger.clone()).await?);
 
         for bridge in bridge_names.iter() {
-            self.cals.push(uci::get_cal(self.service_name, bridge.as_stR(), self.config, self.logger.clone())?);
+            self.cals.push(uci::get_cal(self.service_name.as_str(), bridge.as_str(), Arc::clone(&self.config), self.logger.clone()).await?);
         }
 
         self.state = ServiceLifecycleState::Active;
         Ok(())
     }
 
-    fn deactivate(&mut self) -> rcal::uci::CalResult<()> {
+    async fn deactivate(&mut self) -> rcal::uci::CalResult<()> {
         if self.state == ServiceLifecycleState::Inactive {
             warn!(self.logger, "Service is already inactive");
         }
@@ -100,7 +102,7 @@ impl AbstractService for CalBridgeService {
         Ok(())
     }
 
-    fn reset(&mut self) -> rcal::uci::CalResult<()> {
+    async fn reset(&mut self) -> rcal::uci::CalResult<()> {
         todo!()
     }
 }

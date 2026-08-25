@@ -89,7 +89,7 @@ async fn main() {
         root_logger.clone(),
     );
 
-    if let Err(e) = svc.activate() {
+    if let Err(e) = svc.activate().await {
         error!(root_logger, "activate failed"; "error" => %e);
         std::process::exit(1);
     }
@@ -250,7 +250,7 @@ async fn main() {
     // Keep status loops alive.
     tokio::signal::ctrl_c().await.ok();
 
-    if let Err(e) = svc.deactivate() {
+    if let Err(e) = svc.deactivate().await {
         error!(root_logger, "deactivate failed"; "error" => %e);
     }
     info!(root_logger, "service stopped"; "service" => &service_name);

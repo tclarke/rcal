@@ -7,11 +7,19 @@
 //! - OMSC-SPC-001 Rev L §5 (service lifecycle)
 //! - OMSC-SPC-008 Rev K §9 (AbstractService)
 
+use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cal::MessageListener;
+use slog::{error, info, trace, warn};
+
+use crate::cal::{
+    AbstractCal, AbstractCalCreateMessage, AbstractCalExt, AbstractWriter,
+    MessageListener, TopicQos,
+};
+use crate::calconfig::CalConfig;
+use crate::uci::base::UUID;
 use crate::uci::{CalMessage, CalResult};
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -49,13 +57,213 @@ pub trait AbstractService: Send + Sync {
     fn lifecycle_state(&self) -> ServiceLifecycleState;
 
     /// Transitions the service to `Active`. Idempotent — no-op if already active.
-    fn activate(&mut self) -> CalResult<()>;
+    fn activate(&mut self) -> impl Future<Output = CalResult<()>> + Send;
 
     /// Transitions the service to `Inactive`. Idempotent — no-op if already inactive.
-    fn deactivate(&mut self) -> CalResult<()>;
+    fn deactivate(&mut self) -> impl Future<Output = CalResult<()>> + Send;
 
     /// Resets the service to its initial state.
-    fn reset(&mut self) -> CalResult<()>;
+    fn reset(&mut self) -> impl Future<Output = CalResult<()>> + Send;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AbstractServiceImpl
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Concrete [`AbstractService`] implementation, generic over the CAL type `A`.
+///
+/// `A` is held directly (not via `dyn AbstractCal`) so that the generic
+/// [`AbstractCalExt<M>`] methods remain callable at the method level.
+#[rcal_macros::monitor]
+pub struct AbstractServiceImpl<A> {
+    service_id: String,
+    system_id: String,
+    subsystem_ids: Vec<UUID>,
+    state: ServiceLifecycleState,
+    asb: A,
+    #[allow(dead_code)]
+    config: Arc<CalConfig>,
+    logger: slog::Logger,
+    _readers: std::sync::Mutex<Vec<Box<dyn Any + Send>>>,
+}
+
+impl<A: AbstractCal> AbstractServiceImpl<A> {
+    /// Constructs a new `AbstractServiceImpl`.
+    pub fn new(
+        service_id: impl Into<String>,
+        system_id: impl Into<String>,
+        subsystem_ids: Vec<UUID>,
+        asb: A,
+        config: Arc<CalConfig>,
+        logger: slog::Logger,
+    ) -> Self {
+        let service_id = service_id.into();
+        let system_id = system_id.into();
+        trace!(logger, "AbstractServiceImpl::new";
+            "service_id" => &service_id,
+            "system_id" => &system_id,
+        );
+        Self {
+            service_id,
+            system_id,
+            subsystem_ids,
+            state: ServiceLifecycleState::Inactive,
+            asb,
+            config,
+            logger,
+            _readers: std::sync::Mutex::new(Vec::new()),
+            __monitor_mutex: std::sync::Mutex::new(()),
+        }
+    }
+
+    /// Creates a typed message, pre-populated with ASB header defaults.
+    pub fn create_message<M: CalMessage>(&self) -> CalResult<M> {
+        trace!(self.logger, "AbstractServiceImpl::create_message";
+            "service_id" => &self.service_id,
+        );
+        self.asb.create_message::<M>()
+    }
+
+    /// Creates a typed writer for `topic`.
+    pub fn create_writer<M>(
+        &mut self,
+        topic: &str,
+        qos: TopicQos,
+    ) -> CalResult<Box<dyn AbstractWriter<M>>>
+    where
+        M: CalMessage,
+        A: AbstractCalExt<M>,
+    {
+        trace!(self.logger, "AbstractServiceImpl::create_writer";
+            "service_id" => &self.service_id,
+            "topic" => topic,
+        );
+        let _guard = self.__monitor_mutex.lock().unwrap();
+        self.asb.create_writer(topic, qos)
+    }
+
+    /// Creates a typed reader for `topic` with a callback closure.
+    ///
+    /// The reader is kept alive for the lifetime of this service instance.
+    pub fn create_reader<M, F>(&mut self, topic: &str, qos: TopicQos, callback: F) -> CalResult<()>
+    where
+        M: CalMessage + 'static,
+        A: AbstractCalExt<M>,
+        F: Fn(Arc<M>, &str) + Send + Sync + 'static,
+    {
+        trace!(self.logger, "AbstractServiceImpl::create_reader";
+            "service_id" => &self.service_id,
+            "topic" => topic,
+        );
+        let _guard = self.__monitor_mutex.lock().unwrap();
+        let mut reader = self.asb.create_reader(topic, qos).map_err(|e| {
+            error!(self.logger, "create_reader failed";
+                "service_id" => &self.service_id,
+                "topic" => topic,
+                "error" => %e,
+            );
+            e
+        })?;
+        let listener: Arc<dyn MessageListener<M>> = Arc::new(CallbackListener {
+            topic: topic.to_string(),
+            callback,
+            _p: PhantomData,
+        });
+        reader.add_listener(listener).map_err(|e| {
+            error!(self.logger, "add_listener failed";
+                "service_id" => &self.service_id,
+                "topic" => topic,
+                "error" => %e,
+            );
+            e
+        })?;
+        self._readers
+            .lock()
+            .unwrap()
+            .push(Box::new(reader) as Box<dyn Any + Send>);
+        Ok(())
+    }
+
+    /// Parses `status_delay` from the service config.
+    pub fn status_delay(&self) -> Option<Duration> {
+        let cfg = self.config.get_service(&self.service_id)?;
+        let s = cfg.status_delay.as_deref()?;
+        parse_duration(s)
+            .map_err(|e| {
+                warn!(self.logger, "invalid status_delay, ignored";
+                    "service_id" => &self.service_id,
+                    "value" => s,
+                    "error" => e,
+                );
+            })
+            .ok()
+    }
+
+    /// Returns `service_status_data_request_enable` from config.
+    pub fn status_data_request_enabled(&self) -> bool {
+        self.config
+            .get_service(&self.service_id)
+            .map(|s| s.service_status_data_request_enable)
+            .unwrap_or(false)
+    }
+
+    /// Mutable reference to the underlying CAL.
+    pub fn asb_mut(&mut self) -> &mut A {
+        &mut self.asb
+    }
+}
+
+impl<A: AbstractCal> AbstractService for AbstractServiceImpl<A> {
+    fn system_id(&self) -> &str {
+        &self.system_id
+    }
+
+    fn service_id(&self) -> &str {
+        &self.service_id
+    }
+
+    fn subsystem_ids(&self) -> Option<&[UUID]> {
+        Some(&self.subsystem_ids)
+    }
+
+    fn lifecycle_state(&self) -> ServiceLifecycleState {
+        let _guard = self.__monitor_mutex.lock().unwrap();
+        self.state
+    }
+
+    async fn activate(&mut self) -> CalResult<()> {
+        let _guard = self.__monitor_mutex.lock().unwrap();
+        if self.state == ServiceLifecycleState::Active {
+            warn!(self.logger, "activate called while already active";
+                "service_id" => &self.service_id,
+            );
+            return Ok(());
+        }
+        self.state = ServiceLifecycleState::Active;
+        info!(self.logger, "service activated"; "service_id" => &self.service_id);
+        Ok(())
+    }
+
+    async fn deactivate(&mut self) -> CalResult<()> {
+        let _guard = self.__monitor_mutex.lock().unwrap();
+        if self.state == ServiceLifecycleState::Inactive {
+            warn!(self.logger, "deactivate called while already inactive";
+                "service_id" => &self.service_id,
+            );
+            return Ok(());
+        }
+        self.state = ServiceLifecycleState::Inactive;
+        info!(self.logger, "service deactivated"; "service_id" => &self.service_id);
+        Ok(())
+    }
+
+    async fn reset(&mut self) -> CalResult<()> {
+        trace!(self.logger, "AbstractService::reset"; "service_id" => &self.service_id);
+        Err(crate::uci::CalError::new(
+            crate::uci::CalErrorKind::OperationNotPermitted,
+            format!("reset() not implemented for service '{}'", self.service_id),
+        ))
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -143,6 +351,7 @@ mod tests {
     use super::*;
     use crate::asb::{AbstractServiceBus, AsbStatus, AsbStatusListener};
     use crate::cal::{AbstractCal, MessageHeaderDefaults};
+    use crate::uci::base::UUID;
 
     struct NullAsb;
 
@@ -241,34 +450,34 @@ mod tests {
             self.state
         }
 
-        fn activate(&mut self) -> CalResult<()> {
+        async fn activate(&mut self) -> CalResult<()> {
             self.state = ServiceLifecycleState::Active;
             Ok(())
         }
 
-        fn deactivate(&mut self) -> CalResult<()> {
+        async fn deactivate(&mut self) -> CalResult<()> {
             self.state = ServiceLifecycleState::Inactive;
             Ok(())
         }
 
-        fn reset(&mut self) -> CalResult<()> {
-            self.deactivate()
+        async fn reset(&mut self) -> CalResult<()> {
+            self.deactivate().await
         }
     }
 
-    #[test]
-    fn test_reset_sets_state_inactive() {
+    #[tokio::test]
+    async fn test_reset_sets_state_inactive() {
         let mut svc = DummyService::new();
-        svc.activate().unwrap();
+        svc.activate().await.unwrap();
         assert_eq!(svc.lifecycle_state(), ServiceLifecycleState::Active);
-        svc.reset().unwrap();
+        svc.reset().await.unwrap();
         assert_eq!(svc.lifecycle_state(), ServiceLifecycleState::Inactive);
     }
 
-    #[test]
-    fn test_reset_idempotent_when_inactive() {
+    #[tokio::test]
+    async fn test_reset_idempotent_when_inactive() {
         let mut svc = DummyService::new();
-        assert!(svc.reset().is_ok());
+        assert!(svc.reset().await.is_ok());
         assert_eq!(svc.lifecycle_state(), ServiceLifecycleState::Inactive);
     }
 
