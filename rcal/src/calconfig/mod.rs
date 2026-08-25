@@ -312,6 +312,8 @@ pub struct Service {
     pub status_delay: Option<String>,
     /// When true, the service registers a ServiceStatusDataRequest reader and responds automatically.
     pub service_status_data_request_enable: bool,
+    /// Application-specific options not covered by the standard fields.
+    pub options: HashMap<String, toml::Value>,
 }
 
 impl Service {
@@ -329,6 +331,12 @@ impl Service {
             .iter()
             .find(|c| c.name == name)
             .map(|c| c.uuid)
+    }
+
+    /// Returns the named option deserialized as `T`, or `None` if absent or not deserializable.
+    pub fn get_option<T: serde::de::DeserializeOwned>(&self, name: impl Into<String>) -> Option<T> {
+        let value = self.options.get(&name.into())?;
+        T::deserialize(value.clone()).ok()
     }
 }
 

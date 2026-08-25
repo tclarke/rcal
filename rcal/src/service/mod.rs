@@ -7,18 +7,11 @@
 //! - OMSC-SPC-001 Rev L §5 (service lifecycle)
 //! - OMSC-SPC-008 Rev K §9 (AbstractService)
 
-use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
-use slog::{error, info, trace, warn};
-
-use crate::cal::{
-    AbstractCal, AbstractCalCreateMessage, AbstractCalExt, AbstractReader, AbstractWriter,
-    MessageListener, TopicQos,
-};
-use crate::calconfig::CalConfig;
+use crate::cal::MessageListener;
 use crate::uci::{CalMessage, CalResult};
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -50,7 +43,7 @@ pub trait AbstractService: Send + Sync {
     fn service_id(&self) -> &str;
 
     /// The OMS Subsystem Identifiers managed by this service.
-    fn subsystem_ids(&self) -> &[String];
+    fn subsystem_ids(&self) -> Option<&[crate::uci::base::UUID]>;
 
     /// Current lifecycle state.
     fn lifecycle_state(&self) -> ServiceLifecycleState;
@@ -82,258 +75,6 @@ where
 {
     fn on_message(&self, message: &Arc<M>) {
         (self.callback)(Arc::clone(message), &self.topic);
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// AbstractServiceImpl
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Concrete AbstractService implementation, generic over the CAL type `A`.
-///
-/// `A` is held directly (not via `dyn AbstractCal`) so that the
-/// generic `AbstractCalExt<M>` methods remain callable at the method level.
-#[rcal_macros::monitor]
-pub struct AbstractServiceImpl<A> {
-    service_id: String,
-    system_id: String,
-    subsystem_ids: Vec<String>,
-    state: ServiceLifecycleState,
-    asb: A,
-    #[allow(dead_code)]
-    config: Arc<CalConfig>,
-    logger: slog::Logger,
-    /// Stores readers so their background receive tasks remain alive.
-    _readers: std::sync::Mutex<Vec<Box<dyn Any + Send>>>,
-}
-
-impl<A: AbstractCal> AbstractServiceImpl<A> {
-    /// Constructs a new `AbstractServiceImpl`.
-    ///
-    /// `subsystem_ids` may be empty; they are stored and returned via
-    /// `AbstractService::subsystem_ids()`.
-    pub fn new(
-        service_id: impl Into<String>,
-        system_id: impl Into<String>,
-        subsystem_ids: Vec<String>,
-        asb: A,
-        config: Arc<CalConfig>,
-        logger: slog::Logger,
-    ) -> Self {
-        let service_id = service_id.into();
-        let system_id = system_id.into();
-        trace!(logger, "AbstractServiceImpl::new";
-            "service_id" => &service_id,
-            "system_id" => &system_id,
-        );
-        Self {
-            service_id,
-            system_id,
-            subsystem_ids,
-            state: ServiceLifecycleState::Inactive,
-            asb,
-            config,
-            logger,
-            _readers: std::sync::Mutex::new(Vec::new()),
-            __monitor_mutex: ::std::sync::Mutex::new(()),
-        }
-    }
-
-    /// Creates a typed message, pre-populated with CAL header defaults.
-    pub fn create_message<M: CalMessage>(&self) -> CalResult<M> {
-        trace!(self.logger, "AbstractServiceImpl::create_message";
-            "service_id" => &self.service_id,
-        );
-        self.asb.create_message::<M>()
-    }
-
-    /// Creates a typed writer for `topic`.
-    pub fn create_writer<M>(
-        &mut self,
-        topic: &str,
-        qos: TopicQos,
-    ) -> CalResult<Box<dyn AbstractWriter<M>>>
-    where
-        M: CalMessage,
-        A: AbstractCalExt<M>,
-    {
-        trace!(self.logger, "AbstractServiceImpl::create_writer";
-            "service_id" => &self.service_id,
-            "topic" => topic,
-        );
-        let _guard = self.__monitor_mutex.lock().unwrap();
-        self.asb.create_writer(topic, qos)
-    }
-
-    /// Creates a typed reader for `topic` with a callback closure.
-    ///
-    /// The callback `F(Arc<M>, &str)` receives each message and the topic name.
-    /// The reader is kept alive for the lifetime of this service instance.
-    pub fn create_reader<M, F>(&mut self, topic: &str, qos: TopicQos, callback: F) -> CalResult<()>
-    where
-        M: CalMessage + 'static,
-        A: AbstractCalExt<M>,
-        F: Fn(Arc<M>, &str) + Send + Sync + 'static,
-    {
-        trace!(self.logger, "AbstractServiceImpl::create_reader";
-            "service_id" => &self.service_id,
-            "topic" => topic,
-        );
-        let _guard = self.__monitor_mutex.lock().unwrap();
-        let mut reader = self.asb.create_reader(topic, qos).map_err(|e| {
-            error!(self.logger, "create_reader failed";
-                "service_id" => &self.service_id,
-                "topic" => topic,
-                "error" => %e,
-            );
-            e
-        })?;
-        let listener: Arc<dyn MessageListener<M>> = Arc::new(CallbackListener {
-            topic: topic.to_string(),
-            callback,
-            _p: PhantomData,
-        });
-        reader.add_listener(listener).map_err(|e| {
-            error!(self.logger, "add_listener failed";
-                "service_id" => &self.service_id,
-                "topic" => topic,
-                "error" => %e,
-            );
-            e
-        })?;
-        self._readers
-            .lock()
-            .unwrap()
-            .push(Box::new(reader) as Box<dyn Any + Send>);
-        Ok(())
-    }
-
-    /// Creates a typed polling reader for `topic` (CAL-005380).
-    ///
-    /// Unlike [`create_reader`][Self::create_reader], the reader is returned to the caller
-    /// rather than stored internally. The caller uses [`AbstractReader::read`] /
-    /// [`AbstractReader::read_no_wait`] to poll and [`AbstractReader::close`] to release it.
-    pub fn create_polling_reader<M>(
-        &mut self,
-        topic: &str,
-        qos: TopicQos,
-    ) -> CalResult<Box<dyn AbstractReader<M>>>
-    where
-        M: CalMessage + 'static,
-        A: AbstractCalExt<M>,
-    {
-        trace!(self.logger, "AbstractServiceImpl::create_polling_reader";
-            "service_id" => &self.service_id,
-            "topic" => topic,
-        );
-        let _guard = self.__monitor_mutex.lock().unwrap();
-        self.asb.create_reader(topic, qos).map_err(|e| {
-            error!(self.logger, "create_polling_reader failed";
-                "service_id" => &self.service_id,
-                "topic" => topic,
-                "error" => %e,
-            );
-            e
-        })
-    }
-
-    /// Parses `status_delay` from the service config, returning `None` if absent or unparseable.
-    pub fn status_delay(&self) -> Option<Duration> {
-        let cfg = self.config.get_service(&self.service_id)?;
-        let s = cfg.status_delay.as_deref()?;
-        parse_duration(s)
-            .map_err(|e| {
-                warn!(self.logger, "invalid status_delay, ignored";
-                    "service_id" => &self.service_id,
-                    "value" => s,
-                    "error" => e,
-                );
-            })
-            .ok()
-    }
-
-    /// Returns the value of `service_status_data_request_enable` from config.
-    pub fn status_data_request_enabled(&self) -> bool {
-        self.config
-            .get_service(&self.service_id)
-            .map(|s| s.service_status_data_request_enable)
-            .unwrap_or(false)
-    }
-
-    /// Mutable reference to the underlying ASB.
-    pub fn asb_mut(&mut self) -> &mut A {
-        &mut self.asb
-    }
-}
-
-impl<A: AbstractCal> AbstractService for AbstractServiceImpl<A> {
-    fn system_id(&self) -> &str {
-        &self.system_id
-    }
-
-    fn service_id(&self) -> &str {
-        &self.service_id
-    }
-
-    fn subsystem_ids(&self) -> &[String] {
-        &self.subsystem_ids
-    }
-
-    fn lifecycle_state(&self) -> ServiceLifecycleState {
-        trace!(self.logger, "AbstractService::lifecycle_state";
-            "service_id" => &self.service_id,
-        );
-        let _guard = self.__monitor_mutex.lock().unwrap();
-        self.state
-    }
-
-    fn activate(&mut self) -> CalResult<()> {
-        trace!(self.logger, "AbstractService::activate";
-            "service_id" => &self.service_id,
-        );
-        let _guard = self.__monitor_mutex.lock().unwrap();
-        if self.state == ServiceLifecycleState::Active {
-            warn!(self.logger, "activate called while already active";
-                "service_id" => &self.service_id,
-            );
-            return Ok(());
-        }
-        self.state = ServiceLifecycleState::Active;
-        info!(self.logger, "service activated";
-            "service_id" => &self.service_id,
-        );
-        Ok(())
-    }
-
-    fn deactivate(&mut self) -> CalResult<()> {
-        trace!(self.logger, "AbstractService::deactivate";
-            "service_id" => &self.service_id,
-        );
-        let _guard = self.__monitor_mutex.lock().unwrap();
-        if self.state == ServiceLifecycleState::Inactive {
-            warn!(self.logger, "deactivate called while already inactive";
-                "service_id" => &self.service_id,
-            );
-            return Ok(());
-        }
-        self.state = ServiceLifecycleState::Inactive;
-        info!(self.logger, "service deactivated";
-            "service_id" => &self.service_id,
-        );
-        Ok(())
-    }
-
-    fn reset(&mut self) -> CalResult<()> {
-        trace!(self.logger, "AbstractService::reset";
-            "service_id" => &self.service_id,
-        );
-        let _guard = self.__monitor_mutex.lock().unwrap();
-        self.state = ServiceLifecycleState::Inactive;
-        self._readers.lock().unwrap().clear();
-        info!(self.logger, "service reset";
-            "service_id" => &self.service_id,
-        );
-        Ok(())
     }
 }
 
@@ -375,7 +116,7 @@ macro_rules! service_status_loop {
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Parses a human-readable duration string: "1s", "500ms", "2m", etc.
-fn parse_duration(s: &str) -> Result<Duration, &'static str> {
+pub fn parse_duration(s: &str) -> Result<Duration, &'static str> {
     if let Some(ms) = s.strip_suffix("ms") {
         ms.parse::<u64>()
             .map(Duration::from_millis)
@@ -401,9 +142,7 @@ fn parse_duration(s: &str) -> Result<Duration, &'static str> {
 mod tests {
     use super::*;
     use crate::asb::{AbstractServiceBus, AsbStatus, AsbStatusListener};
-    use crate::cal::MessageHeaderDefaults;
-    use crate::calconfig::CalConfig;
-    use crate::uci::base::UUID;
+    use crate::cal::{AbstractCal, MessageHeaderDefaults};
 
     struct NullAsb;
 
@@ -473,21 +212,53 @@ mod tests {
         }
     }
 
-    fn make_svc() -> AbstractServiceImpl<NullAsb> {
-        let logger = slog::Logger::root(slog::Discard, slog::o!());
-        AbstractServiceImpl::new(
-            "svc",
-            "sys",
-            vec![],
-            NullAsb,
-            Arc::new(CalConfig::default()),
-            logger,
-        )
+    struct DummyService {
+        state: ServiceLifecycleState,
+    }
+
+    impl DummyService {
+        pub fn new() -> DummyService {
+            DummyService {
+                state: ServiceLifecycleState::Inactive,
+            }
+        }
+    }
+
+    impl AbstractService for DummyService {
+        fn system_id(&self) -> &str {
+            "sys'"
+        }
+
+        fn service_id(&self) -> &str {
+            "svc"
+        }
+
+        fn subsystem_ids(&self) -> Option<&[crate::uci::base::UUID]> {
+            None
+        }
+
+        fn lifecycle_state(&self) -> ServiceLifecycleState {
+            self.state
+        }
+
+        fn activate(&mut self) -> CalResult<()> {
+            self.state = ServiceLifecycleState::Active;
+            Ok(())
+        }
+
+        fn deactivate(&mut self) -> CalResult<()> {
+            self.state = ServiceLifecycleState::Inactive;
+            Ok(())
+        }
+
+        fn reset(&mut self) -> CalResult<()> {
+            self.deactivate()
+        }
     }
 
     #[test]
     fn test_reset_sets_state_inactive() {
-        let mut svc = make_svc();
+        let mut svc = DummyService::new();
         svc.activate().unwrap();
         assert_eq!(svc.lifecycle_state(), ServiceLifecycleState::Active);
         svc.reset().unwrap();
@@ -496,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_reset_idempotent_when_inactive() {
-        let mut svc = make_svc();
+        let mut svc = DummyService::new();
         assert!(svc.reset().is_ok());
         assert_eq!(svc.lifecycle_state(), ServiceLifecycleState::Inactive);
     }

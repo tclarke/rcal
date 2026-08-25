@@ -16,6 +16,9 @@ pub mod base;
 /// Generated UCI message types, produced from an XSD by the build script.
 pub mod types;
 
+/// Re-export get_cal;
+pub use crate::cal::get_cal;
+
 // ════════════════════════════════════════════════════════════════════════════
 // Sealed constructor token
 // ════════════════════════════════════════════════════════════════════════════

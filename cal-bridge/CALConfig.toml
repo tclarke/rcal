@@ -1,0 +1,44 @@
+[system]
+id = "SystemName"
+uuid = "fdb7ffab-e79c-4082-8f04-d601c49f301e"
+default_transport = "main-bus"
+
+[system.logging]
+default_level = "info"
+
+[[system.logging.sink]]
+type = "stdout"
+format = "pretty"
+level = "info"
+
+[[service]]
+id = "CalBridge"
+uuid = "513799aa-99fa-477d-9ba8-46783b24f3de"
+transport = "BusA"
+status_delay = "5s"
+service_status_data_request_enable = true
+options.bridge = ["BusB"]
+
+[[service.topic]]
+id = "SystemStatus"
+
+[[service.topic]]
+id = "ServiceStatus"
+
+[[service.topic]]
+id = "ServiceStatusDataRequest"
+
+[[service.topic]]
+id = "ServiceStatusDataRequestStatus"
+
+[[transport]]
+id = "BusA"
+type = "zmq"
+uri = "tcp://127.0.0.1:2000"
+externalizer = "xml"
+
+[[transport]]
+id = "BusB"
+type = "file"
+uri = "omsMessage.dump"
+externalizer = "xml"

@@ -23,5 +23,6 @@ mkShell {
     git
     git-lfs
     github-cli
+    rust-analyzer
   ];
 }
