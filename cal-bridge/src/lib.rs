@@ -26,7 +26,8 @@ use rcal::cal::AbstractCal;
 use rcal::uci::{self, CalError, CalImplementationErrorKind};
 use rcal::{calconfig::CalConfig, service::ServiceLifecycleState};
 use rcal:: service::AbstractService;
-use slog::{Logger, trace, warn};
+use rcal_macros::rcal_trace;
+use slog::{Logger, warn};
 
 pub struct CalBridgeService {
     logger: Logger,
@@ -36,9 +37,9 @@ pub struct CalBridgeService {
     cals: Vec<Arc<Mutex<dyn AbstractCal>>>,
 }
 
+#[rcal_trace]
 impl CalBridgeService {
     pub fn new(service_name: String, config: Arc<CalConfig>, logger: Logger) -> Result<Self> {
-        trace!(logger, "CalBridgeService::new");
         // Check that it's valid here so we can just unwrap() the Service everywhere else
         let _service_config = config.get_service(service_name.as_str())
             .ok_or(anyhow!("Service does not exist in config"))?;
@@ -52,9 +53,9 @@ impl CalBridgeService {
     }
 }
 
+#[rcal_trace]
 impl AbstractService for CalBridgeService {
     fn system_id(&self) -> &str {
-        trace!(self.logger, "CalBridgeService::system_id");
         self.config.system.id.as_str()
     }
 

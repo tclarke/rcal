@@ -89,6 +89,7 @@ pub struct AbstractServiceImpl<A> {
 
 impl<A: AbstractCal> AbstractServiceImpl<A> {
     /// Constructs a new `AbstractServiceImpl`.
+    #[rcal_macros::rcal_trace(logger = logger)]
     pub fn new(
         service_id: impl Into<String>,
         system_id: impl Into<String>,
@@ -99,7 +100,7 @@ impl<A: AbstractCal> AbstractServiceImpl<A> {
     ) -> Self {
         let service_id = service_id.into();
         let system_id = system_id.into();
-        trace!(logger, "AbstractServiceImpl::new";
+        trace!(logger, "";
             "service_id" => &service_id,
             "system_id" => &system_id,
         );
@@ -117,14 +118,16 @@ impl<A: AbstractCal> AbstractServiceImpl<A> {
     }
 
     /// Creates a typed message, pre-populated with ASB header defaults.
+    #[rcal_macros::rcal_trace]
     pub fn create_message<M: CalMessage>(&self) -> CalResult<M> {
-        trace!(self.logger, "AbstractServiceImpl::create_message";
+        trace!(self.logger, "";
             "service_id" => &self.service_id,
         );
         self.asb.create_message::<M>()
     }
 
     /// Creates a typed writer for `topic`.
+    #[rcal_macros::rcal_trace]
     pub fn create_writer<M>(
         &mut self,
         topic: &str,
@@ -134,7 +137,7 @@ impl<A: AbstractCal> AbstractServiceImpl<A> {
         M: CalMessage,
         A: AbstractCalExt<M>,
     {
-        trace!(self.logger, "AbstractServiceImpl::create_writer";
+        trace!(self.logger, "";
             "service_id" => &self.service_id,
             "topic" => topic,
         );
@@ -145,13 +148,14 @@ impl<A: AbstractCal> AbstractServiceImpl<A> {
     /// Creates a typed reader for `topic` with a callback closure.
     ///
     /// The reader is kept alive for the lifetime of this service instance.
+    #[rcal_macros::rcal_trace]
     pub fn create_reader<M, F>(&mut self, topic: &str, qos: TopicQos, callback: F) -> CalResult<()>
     where
         M: CalMessage + 'static,
         A: AbstractCalExt<M>,
         F: Fn(Arc<M>, &str) + Send + Sync + 'static,
     {
-        trace!(self.logger, "AbstractServiceImpl::create_reader";
+        trace!(self.logger, "";
             "service_id" => &self.service_id,
             "topic" => topic,
         );
@@ -257,8 +261,9 @@ impl<A: AbstractCal> AbstractService for AbstractServiceImpl<A> {
         Ok(())
     }
 
+    #[rcal_macros::rcal_trace]
     async fn reset(&mut self) -> CalResult<()> {
-        trace!(self.logger, "AbstractService::reset"; "service_id" => &self.service_id);
+        trace!(self.logger, ""; "service_id" => &self.service_id);
         Err(crate::uci::CalError::new(
             crate::uci::CalErrorKind::OperationNotPermitted,
             format!("reset() not implemented for service '{}'", self.service_id),

@@ -3,9 +3,6 @@ id = "SystemName"
 uuid = "fdb7ffab-e79c-4082-8f04-d601c49f301e"
 default_transport = "main-bus"
 
-[system.logging]
-default_level = "warn"
-
 [[system.logging.sink]]
 type = "stdout"
 format = "pretty"

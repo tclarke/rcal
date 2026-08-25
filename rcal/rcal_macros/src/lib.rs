@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
 use syn::{
-    Ident, ItemFn, ItemStruct, LitBool, LitStr, Token,
+    Expr, FnArg, Ident, ItemFn, ItemStruct, LitBool, LitStr, Pat, Token, Type,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
@@ -237,4 +237,192 @@ pub fn rcal_main(attr: TokenStream, item: TokenStream) -> TokenStream {
         #func
     }
     .into()
+}
+
+// ── rcal_trace ────────────────────────────────────────────────────────────────
+
+struct RcalTraceArgs {
+    logger: Option<Expr>,
+}
+
+impl Parse for RcalTraceArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut logger = None;
+        while !input.is_empty() {
+            let ident: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+            match ident.to_string().as_str() {
+                "logger" => logger = Some(input.parse::<Expr>()?),
+                other => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        format!("unknown rcal_trace argument: `{other}`"),
+                    ));
+                }
+            }
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+        Ok(Self { logger })
+    }
+}
+
+fn is_logger_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(tp) => tp
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident == "Logger")
+            .unwrap_or(false),
+        Type::Reference(tr) => is_logger_type(&tr.elem),
+        _ => false,
+    }
+}
+
+fn find_logger_param(inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>) -> Option<proc_macro2::TokenStream> {
+    inputs.iter().find_map(|arg| {
+        if let FnArg::Typed(pt) = arg
+            && is_logger_type(&pt.ty)
+            && let Pat::Ident(pi) = &*pt.pat
+        {
+            let id = &pi.ident;
+            Some(quote! { #id })
+        } else {
+            None
+        }
+    })
+}
+
+/// Inserts `slog::trace!(logger, "StructName::fn_name()")` as the first
+/// statement of each function or method.
+///
+/// Can be applied to an individual `fn` or to an entire `impl` block (in which
+/// case every method in the block is instrumented automatically).  When applied
+/// to an `impl` block the struct name is resolved statically at compile time;
+/// when applied to a standalone method it is resolved at runtime via
+/// `std::any::type_name::<Self>()`.
+///
+/// Logger resolution order (same for both usages):
+/// 1. `logger=<expr>` attribute argument (explicit override)
+/// 2. `self.logger` for methods with a `self` receiver
+/// 3. First `Logger`-typed parameter for bare / static functions
+///
+/// Static methods in an `impl` block that have no `Logger` parameter and no
+/// `logger=` override are silently skipped.
+///
+/// ```ignore
+/// #[rcal_macros::rcal_trace]
+/// impl Foo {
+///     fn bar(&self) { /* trace!(self.logger, "Foo::bar()") injected */ }
+///     fn baz(&self) { /* trace!(self.logger, "Foo::baz()") injected */ }
+/// }
+///
+/// impl Bar {
+///     #[rcal_macros::rcal_trace(logger = self.other_logger)]
+///     fn qux(&self) { /* uses self.other_logger, "Bar::qux()" at runtime */ }
+/// }
+///
+/// #[rcal_macros::rcal_trace]
+/// fn standalone(logger: &slog::Logger) { /* trace!(logger, "standalone()") */ }
+/// ```
+#[proc_macro_attribute]
+pub fn rcal_trace(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as RcalTraceArgs);
+
+    if let Ok(mut impl_block) = syn::parse::<syn::ItemImpl>(item.clone()) {
+        trace_impl(args, &mut impl_block)
+    } else {
+        let mut func = parse_macro_input!(item as ItemFn);
+        trace_fn(args, &mut func)
+    }
+}
+
+fn trace_impl(args: RcalTraceArgs, impl_block: &mut syn::ItemImpl) -> TokenStream {
+    let struct_name = match &*impl_block.self_ty {
+        Type::Path(tp) => tp.path.segments.last().map(|s| s.ident.to_string()),
+        _ => None,
+    };
+    let struct_name = match struct_name {
+        Some(n) => n,
+        None => {
+            return syn::Error::new_spanned(
+                &impl_block.self_ty,
+                "#[rcal_trace]: cannot determine type name from impl type",
+            )
+            .to_compile_error()
+            .into();
+        }
+    };
+
+    let explicit = args.logger.clone();
+
+    for item in &mut impl_block.items {
+        if let syn::ImplItem::Fn(method) = item {
+            let fn_name = method.sig.ident.to_string();
+            let has_self = method.sig.inputs.iter().any(|a| matches!(a, FnArg::Receiver(_)));
+
+            let logger_ts = if let Some(ref expr) = explicit {
+                quote! { #expr }
+            } else if has_self {
+                quote! { self.logger }
+            } else {
+                match find_logger_param(&method.sig.inputs) {
+                    Some(ts) => ts,
+                    None => continue,
+                }
+            };
+
+            let msg = format!("{}::{}()", struct_name, fn_name);
+            let trace_stmt: syn::Stmt = syn::parse_quote! {
+                slog::trace!(#logger_ts, #msg);
+            };
+            method.block.stmts.insert(0, trace_stmt);
+        }
+    }
+
+    quote! { #impl_block }.into()
+}
+
+fn trace_fn(args: RcalTraceArgs, func: &mut ItemFn) -> TokenStream {
+    let fn_name = func.sig.ident.to_string();
+    let has_self = func.sig.inputs.iter().any(|a| matches!(a, FnArg::Receiver(_)));
+
+    let logger_ts = if let Some(expr) = args.logger {
+        quote! { #expr }
+    } else if has_self {
+        quote! { self.logger }
+    } else {
+        match find_logger_param(&func.sig.inputs) {
+            Some(ts) => ts,
+            None => {
+                return syn::Error::new_spanned(
+                    &func.sig.ident,
+                    "#[rcal_trace]: no logger found — \
+                     add a `self` receiver (uses `self.logger`), \
+                     a `Logger`-typed parameter, \
+                     or specify `logger=<expr>`",
+                )
+                .to_compile_error()
+                .into();
+            }
+        }
+    };
+
+    let trace_stmt: syn::Stmt = if has_self {
+        let msg_fmt = format!("{{}}::{}()", fn_name);
+        syn::parse_quote! {
+            slog::trace!(#logger_ts, #msg_fmt,
+                ::std::any::type_name::<Self>().rsplit("::").next().unwrap_or("?"));
+        }
+    } else {
+        let msg = format!("{}()", fn_name);
+        syn::parse_quote! {
+            slog::trace!(#logger_ts, #msg);
+        }
+    };
+
+    func.block.stmts.insert(0, trace_stmt);
+    quote! { #func }.into()
 }

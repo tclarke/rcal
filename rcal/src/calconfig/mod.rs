@@ -125,7 +125,6 @@ impl Default for SinkConfig {
 #[derive(Deserialize, Serialize, Debug, Clone, Default)]
 #[serde(default)]
 pub struct LoggingConfig {
-    pub default_level: LogLevel,
     pub sink: Vec<SinkConfig>,
 }
 

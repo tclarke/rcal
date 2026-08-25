@@ -247,9 +247,8 @@ impl AbstractServiceBus for FileAsb {
         &self.status
     }
 
+    #[rcal_macros::rcal_trace]
     fn register_status_listener(&mut self, listener: Arc<dyn AsbStatusListener>) -> CalResult<()> {
-        trace!(self.logger, "FileAsb::register_status_listener()");
-
         if !self.status.state.allows_add_listener() {
             return Err(CalError::new(
                 CalErrorKind::InvalidState {
@@ -271,12 +270,11 @@ impl AbstractServiceBus for FileAsb {
         Ok(())
     }
 
+    #[rcal_macros::rcal_trace]
     fn unregister_status_listener(
         &mut self,
         listener: &Arc<dyn AsbStatusListener>,
     ) -> CalResult<()> {
-        trace!(self.logger, "FileAsb::unregister_status_listener()");
-
         if let Some(index) = self.listeners.iter().position(|l| Arc::ptr_eq(l, listener)) {
             self.listeners.swap_remove(index);
             Ok(())
@@ -288,8 +286,8 @@ impl AbstractServiceBus for FileAsb {
         }
     }
 
+    #[rcal_macros::rcal_trace]
     fn close(&mut self) -> CalResult<()> {
-        trace!(self.logger, "FileAsb::close()");
         // Signal all reader tasks to unblock any pending dish.recv() (CAL-016049).
         let _ = self.shutdown_tx.send(());
         // Dropping write_tx closes the channel; the background writer task exits.
@@ -380,8 +378,9 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for FileWriter<M> {
         &self.topic
     }
 
+    #[rcal_macros::rcal_trace]
     fn write(&mut self, message: &M) -> CalResult<()> {
-        trace!(self.logger, "FileWriter::write()"; "topic" => &self.topic);
+        trace!(self.logger, ""; "topic" => &self.topic);
         message.is_valid().map_err(|e| {
             crate::uci::CalError::new(
                 crate::uci::CalErrorKind::ValidationError(e),
@@ -410,8 +409,9 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for FileWriter<M> {
         }
     }
 
+    #[rcal_macros::rcal_trace]
     fn close(self: Box<Self>) -> CalResult<()> {
-        trace!(self.logger, "FileWriter::close()"; "topic" => &self.topic);
+        trace!(self.logger, ""; "topic" => &self.topic);
         let result = if let Some(buf) = &self.writer_buf {
             let remaining = buf.lock().unwrap().len();
             if remaining > 0 {
@@ -476,8 +476,9 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for FileRead
         }
     }
 
+    #[rcal_macros::rcal_trace]
     fn read(&mut self, timeout: Option<Duration>) -> CalResult<Option<Arc<M>>> {
-        trace!(self.logger, "FileReader::read()"; "topic" => &self.topic, "timeout_ms" => timeout.map(|d| d.as_millis()));
+        trace!(self.logger, ""; "topic" => &self.topic, "timeout_ms" => timeout.map(|d| d.as_millis()));
         if !self.listeners.lock().unwrap().is_empty() {
             return Err(CalError::new(
                 CalErrorKind::OperationNotPermitted,
@@ -520,8 +521,9 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for FileRead
         }
     }
 
+    #[rcal_macros::rcal_trace]
     fn read_no_wait(&mut self) -> CalResult<Option<Arc<M>>> {
-        trace!(self.logger, "FileReader::read_no_wait()"; "topic" => &self.topic);
+        trace!(self.logger, ""; "topic" => &self.topic);
         if !self.listeners.lock().unwrap().is_empty() {
             return Err(CalError::new(
                 CalErrorKind::OperationNotPermitted,
@@ -538,8 +540,9 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for FileRead
         Ok(queue.pop_front().map(|(_, m)| m))
     }
 
+    #[rcal_macros::rcal_trace]
     fn close(self: Box<Self>) -> CalResult<()> {
-        trace!(self.logger, "FileReader::close()"; "topic" => &self.topic);
+        trace!(self.logger, ""; "topic" => &self.topic);
         self.task.abort();
         Ok(())
     }
@@ -553,6 +556,7 @@ impl<M> AbstractCalExt<M> for FileAsb
 where
     M: CalMessage + serde::Serialize + serde::de::DeserializeOwned,
 {
+    #[rcal_macros::rcal_trace]
     fn create_writer(
         &mut self,
         topic: &str,
@@ -597,7 +601,7 @@ where
 
         let externalizer: Arc<dyn Externalizer> =
             Arc::from(build_externalizer(&self.externalizer_name, &self.config)?);
-        trace!(self.logger, "FileAsb::create_writer()"; "topic" => cal_topic);
+        trace!(self.logger, ""; "topic" => cal_topic);
         Ok(Box::new(FileWriter {
             topic: cal_topic.to_string(),
             logger: self.logger.new(slog::o!("topic" => cal_topic.to_string())),

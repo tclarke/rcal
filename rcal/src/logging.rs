@@ -224,8 +224,6 @@ fn build_sink(sink: &SinkConfig) -> Option<BoxDrain> {
 ///
 /// If no sinks are configured the logger discards all output.
 pub fn build_logger(config: &LoggingConfig) -> Logger {
-    let default_level: slog::Level = config.default_level.into();
-
     let mut drains: Vec<BoxDrain> = config.sink.iter().filter_map(build_sink).collect();
 
     if drains.is_empty() {
@@ -233,13 +231,12 @@ pub fn build_logger(config: &LoggingConfig) -> Logger {
         let async_drain = Async::new(FullFormat::new(dec).build().fuse())
             .build()
             .fuse();
-        let filtered = slog::LevelFilter::new(async_drain, default_level).fuse();
+        let filtered = slog::LevelFilter::new(async_drain, slog::Level::Info).fuse();
         drains.push(Box::new(filtered));
     }
 
     let fanned = FanoutDrain { drains };
-    let filtered = slog::LevelFilter::new(fanned, default_level).fuse();
-    Logger::root(filtered, o!())
+    Logger::root(fanned.fuse(), o!())
 }
 
 /// Build a test logger: stdout, debug level.

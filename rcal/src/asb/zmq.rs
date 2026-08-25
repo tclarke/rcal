@@ -341,9 +341,8 @@ impl AbstractServiceBus for ZmqAsb {
         &self.status
     }
 
+    #[rcal_macros::rcal_trace]
     fn register_status_listener(&mut self, listener: Arc<dyn AsbStatusListener>) -> CalResult<()> {
-        trace!(self.logger, "ZmqAsb::register_status_listener()");
-
         if !self.status.state.allows_add_listener() {
             return Err(CalError::new(
                 CalErrorKind::InvalidState {
@@ -365,12 +364,11 @@ impl AbstractServiceBus for ZmqAsb {
         Ok(())
     }
 
+    #[rcal_macros::rcal_trace]
     fn unregister_status_listener(
         &mut self,
         listener: &Arc<dyn AsbStatusListener>,
     ) -> CalResult<()> {
-        trace!(self.logger, "ZmqAsb::unregister_status_listener()");
-
         if let Some(index) = self.listeners.iter().position(|l| Arc::ptr_eq(l, listener)) {
             self.listeners.swap_remove(index);
             Ok(())
@@ -382,8 +380,8 @@ impl AbstractServiceBus for ZmqAsb {
         }
     }
 
+    #[rcal_macros::rcal_trace]
     fn close(&mut self) -> CalResult<()> {
-        trace!(self.logger, "ZmqAsb::close()");
         // Signal all reader tasks to unblock any pending dish.recv() (CAL-016049).
         let _ = self.shutdown_tx.send(());
         // Dropping write_tx closes the channel; the background writer task exits.
@@ -475,8 +473,9 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
         &self.topic
     }
 
+    #[rcal_macros::rcal_trace]
     fn write(&mut self, message: &M) -> CalResult<()> {
-        trace!(self.logger, "ZmqWriter::write()"; "topic" => &self.topic);
+        trace!(self.logger, ""; "topic" => &self.topic);
         message.is_valid().map_err(|e| {
             crate::uci::CalError::new(
                 crate::uci::CalErrorKind::ValidationError(e),
@@ -507,8 +506,9 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
         }
     }
 
+    #[rcal_macros::rcal_trace]
     fn close(self: Box<Self>) -> CalResult<()> {
-        trace!(self.logger, "ZmqWriter::close()"; "topic" => &self.topic);
+        trace!(self.logger, ""; "topic" => &self.topic);
         let result = if let Some(buf) = &self.writer_buf {
             let remaining = buf.lock().unwrap().len();
             if remaining > 0 {
@@ -583,8 +583,9 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
         }
     }
 
+    #[rcal_macros::rcal_trace]
     fn read(&mut self, timeout: Option<Duration>) -> CalResult<Option<Arc<M>>> {
-        trace!(self.logger, "ZmqReader::read()"; "topic" => &self.topic, "timeout_ms" => timeout.map(|d| d.as_millis()));
+        trace!(self.logger, ""; "topic" => &self.topic, "timeout_ms" => timeout.map(|d| d.as_millis()));
         if !self.listeners.lock().unwrap().is_empty() {
             return Err(CalError::new(
                 CalErrorKind::OperationNotPermitted,
@@ -627,8 +628,9 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
         }
     }
 
+    #[rcal_macros::rcal_trace]
     fn read_no_wait(&mut self) -> CalResult<Option<Arc<M>>> {
-        trace!(self.logger, "ZmqReader::read_no_wait()"; "topic" => &self.topic);
+        trace!(self.logger, ""; "topic" => &self.topic);
         if !self.listeners.lock().unwrap().is_empty() {
             return Err(CalError::new(
                 CalErrorKind::OperationNotPermitted,
@@ -645,8 +647,9 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReade
         Ok(queue.pop_front().map(|(_, m)| m))
     }
 
+    #[rcal_macros::rcal_trace]
     fn close(self: Box<Self>) -> CalResult<()> {
-        trace!(self.logger, "ZmqReader::close()"; "topic" => &self.topic);
+        trace!(self.logger, ""; "topic" => &self.topic);
         self.task.abort();
         Ok(())
     }
@@ -660,6 +663,7 @@ impl<M> AbstractCalExt<M> for ZmqAsb
 where
     M: CalMessage + serde::Serialize + serde::de::DeserializeOwned,
 {
+    #[rcal_macros::rcal_trace]
     fn create_writer(
         &mut self,
         topic: &str,
@@ -717,7 +721,7 @@ where
 
         let externalizer: Arc<dyn Externalizer> =
             Arc::from(build_externalizer(&self.externalizer_name, &self.config)?);
-        trace!(self.logger, "ZmqAsb::create_writer()"; "topic" => cal_topic);
+        trace!(self.logger, ""; "topic" => cal_topic);
         Ok(Box::new(ZmqWriter {
             topic: cal_topic.to_string(),
             logger: self.logger.new(slog::o!("topic" => cal_topic.to_string())),
@@ -731,6 +735,7 @@ where
         }))
     }
 
+    #[rcal_macros::rcal_trace]
     fn create_reader(
         &mut self,
         topic: &str,
@@ -846,7 +851,7 @@ where
             poll_state_task.1.notify_all();
         });
 
-        trace!(self.logger, "ZmqAsb::create_reader()"; "topic" => topic);
+        trace!(self.logger, ""; "topic" => topic);
         Ok(Box::new(ZmqReader {
             topic: topic.to_string(),
             logger: self.logger.new(slog::o!("topic" => topic.to_string())),
