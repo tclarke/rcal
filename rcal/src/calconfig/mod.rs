@@ -382,6 +382,15 @@ impl Service {
         let value = self.options.get(&name.into())?;
         T::deserialize(value.clone()).ok()
     }
+
+    /// Returns the configured [`TopicDirection`] for `topic_id`, or `Both` when not configured.
+    pub fn topic_direction(&self, topic_id: &str) -> TopicDirection {
+        self.topic
+            .iter()
+            .find(|t| t.id == topic_id)
+            .map(|t| t.direction)
+            .unwrap_or_default()
+    }
 }
 
 /// Reliability policy in TOML config — mirrors `cal::Reliability` but serde-friendly.
@@ -414,6 +423,24 @@ pub struct TopicQosConfig {
     pub reader_buffer: Option<usize>,
 }
 
+/// Allowed data-flow direction for a topic.
+///
+/// Controls which operations are permitted at the ASB layer:
+/// - `In`   — subscribe/read only; publish/write is rejected.
+/// - `Out`  — publish/write only; subscribe/read is rejected.
+/// - `Both` — all operations permitted (default).
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "PascalCase")]
+pub enum TopicDirection {
+    /// Receive only.
+    In,
+    /// Send only.
+    Out,
+    /// Both send and receive (default).
+    #[default]
+    Both,
+}
+
 /// Named topic within a service (`[[service.topic]]`).
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 #[serde(default)]
@@ -425,6 +452,8 @@ pub struct Topic {
     pub type_: Option<String>,
     /// Wire-level topic string override; defaults to `id` when absent.
     pub topic: Option<String>,
+    /// Allowed data-flow direction (`In`, `Out`, or `Both`; default `Both`).
+    pub direction: TopicDirection,
     /// Optional per-topic QoS defaults (CAL-005210).
     pub qos: Option<TopicQosConfig>,
 }

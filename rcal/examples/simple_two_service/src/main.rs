@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use slog::{error, info, o, warn};
 
-use rcal::cal::TopicQos;
 use rcal::asb::zmq::ZmqAsb;
+use rcal::cal::TopicQos;
 use rcal::service::{AbstractService, AbstractServiceImpl};
 use rcal::uci::types::*;
 use rcal::update_message_header;

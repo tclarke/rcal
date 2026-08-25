@@ -4,11 +4,11 @@
 
 #![allow(dead_code)]
 
-use slog::{Logger, error, trace, debug};
+use slog::{Logger, debug, error, trace};
 use std::collections::VecDeque;
 use std::fs::File;
-use std::marker::PhantomData;
 use std::io::prelude::*;
+use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 
 use super::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
 use crate::cal::{
-    AbstractCal, AbstractCalExt, AbstractReader, AbstractWriter,
-    MessageHeaderDefaults, MessageListener, TopicQos,
+    AbstractCal, AbstractCalExt, AbstractReader, AbstractWriter, MessageHeaderDefaults,
+    MessageListener, TopicQos,
 };
 use crate::calconfig::{CalConfig, Transport};
 use crate::externalizer::{Externalizer, build_externalizer, write_to_bytes};
@@ -122,14 +122,13 @@ impl FileAsb {
 
         debug!(logger, "Opening {} for write", transport_uri);
         let fpath = Path::new(&transport_uri);
-        let mut output_file = File::create(fpath)
-            .map_err(|e| {
-                CalError::with_source(
-                    CalErrorKind::InitializationFailure,
-                    "Unable to open output file",
-                    e
-                )
-            })?;
+        let mut output_file = File::create(fpath).map_err(|e| {
+            CalError::with_source(
+                CalErrorKind::InitializationFailure,
+                "Unable to open output file",
+                e,
+            )
+        })?;
 
         let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         let logger2 = logger.clone();
@@ -143,7 +142,6 @@ impl FileAsb {
             // close file
             drop(output_file);
         });
-
 
         Ok(Self {
             service_name: service_name.into(),
@@ -620,7 +618,10 @@ where
         _topic: &str,
         _qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractReader<M>>> {
-        Err(CalError::new(CalErrorKind::OperationNotPermitted, "FileAsb only supports writers"))
+        Err(CalError::new(
+            CalErrorKind::OperationNotPermitted,
+            "FileAsb only supports writers",
+        ))
     }
 }
 
@@ -651,22 +652,27 @@ mod tests {
     use super::*;
     use crate::asb::AbstractServiceBus;
     use rcal_macros::init_test_logger;
-    use tempfile::{NamedTempFile, TempPath};
     use std::sync::{
         Mutex,
         atomic::{AtomicI32, Ordering},
     };
     use std::time::Duration;
+    use tempfile::{NamedTempFile, TempPath};
 
     async fn make_bus(logger: Logger) -> (FileAsb, TempPath) {
-        let tempfile = NamedTempFile::new().expect("Unable to create a temporary output file.").into_temp_path();
+        let tempfile = NamedTempFile::new()
+            .expect("Unable to create a temporary output file.")
+            .into_temp_path();
         let config = test_config(tempfile.to_str().expect("Invalid filename"));
         let tconfig = config
             .get_transport(&String::from("TestFile"))
             .expect("TestFile transport must exist in test config");
-        (FileAsb::new("Test Service", "TestFile", logger, config.clone(), tconfig)
-            .await
-            .unwrap(), tempfile)
+        (
+            FileAsb::new("Test Service", "TestFile", logger, config.clone(), tconfig)
+                .await
+                .unwrap(),
+            tempfile,
+        )
     }
 
     // ── Test message type ─────────────────────────────────────────────────
@@ -728,8 +734,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_file_write() {
-    }
+    async fn test_file_write() {}
 
     // ── Listener helper ───────────────────────────────────────────────────
 

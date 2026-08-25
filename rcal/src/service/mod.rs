@@ -15,8 +15,8 @@ use std::time::Duration;
 use slog::{error, info, trace, warn};
 
 use crate::cal::{
-    AbstractCal, AbstractCalCreateMessage, AbstractCalExt, AbstractWriter,
-    MessageListener, TopicQos,
+    AbstractCal, AbstractCalCreateMessage, AbstractCalExt, AbstractWriter, MessageListener,
+    TopicQos,
 };
 use crate::calconfig::CalConfig;
 use crate::uci::base::UUID;

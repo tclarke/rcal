@@ -281,7 +281,9 @@ fn is_logger_type(ty: &Type) -> bool {
     }
 }
 
-fn find_logger_param(inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>) -> Option<proc_macro2::TokenStream> {
+fn find_logger_param(
+    inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>,
+) -> Option<proc_macro2::TokenStream> {
     inputs.iter().find_map(|arg| {
         if let FnArg::Typed(pt) = arg
             && is_logger_type(&pt.ty)
@@ -361,7 +363,11 @@ fn trace_impl(args: RcalTraceArgs, impl_block: &mut syn::ItemImpl) -> TokenStrea
     for item in &mut impl_block.items {
         if let syn::ImplItem::Fn(method) = item {
             let fn_name = method.sig.ident.to_string();
-            let has_self = method.sig.inputs.iter().any(|a| matches!(a, FnArg::Receiver(_)));
+            let has_self = method
+                .sig
+                .inputs
+                .iter()
+                .any(|a| matches!(a, FnArg::Receiver(_)));
 
             let logger_ts = if let Some(ref expr) = explicit {
                 quote! { #expr }
@@ -387,7 +393,11 @@ fn trace_impl(args: RcalTraceArgs, impl_block: &mut syn::ItemImpl) -> TokenStrea
 
 fn trace_fn(args: RcalTraceArgs, func: &mut ItemFn) -> TokenStream {
     let fn_name = func.sig.ident.to_string();
-    let has_self = func.sig.inputs.iter().any(|a| matches!(a, FnArg::Receiver(_)));
+    let has_self = func
+        .sig
+        .inputs
+        .iter()
+        .any(|a| matches!(a, FnArg::Receiver(_)));
 
     let logger_ts = if let Some(expr) = args.logger {
         quote! { #expr }

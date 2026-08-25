@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, Result};
 use rcal::cal::{AbstractCal, RawMessageListener};
 use rcal::uci::{self, CalError, CalImplementationErrorKind};
-use rcal::{calconfig::CalConfig, service::ServiceLifecycleState};
+use rcal::{calconfig::{CalConfig, TopicDirection}, service::ServiceLifecycleState};
 use rcal::service::AbstractService;
 use rcal_macros::rcal_trace;
 use slog::{Logger, warn};
@@ -106,20 +106,22 @@ impl AbstractService for CalBridgeService {
             self.cals.push(uci::get_cal(self.service_name.as_str(), bridge.as_str(), Arc::clone(&self.config), self.logger.clone()).await?);
         }
 
-        let topics: Vec<String> = self
-            .config
-            .get_service(self.service_name.as_str())
-            .unwrap()
+        let service = self.config.get_service(self.service_name.as_str()).unwrap();
+        let topics: Vec<(String, TopicDirection)> = service
             .topic
             .iter()
-            .map(|t| t.id.clone())
+            .map(|t| (t.id.clone(), t.direction))
             .collect();
 
         let transport_names: Vec<String> = std::iter::once(main_transport.id.clone())
             .chain(bridge_names.iter().cloned())
             .collect();
 
-        for topic in &topics {
+        for (topic, direction) in &topics {
+            if *direction == TopicDirection::Out {
+                // Out-only topics cannot be subscribed to; skip bridging for this topic.
+                continue;
+            }
             for (i, cal) in self.cals.iter().enumerate() {
                 let other_cals: Vec<_> = self
                     .cals

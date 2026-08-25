@@ -17,7 +17,7 @@ use crate::cal::{
     MessageHeaderDefaults, MessageListener, RawMessageListener, Reliability, TimeBasedFilter,
     TopicQos,
 };
-use crate::calconfig::{CalConfig, ReliabilityConfig, Transport};
+use crate::calconfig::{CalConfig, ReliabilityConfig, TopicDirection, Transport};
 use crate::externalizer::{Externalizer, build_externalizer, read_from_bytes, write_to_bytes};
 use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
 use serde::Deserialize as _;
@@ -57,6 +57,32 @@ fn validate_topic_type<M: CalMessage>(
         ));
     }
     Ok(())
+}
+
+/// Validates that the requested operation direction is permitted by the topic config.
+///
+/// `writing` — `true` for publish/create_writer, `false` for subscribe/create_reader.
+fn validate_topic_direction(
+    config: &CalConfig,
+    service_id: &str,
+    topic: &str,
+    writing: bool,
+) -> CalResult<()> {
+    let direction = config
+        .get_service(service_id)
+        .map(|s| s.topic_direction(topic))
+        .unwrap_or_default();
+    match (direction, writing) {
+        (TopicDirection::In, true) => Err(CalError::new(
+            CalErrorKind::OperationNotPermitted,
+            format!("Topic '{topic}' is configured In-only; publish/write not permitted"),
+        )),
+        (TopicDirection::Out, false) => Err(CalError::new(
+            CalErrorKind::OperationNotPermitted,
+            format!("Topic '{topic}' is configured Out-only; subscribe/read not permitted"),
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Returns the remapped CAL topic name for `topic` if the service config defines
@@ -452,6 +478,7 @@ impl AbstractCal for ZmqAsb {
         topic: &str,
         listener: Arc<dyn RawMessageListener>,
     ) -> CalResult<()> {
+        validate_topic_direction(&self.config, &self.service_name, topic, false)?;
         let cal_topic = resolve_topic(&self.config, &self.service_name, topic).to_string();
         let connect_uris: Vec<String> = if self.peer_uris.is_empty() {
             vec![self.transport_uri.clone()]
@@ -488,10 +515,13 @@ impl AbstractCal for ZmqAsb {
     }
 
     fn publish_raw(&mut self, topic: &str, payload: &[u8]) -> CalResult<()> {
+        validate_topic_direction(&self.config, &self.service_name, topic, true)?;
         let cal_topic = resolve_topic(&self.config, &self.service_name, topic);
         let tx = self.write_tx.as_ref().ok_or_else(|| {
             CalError::new(
-                CalErrorKind::InvalidState { current: self.status.state },
+                CalErrorKind::InvalidState {
+                    current: self.status.state,
+                },
                 "ASB is closed",
             )
         })?;
@@ -724,6 +754,7 @@ where
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractWriter<M>>> {
         validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
+        validate_topic_direction(&self.config, &self.service_name, topic, true)?;
         let qos = apply_config_qos(&self.config, &self.service_name, topic, qos);
         if qos.reliability == Reliability::Reliable {
             return Err(CalError::new(
@@ -796,6 +827,7 @@ where
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractReader<M>>> {
         validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
+        validate_topic_direction(&self.config, &self.service_name, topic, false)?;
         let qos = apply_config_qos(&self.config, &self.service_name, topic, qos);
         if qos.reliability == Reliability::Reliable {
             return Err(CalError::new(

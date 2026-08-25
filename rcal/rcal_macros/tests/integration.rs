@@ -1,5 +1,5 @@
 use rcal_macros::{init_test_logger, rcal_trace};
-use slog::{info, Logger, o};
+use slog::{Logger, info, o};
 
 #[init_test_logger]
 #[test]
