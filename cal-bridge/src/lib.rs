@@ -149,6 +149,7 @@ impl AbstractService for CalBridgeService {
         if self.state == ServiceLifecycleState::Inactive {
             warn!(self.logger, "Service is already inactive");
         }
+        self.cals.clear();
         self.state = ServiceLifecycleState::Inactive;
         Ok(())
     }
