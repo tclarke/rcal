@@ -5,12 +5,12 @@
 
 ### `rcal` crate
 
-[![Crates.io Version](https://img.shields.io/crates/v/rcal)](https://crates.io/rcal)
+[![Crates.io Version](https://img.shields.io/crates/v/rcal)](https://crates.io/crates/rcal)
 [![docs.rs](https://img.shields.io/docsrs/rcal)](https://docs.rs/rcal)
 
 ### `rcal_macros` crate
 
-[![Crates.io Version](https://img.shields.io/crates/v/rcal_macros)](https://crates.io/rcal_macros)
+[![Crates.io Version](https://img.shields.io/crates/v/rcal_macros)](https://crates.io/crates/rcal_macros)
 [![docs.rs](https://img.shields.io/docsrs/rcal_macros)](https://docs.rs/rcal_macros)
 
 # RCal: An OMS Cal implementation in rust
