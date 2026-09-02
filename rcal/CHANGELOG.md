@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [2.1.1] - 2026-09-02
+### Bug Fixes
+
+- Cleanup batch #62 #63 #64 #65 #74 #79([`ec4e8a6`](https://github.com/tclarke/rcal/commit/ec4e8a6ba93c5b51b5171ef7ef538589418bf044))
+- Remove redundant ::default() call on unit struct XmlExternalizerLoader([`f2ab4a8`](https://github.com/tclarke/rcal/commit/f2ab4a8c414568f27981e0153d3722a0f08a5c81))
+
+
 ## [2.1.0] - 2026-08-24
 ### Bug Fixes
 
