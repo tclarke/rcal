@@ -78,10 +78,10 @@ struct CallbackListener<M, F> {
 impl<M, F> MessageListener<M> for CallbackListener<M, F>
 where
     M: CalMessage,
-    F: Fn(Arc<M>, &str) + Send + Sync,
+    F: Fn(&Arc<M>, &str) + Send + Sync,
 {
     fn on_message(&self, message: &Arc<M>) {
-        (self.callback)(Arc::clone(message), &self.topic);
+        (self.callback)(message, &self.topic);
     }
 }
 
@@ -167,13 +167,13 @@ impl<A: AbstractCal> AbstractServiceImpl<A> {
 
     /// Creates a typed reader for `topic` with a callback closure.
     ///
-    /// The callback `F(Arc<M>, &str)` receives each message and the topic name.
+    /// The callback `F(&Arc<M>, &str)` receives each message and the topic name.
     /// The reader is kept alive for the lifetime of this service instance.
     pub fn create_reader<M, F>(&mut self, topic: &str, qos: TopicQos, callback: F) -> CalResult<()>
     where
         M: CalMessage + 'static,
         A: AbstractCalExt<M>,
-        F: Fn(Arc<M>, &str) + Send + Sync + 'static,
+        F: Fn(&Arc<M>, &str) + Send + Sync + 'static,
     {
         trace!(self.logger, "AbstractServiceImpl::create_reader";
             "service_id" => &self.service_id,
@@ -521,5 +521,19 @@ mod tests {
     fn test_parse_duration_invalid() {
         assert!(parse_duration("bad").is_err());
         assert!(parse_duration("1x").is_err());
+    }
+
+    #[tokio::test]
+    async fn service_status_loop_macro_compiles_and_runs() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let counter = Arc::new(AtomicU32::new(0));
+        let c = Arc::clone(&counter);
+        let handle = crate::service_status_loop!(Duration::from_millis(10), {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        handle.abort();
+        let _ = handle.await;
+        assert!(counter.load(Ordering::Relaxed) >= 1);
     }
 }

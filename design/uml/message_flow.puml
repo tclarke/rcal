@@ -1,0 +1,72 @@
+@startuml rcal-message-flow
+' OMS Rust CAL Core — Message Publish/Receive Flow (Sequence Diagram)
+' Ref: OMSC-SPC-001 rev L §5.4–5.8
+' Covers: CAL-005201, CAL-005364, CAL-005374, CAL-005379, CAL-005392
+
+skinparam defaultFontName Helvetica
+skinparam sequenceArrowThickness 1.5
+skinparam roundcorner 5
+
+actor "CAL Client" as Client
+participant "CalFactory\nget_cal()" as Factory
+participant "AbstractCal\n(ZmqAsb)" as Cal
+participant "AbstractWriter<M>\n(ZmqWriter)" as Writer
+participant "AbstractReader<M>\n(ZmqReader)" as Reader
+participant "MessageListener<M>\n(CallbackListener)" as Listener
+participant "Externalizer<M>\n(XmlExternalizer)" as Ext
+
+== Initialisation (CAL-005201, CAL-005202) ==
+
+Client -> Factory : get_cal(service_id, asb_id, config, logger)
+Factory -> Cal : ZmqAsb::new(config, logger)
+Factory --> Client : Arc<Mutex<dyn AbstractCal>>
+
+== Create Writer (CAL-005364, CAL-005210) ==
+
+Client -> Cal : create_writer("TopicName", TopicQos)
+Cal -> Writer : ZmqWriter::new(topic, qos, ext)
+Cal --> Client : Box<dyn AbstractWriter<M>>
+
+== Publish Message (CAL-005368, CAL-005369) ==
+
+Client -> Writer : write(&msg)
+Writer -> Ext : write_to_bytes(&msg)
+Ext --> Writer : Vec<u8>
+Writer -> Cal : send [group=topic, payload=bytes]\nvia write channel
+Cal --> Writer : Ok(())
+Writer --> Client : CalResult<()>
+
+== Create Reader with Callback (CAL-005374, CAL-005379) ==
+
+Client -> Cal : create_reader("TopicName", TopicQos)
+Cal -> Reader : ZmqReader::new(topic, qos, ext)
+Cal --> Client : Box<dyn AbstractReader<M>>
+
+Client -> Reader : add_listener(Arc<dyn MessageListener<M>>)
+Reader --> Client : Ok(())
+
+note over Reader : DISH socket connects\nto RADIO peer URI\n(CAL-005394)
+
+== Receive Message (CAL-005392, CAL-016046) ==
+
+[-> Reader : incoming bytes on DISH socket
+Reader -> Ext : read_from_bytes(&bytes)
+Ext --> Reader : Arc<M>
+
+loop for each registered listener
+  Reader -> Listener : on_message(&Arc<M>)
+  note right : shared ref, not clone\n(CAL-005392, CAL-016046)
+  Listener --> Reader : ()
+end
+
+note over Reader : Arc<M> dropped after\nall listeners notified\n(CAL-016045)
+
+== Service Lifecycle (AbstractService) ==
+
+Client -> Cal : AbstractServiceImpl::activate()
+Cal --> Client : Ok(())
+
+Client -> Client : service_status_loop!(interval, { write(&msg) })
+note right : macro spawns tokio task\nlooping: body → sleep → repeat
+
+@enduml

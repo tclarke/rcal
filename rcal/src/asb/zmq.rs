@@ -1,7 +1,5 @@
 //! omq-tokio-backed Abstract Service Bus implementation (RADIO/DISH).
 
-#![allow(dead_code)]
-
 use slog::{Logger, trace};
 use std::collections::VecDeque;
 use std::marker::PhantomData;

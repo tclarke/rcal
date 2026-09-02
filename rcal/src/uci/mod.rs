@@ -7,7 +7,6 @@
 //! - OMSC-SPC-001 Rev L §5.1.2 (Error Handling)
 //! - OMSC-SPC-008 Rev K §9.2 (UCIException)
 
-#![allow(dead_code)]
 #![warn(missing_docs)]
 
 use std::fmt;

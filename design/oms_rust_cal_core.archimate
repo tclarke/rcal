@@ -127,6 +127,25 @@
         <documentation>Enum controlling XML serialization style. Variants: Xml (compact, no whitespace), PrettyXml (indented, human-readable). Configured per transport via the 'format' key in [[transport]] TOML. Default: Xml. Now stored in XmlExternalizer rather than directly in ZmqWriter/ZmqReader.</documentation>
       </element>
     </folder>
+    <folder name="Configuration" id="f-config">
+      <element xsi:type="archimate:DataObject" name="CalConfig" id="e-calconfig">
+        <documentation>Top-level TOML configuration struct (rcal::calconfig). Deserialized at startup. Sections: System (OMS system metadata), UUIDFactory (UUID generation strategy), Vec of Transport (network transport parameters including URI, format, topic whitelist), Vec of Service (per-service transport binding), HashMap of ExternalizerConfig (named serialization overrides). Consumed by get_cal() and ASB implementations. Lives in rcal::calconfig module.</documentation>
+      </element>
+    </folder>
+    <folder name="Service Layer" id="f-service">
+      <element xsi:type="archimate:ApplicationInterface" name="AbstractService" id="e-abstractservice">
+        <documentation>High-level service interface above AbstractServiceBus (rcal::service). Manages service identity (system_id, service_id, subsystem_ids), lifecycle state (activate, deactivate, reset), and provides convenience passthroughs for typed message creation, readers (create_reader with callback), and writers (create_writer). Lives in rcal::service module. Ref: OMSC-SPC-008 §9 AbstractService.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationComponent" name="AbstractServiceImpl(A)" id="e-abstractserviceimpl">
+        <documentation>Generic concrete implementation of AbstractService, parameterized over A: AbstractCal. Holds the ASB by value, owns a Vec of boxed readers for lifetime management, and enforces single-activation semantics via a monitor Mutex. create_reader() wraps closures in CallbackListener to adapt F: Fn(&amp;Arc&lt;M&gt;, &amp;str) to the MessageListener trait. Lives in rcal::service module.</documentation>
+      </element>
+      <element xsi:type="archimate:DataObject" name="ServiceLifecycleState" id="e-servicelifecyclestate">
+        <documentation>Enum for AbstractService lifecycle: Inactive (initial, no traffic), Active (processing messages). Transitions enforced by activate(), deactivate(), and reset(). Lives in rcal::service module.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationFunction" name="service_status_loop!" id="e-servicestatusloop">
+        <documentation>Macro that spawns a tokio task executing $body then sleeping $interval, looping forever. All captured variables must be Send + 'static. Returns JoinHandle&lt;()&gt;. Typical use: periodic CAL message publish loop in a service background task. Lives in rcal::service (re-exported via #[macro_export]). Ref: rcal::service_status_loop.</documentation>
+      </element>
+    </folder>
   </folder>
   <folder name="Technology" id="f-tech" type="technology">
     <element xsi:type="archimate:TechnologyService" name="ASB Network Service" id="e-asbtech">
@@ -258,6 +277,16 @@
     <element xsi:type="archimate:RealizationRelationship" id="r-reliability-c005434" source="e-reliability" target="req-cal-005434"/>
     <element xsi:type="archimate:RealizationRelationship" id="r-reliability-c016076" source="e-reliability" target="req-cal-016076"/>
     <element xsi:type="archimate:RealizationRelationship" id="r-tbf-c005431" source="e-tbf" target="req-cal-005431"/>
+    <!-- CalConfig -->
+    <element xsi:type="archimate:AssociationRelationship" id="r-calconfig-cal" source="e-calconfig" target="e-abstractcal"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-calconfig-zmqasb" source="e-calconfig" target="e-zmqasb"/>
+    <!-- AbstractService and AbstractServiceImpl -->
+    <element xsi:type="archimate:RealizationRelationship" id="r-svcimpl-real-svc" source="e-abstractserviceimpl" target="e-abstractservice"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-svc-cal" source="e-abstractservice" target="e-abstractcal"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-svcimpl-cal" source="e-abstractserviceimpl" target="e-abstractcal"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-svcimpl-config" source="e-abstractserviceimpl" target="e-calconfig"/>
+    <element xsi:type="archimate:CompositionRelationship" id="r-svc-lifecycle" source="e-abstractserviceimpl" target="e-servicelifecyclestate"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-svcimpl-loop" source="e-servicestatusloop" target="e-abstractservice"/>
   </folder>
   <folder name="Motivation" id="f-motivation" type="motivation">
     <element xsi:type="archimate:Requirement" name="CAL-005179" id="req-cal-005179">

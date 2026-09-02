@@ -754,14 +754,14 @@ mod tests {
 
     #[test]
     fn loader_ok() {
-        let loader = XmlExternalizerLoader::default();
+        let loader = XmlExternalizerLoader;
         let ext = loader.get_externalizer("xml", "2.5", "1.0").unwrap();
         assert_eq!(ext.get_encoding(), "xml");
     }
 
     #[test]
     fn loader_unknown_encoding() {
-        let loader = XmlExternalizerLoader::default();
+        let loader = XmlExternalizerLoader;
         let result = loader.get_externalizer("binary", "2.5", "1.0");
         assert_eq!(
             result.err().unwrap().kind(),
