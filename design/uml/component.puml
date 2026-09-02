@@ -4,6 +4,7 @@
 ' Rendered with PlantUML (https://plantuml.com)
 ' Preview: https://www.plantuml.com/plantuml/uml/
 
+top to bottom direction
 skinparam componentStyle rectangle
 skinparam packageStyle frame
 skinparam defaultFontName Helvetica
@@ -109,9 +110,9 @@ package "rcal" {
 
 package "Application Code" <<external>> {
   class "CAL Client" <<user code>>
-  CAL Client --> AbstractService
-  CAL Client --> CalFactory
-  CAL Client ..> "service_status_loop!" : "invokes"
+  "CAL Client" --> AbstractService
+  "CAL Client" --> CalFactory
+  "CAL Client" ..> "service_status_loop!" : "invokes"
 }
 
 @enduml
