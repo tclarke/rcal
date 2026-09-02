@@ -16,7 +16,6 @@
 //!   is the Rust equivalent of C++ destructors and `shutdown()` calls.
 //!
 
-#![allow(dead_code)]
 #![warn(missing_docs)]
 
 pub use uuid::timestamp::context::ContextV1;

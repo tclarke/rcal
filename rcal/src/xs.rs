@@ -42,7 +42,6 @@
 //! that the CAL represent it as a **signed 64-bit integer** to provide a
 //! performant API.  CAL Clients must not rely on values outside `i64::MIN ..= i64::MAX`.
 
-#![allow(dead_code)]
 #![warn(missing_docs)]
 
 // ── Simple primitive types (OMSC-SPC-008 Table 9.1-1) ───────────────────────

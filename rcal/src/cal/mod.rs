@@ -4,7 +4,6 @@
 //! - OMSC-SPC-001 Rev L §5.4–5.8 (topics, messages, writers, readers, QoS)
 //! - OMSC-SPC-001 Rev L §5.3 (CAL initialisation, CAL-005201, CAL-005202)
 
-#![allow(dead_code)]
 #![warn(missing_docs)]
 
 use crate::asb::AbstractServiceBus;
@@ -16,9 +15,8 @@ use crate::uci::types::{
 };
 use crate::uci::{CalError, CalErrorKind, CalResult};
 use chrono::Utc;
-use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 #[cfg(feature = "zmq")]
@@ -354,10 +352,8 @@ pub(crate) struct AsbKey {
 type CalInstance = Arc<Mutex<dyn AbstractCal>>;
 type CalFactoryMap = HashMap<AsbKey, CalInstance>;
 
-lazy_static! {
-    static ref CAL_FACTORY: tokio::sync::Mutex<CalFactoryMap> =
-        tokio::sync::Mutex::new(CalFactoryMap::new());
-}
+static CAL_FACTORY: LazyLock<tokio::sync::Mutex<CalFactoryMap>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(CalFactoryMap::new()));
 
 /// Returns the [`AbstractCal`] instance for `(service_identifier, asb_identifier)`,
 /// creating it if it does not yet exist.

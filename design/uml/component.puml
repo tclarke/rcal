@@ -1,0 +1,117 @@
+@startuml rcal-component
+' OMS Rust CAL Core — Component / Package Diagram
+' Ref: OMSC-SPC-001 rev L, OMSC-SPC-008 rev K
+' Rendered with PlantUML (https://plantuml.com)
+' Preview: https://www.plantuml.com/plantuml/uml/
+
+skinparam componentStyle rectangle
+skinparam packageStyle frame
+skinparam defaultFontName Helvetica
+
+package "rcal" {
+  package "rcal::uci" {
+    interface "CalMessage" <<trait>>
+    interface "CalSubMessage" <<trait>>
+    class "CalError" <<struct>>
+    class "CalErrorKind" <<enum>>
+    interface "CalResult<T>" <<type alias>>
+    CalResult ..> CalError
+    CalError *-- CalErrorKind
+  }
+
+  package "rcal::uci::base" {
+    class "UUID" <<newtype>>
+  }
+
+  package "rcal::xs" {
+    note "XSD primitive type aliases\n(Boolean, Long, Int, Short,\nDecimal, String, DateTime, …)" as N_xs
+  }
+
+  package "rcal::calconfig" {
+    class "CalConfig" <<struct>>
+    note right of CalConfig : TOML deserialization\n[system], [[transport]],\n[[service]], [uuid-factory]
+  }
+
+  package "rcal::cal" {
+    interface "AbstractCal" <<trait>>
+    interface "AbstractCalExt<M>" <<trait>>
+    interface "AbstractWriter<M>" <<trait>>
+    interface "AbstractReader<M>" <<trait>>
+    interface "MessageListener<M>" <<trait>>
+    class "TopicQos" <<struct>>
+    class "MessageHeaderDefaults" <<struct>>
+    class "CalFactory" <<fn get_cal()>>
+
+    AbstractCal <|-- AbstractCalExt
+    AbstractCalExt --> AbstractWriter
+    AbstractCalExt --> AbstractReader
+    AbstractReader --> MessageListener
+    AbstractCal --> MessageHeaderDefaults
+    CalFactory ..> AbstractCal : "creates / caches"
+    CalFactory ..> CalConfig : "reads"
+  }
+
+  package "rcal::asb" {
+    interface "AbstractServiceBus" <<trait>>
+    interface "AsbStatusListener" <<trait>>
+    class "AsbStatus" <<struct>>
+    class "AsbConnectionState" <<enum>>
+
+    AbstractCal --|> AbstractServiceBus : "supertrait"
+    AbstractServiceBus --> AsbStatus
+    AbstractServiceBus --> AsbStatusListener
+    AsbStatus *-- AsbConnectionState
+  }
+
+  package "rcal::externalizer" {
+    interface "Externalizer<M>" <<trait>>
+    interface "ExternalizerLoader<M>" <<trait>>
+    class "XmlExternalizer" <<struct>>
+    class "XmlExternalizerLoader" <<struct>>
+
+    ExternalizerLoader --> Externalizer
+    XmlExternalizer ..|> Externalizer
+    XmlExternalizerLoader ..|> ExternalizerLoader
+  }
+
+  package "rcal::asb::zmq" <<optional: feature=zmq>> {
+    class "ZmqAsb" <<struct>>
+    class "ZmqWriter<M>" <<struct>>
+    class "ZmqReader<M>" <<struct>>
+    class "SerializationFormat" <<enum>>
+
+    ZmqAsb ..|> AbstractServiceBus
+    ZmqAsb ..|> AbstractCal
+    ZmqAsb ..|> "AbstractCalExt<M>"
+    ZmqWriter ..|> AbstractWriter
+    ZmqReader ..|> AbstractReader
+    ZmqAsb *-- ZmqWriter
+    ZmqAsb *-- ZmqReader
+    ZmqWriter --> Externalizer
+    ZmqReader --> Externalizer
+    ZmqAsb --> XmlExternalizerLoader
+    ZmqAsb --> SerializationFormat
+  }
+
+  package "rcal::service" {
+    interface "AbstractService" <<trait>>
+    class "AbstractServiceImpl<A>" <<struct>>
+    class "ServiceLifecycleState" <<enum>>
+    class "service_status_loop!" <<macro>>
+
+    AbstractServiceImpl ..|> AbstractService
+    AbstractServiceImpl --> AbstractCal
+    AbstractServiceImpl --> CalConfig
+    AbstractServiceImpl *-- ServiceLifecycleState
+    "service_status_loop!" ..> AbstractService : "used with"
+  }
+}
+
+package "Application Code" <<external>> {
+  class "CAL Client" <<user code>>
+  CAL Client --> AbstractService
+  CAL Client --> CalFactory
+  CAL Client ..> "service_status_loop!" : "invokes"
+}
+
+@enduml
