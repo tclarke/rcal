@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [2.1.2] - 2026-09-02
+### Bug Fixes
+
+- Remove broken intra-doc link to CompressionExternalizer([`a53d764`](https://github.com/tclarke/rcal/commit/a53d7645ba59d0dcad8fa99ee7577249c55f59a8))
+
+
 ## [2.1.1] - 2026-09-02
 ### Bug Fixes
 
