@@ -276,7 +276,7 @@ pub const XML_EXTERNALIZER_VENDOR: &str = "rcal";
 /// transforms; it reports a [`SerializationFormat`] so that [`write_to_bytes`] and
 /// related free functions know how to serialize the message type `M`.
 ///
-/// Chained byte-transforms (e.g. [`CompressionExternalizer`]) wrap it via `next`.
+/// Chained byte-transforms (e.g. `CompressionExternalizer`) wrap it via `next`.
 ///
 /// Construct with [`XmlExternalizer::new`] or via [`ExternalizerBuilder`]:
 /// ```text
