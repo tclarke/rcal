@@ -1,6 +1,9 @@
 [![CI](https://github.com/tclarke/rcal/actions/workflows/ci.yml/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/tclarke/rcal/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/github-code-scanning/codeql)
 
+![Crates.io Version](https://img.shields.io/crates/v/rcal_macros)
+![docs.rs](https://img.shields.io/docsrs/rcal_macros)
+
 # rcal_macros
 
 Procedural macros for the [rcal](../) OMS Critical Abstraction Layer library.
