@@ -108,6 +108,16 @@ package "rcal" {
   }
 }
 
+' Force vertical stacking of packages
+"rcal::uci" -[hidden]d-> "rcal::calconfig"
+"rcal::uci::base" -[hidden]d-> "rcal::calconfig"
+"rcal::xs" -[hidden]d-> "rcal::calconfig"
+"rcal::calconfig" -[hidden]d-> "rcal::cal"
+"rcal::cal" -[hidden]d-> "rcal::asb"
+"rcal::asb" -[hidden]d-> "rcal::externalizer"
+"rcal::externalizer" -[hidden]d-> "rcal::asb::zmq"
+"rcal::asb::zmq" -[hidden]d-> "rcal::service"
+
 package "Application Code" <<external>> {
   class "CAL Client" <<user code>>
   "CAL Client" --> AbstractService
