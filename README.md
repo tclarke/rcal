@@ -3,8 +3,15 @@
 [![DevSkim](https://github.com/tclarke/rcal/actions/workflows/devskim.yml/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/devskim.yml)
 [![Release](https://github.com/tclarke/rcal/actions/workflows/release.yml/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/release.yml)
 
-![Crates.io Version](https://img.shields.io/crates/v/rcal)
-![docs.rs](https://img.shields.io/docsrs/rcal)
+### `rcal` crate
+
+[![Crates.io Version](https://img.shields.io/crates/v/rcal)](https://crates.io/rcal)
+[![docs.rs](https://img.shields.io/docsrs/rcal)](https://docs.rs/rcal)
+
+### `rcal_macros` crate
+
+[![Crates.io Version](https://img.shields.io/crates/v/rcal_macros)](https://crates.io/rcal_macros)
+[![docs.rs](https://img.shields.io/docsrs/rcal_macros)](https://docs.rs/rcal_macros)
 
 # RCal: An OMS Cal implementation in rust
 rcal is an Open Mission Systems (OMS) Critical Abstraction Layer (CAL) implementation for Rust. It implements the

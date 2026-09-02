@@ -1,8 +1,8 @@
 [![CI](https://github.com/tclarke/rcal/actions/workflows/ci.yml/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/tclarke/rcal/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/github-code-scanning/codeql)
 
-![Crates.io Version](https://img.shields.io/crates/v/rcal_macros)
-![docs.rs](https://img.shields.io/docsrs/rcal_macros)
+[![Crates.io Version](https://img.shields.io/crates/v/rcal_macros)](https://crates.io/rcal_macros)
+[![docs.rs](https://img.shields.io/docsrs/rcal_macros)](https://docs.rs/rcal_macros)
 
 # rcal_macros
 
@@ -20,5 +20,5 @@ If you need the macros standalone:
 
 ```toml
 [dependencies]
-rcal_macros = "1"
+rcal_macros = "2"
 ```

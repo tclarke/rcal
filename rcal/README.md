@@ -2,6 +2,9 @@
 [![CodeQL](https://github.com/tclarke/rcal/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/github-code-scanning/codeql)
 [![DevSkim](https://github.com/tclarke/rcal/actions/workflows/devskim.yml/badge.svg)](https://github.com/tclarke/rcal/actions/workflows/devskim.yml)
 
+[![Crates.io Version](https://img.shields.io/crates/v/rcal)](https://crates.io/rcal)
+[![docs.rs](https://img.shields.io/docsrs/rcal)](https://docs.rs/rcal)
+
 # rcal
 
 OMS Critical Abstraction Layer (CAL) implementation for Rust. Implements the CERT CAL- requirements with
@@ -18,7 +21,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-rcal = "1"
+rcal = "2"
 ```
 
 See the [`examples/`](examples/) directory for usage patterns.
