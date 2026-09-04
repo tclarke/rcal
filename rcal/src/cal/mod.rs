@@ -6,7 +6,7 @@
 
 #![warn(missing_docs)]
 
-use crate::asb::AbstractServiceBus;
+use crate::asb::{AbstractServiceBus, AsbStatus, AsbStatusListener};
 use crate::calconfig::CalConfig;
 use crate::uci::CalMessage;
 use crate::uci::base::UUID;
@@ -84,7 +84,7 @@ pub trait MessageListener<M: CalMessage>: Send + Sync {
 
 /// A topic-bound CAL message publisher (CERT CAL-005368).
 ///
-/// Obtained via [`AbstractCalExt::create_writer`] (CERT CAL-005364).
+/// Obtained via [`AbstractCal::create_writer`] (CERT CAL-005364).
 ///
 /// # Error conditions on `write()`
 /// - `CalErrorKind::TopicUnavailable` — topic connection unavailable (CAL-005369)
@@ -118,7 +118,7 @@ pub trait AbstractWriter<M: CalMessage>: Send + Sync {
 
 /// A topic-bound CAL message subscriber (CERT CAL-005378).
 ///
-/// Obtained via [`AbstractCalExt::create_reader`] (CERT CAL-005374).
+/// Obtained via [`AbstractCal::create_reader`] (CERT CAL-005374).
 /// The topic connection and message buffering are established at creation
 /// time, before this call returns (CERT CAL-005394, CAL-016044).
 ///
@@ -213,7 +213,7 @@ pub struct MessageBuffer {
 
 /// Aggregate Quality of Service settings for a Client Topic (CERT CAL-005210).
 ///
-/// Pass to [`AbstractCalExt::create_writer`] or [`AbstractCalExt::create_reader`]
+/// Pass to [`AbstractCal::create_writer`] or [`AbstractCal::create_reader`]
 /// at creation time.  The default value selects best-effort reliability with no
 /// filtering, no expiration, and unbounded buffers.
 #[derive(Debug, Clone, Default)]
@@ -241,12 +241,12 @@ pub struct TopicQos {
 /// actually use (message header defaults, typed writer/reader factories).
 ///
 /// # Object safety
-/// `AbstractCal` is object-safe; store instances as `Arc<Mutex<dyn AbstractCal>>`.
-/// Generic factory methods live in the separate non-object-safe [`AbstractCalExt<M>`]
-/// trait.
+/// `AbstractCal` is NOT object-safe due to the generic `create_writer` and
+/// `create_reader` methods. Use the concrete [`Cal`] handle (returned by
+/// [`get_cal`]) as the application-facing type.
 ///
 /// # CERT coverage
-/// CAL-005201, CAL-005202, CAL-005203
+/// CAL-005201, CAL-005202, CAL-005203, CAL-005364, CAL-005374
 pub trait AbstractCal: AbstractServiceBus {
     /// Returns the defaults used to pre-populate `MessageHeader` and
     /// `SecurityInformation` fields when creating a new message.
@@ -254,27 +254,13 @@ pub trait AbstractCal: AbstractServiceBus {
     /// Sourced from the `[system]` and `[service]` sections of the CAL
     /// configuration file.
     fn message_header_defaults(&self) -> MessageHeaderDefaults;
-}
 
-// ════════════════════════════════════════════════════════════════════════════
-// AbstractCalExt
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Extension trait adding typed factory methods to [`AbstractCal`].
-///
-/// Separated so that `AbstractCal` remains object-safe —
-/// `dyn AbstractCal` can still be stored in `Arc<Mutex<...>>`.
-/// Factory methods are called through a concrete or generic reference.
-///
-/// # CERT coverage
-/// CAL-005364 (`create_writer`), CAL-005374 (`create_reader`)
-pub trait AbstractCalExt<M: CalMessage>: AbstractCal {
     /// Creates an [`AbstractWriter`] bound to `topic` with the given QoS
     /// settings (CERT CAL-005364, CAL-005210).
     ///
     /// Returns `Err(TopicUnavailable)` if `topic` is not a valid Client Topic
     /// for this service (CERT CAL-005368, CAL-005369).
-    fn create_writer(
+    fn create_writer<M: CalMessage>(
         &mut self,
         topic: &str,
         qos: TopicQos,
@@ -288,7 +274,7 @@ pub trait AbstractCalExt<M: CalMessage>: AbstractCal {
     ///
     /// Returns `Err(TopicUnavailable)` if `topic` is not a valid Client Topic
     /// (CERT CAL-005378).
-    fn create_reader(
+    fn create_reader<M: CalMessage>(
         &mut self,
         topic: &str,
         qos: TopicQos,
@@ -340,6 +326,363 @@ impl<T: AbstractCal> AbstractCalCreateMessage for T {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Cal — concrete application handle
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Internal transport backends.
+enum CalBackend {
+    #[cfg(feature = "zmq")]
+    Zmq(ZmqAsb),
+}
+
+/// Concrete CAL handle returned by [`get_cal`].
+///
+/// Wraps a transport backend behind an `Arc<Mutex<...>>` so cloning a `Cal`
+/// gives a second handle to the **same** underlying instance (CERT CAL-005202).
+///
+/// Use this type for all application-level CAL access — create writers and
+/// readers, send and receive messages, and close the connection.
+#[derive(Clone)]
+pub struct Cal {
+    inner: Arc<Mutex<CalBackend>>,
+    service_identifier: String,
+    asb_identifier: String,
+    logger: slog::Logger,
+    oms_schema_version: String,
+    oms_schema_compiler_version: String,
+    system_label: Option<String>,
+    asb_connection_version: String,
+    oms_api_version: String,
+    cached_status: AsbStatus,
+}
+
+impl Cal {
+    fn new(
+        backend: CalBackend,
+        service_identifier: String,
+        asb_identifier: String,
+        logger: slog::Logger,
+    ) -> Self {
+        let (
+            oms_schema_version,
+            oms_schema_compiler_version,
+            system_label,
+            asb_connection_version,
+            oms_api_version,
+            cached_status,
+        ) = match &backend {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => (
+                z.oms_schema_version().to_owned(),
+                z.oms_schema_compiler_version().to_owned(),
+                z.get_system_label().map(str::to_owned),
+                z.get_asb_connection_version().to_owned(),
+                z.get_oms_api_version().to_owned(),
+                z.connection_status().clone(),
+            ),
+        };
+        Self {
+            inner: Arc::new(Mutex::new(backend)),
+            service_identifier,
+            asb_identifier,
+            logger,
+            oms_schema_version,
+            oms_schema_compiler_version,
+            system_label,
+            asb_connection_version,
+            oms_api_version,
+            cached_status,
+        }
+    }
+
+    /// The service identifier this instance was created with.
+    pub fn service_identifier(&self) -> &str {
+        &self.service_identifier
+    }
+
+    /// The ASB transport identifier this instance was created with.
+    pub fn asb_identifier(&self) -> &str {
+        &self.asb_identifier
+    }
+
+    /// Returns the defaults used to pre-populate message headers.
+    pub fn message_header_defaults(&self) -> MessageHeaderDefaults {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.message_header_defaults(),
+        }
+    }
+
+    /// Creates a default-initialised message of type `M` with pre-populated
+    /// header fields (CERT CAL-016035).
+    pub fn create_message<M: CalMessage>(&self) -> CalResult<M> {
+        let mut msg = M::cal_create();
+        if let Some(mt) = msg.as_message_type_mut() {
+            let defaults = self.message_header_defaults();
+            let hdr = mt.message_header_mut();
+            *hdr.system_id_mut().uuid_mut() = defaults.system_id;
+            *hdr.schema_version_mut() = defaults.schema_version;
+            *hdr.mode_mut() = defaults.mode;
+            *hdr.timestamp_mut() = Utc::now().into();
+            if let (Some(sid), Some(sfield)) = (defaults.service_id, hdr.service_id_mut()) {
+                *sfield.uuid_mut() = sid;
+            }
+            if let (Some(mid), Some(mfield)) = (defaults.mission_id, hdr.mission_id_mut()) {
+                *mfield.uuid_mut() = mid;
+            }
+            let sec = mt.security_information_mut();
+            *sec.classification_mut() = defaults.classification;
+            let op = sec.owner_producer_mut();
+            op.clear();
+            op.extend(defaults.owner_producer);
+        }
+        Ok(msg)
+    }
+
+    /// Creates an [`AbstractWriter`] bound to `topic` (CERT CAL-005364).
+    pub fn create_writer<M: CalMessage>(
+        &mut self,
+        topic: &str,
+        qos: TopicQos,
+    ) -> CalResult<Box<dyn AbstractWriter<M>>> {
+        match &mut *self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.create_writer::<M>(topic, qos),
+        }
+    }
+
+    /// Creates an [`AbstractReader`] bound to `topic` (CERT CAL-005374).
+    pub fn create_reader<M: CalMessage>(
+        &mut self,
+        topic: &str,
+        qos: TopicQos,
+    ) -> CalResult<Box<dyn AbstractReader<M>>> {
+        match &mut *self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.create_reader::<M>(topic, qos),
+        }
+    }
+
+    /// Shuts down the underlying transport and releases resources.
+    pub fn close(&mut self) -> CalResult<()> {
+        match &mut *self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.close(),
+        }
+    }
+
+    /// Returns the current ASB connection status.
+    pub fn connection_status(&self) -> AsbStatus {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.connection_status().clone(),
+        }
+    }
+
+    /// Registers a connection-status listener.
+    pub fn register_status_listener(
+        &mut self,
+        listener: Arc<dyn AsbStatusListener>,
+    ) -> CalResult<()> {
+        match &mut *self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.register_status_listener(listener),
+        }
+    }
+
+    /// Unregisters a previously registered connection-status listener.
+    pub fn unregister_status_listener(
+        &mut self,
+        listener: &Arc<dyn AsbStatusListener>,
+    ) -> CalResult<()> {
+        match &mut *self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.unregister_status_listener(listener),
+        }
+    }
+
+    /// Returns the system UUID from the CAL configuration.
+    pub fn get_system_uuid(&self) -> UUID {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.get_system_uuid(),
+        }
+    }
+
+    /// Returns the service UUID if configured.
+    pub fn get_service_uuid(&self) -> Option<UUID> {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.get_service_uuid(),
+        }
+    }
+
+    /// Returns the subsystem UUID if configured.
+    pub fn get_subsystem_uuid(&self) -> Option<UUID> {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.get_subsystem_uuid(),
+        }
+    }
+
+    /// Returns the UUID for a named component if configured.
+    pub fn get_component_uuid(&self, name: &str) -> Option<UUID> {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.get_component_uuid(name),
+        }
+    }
+
+    /// Returns the UUID for a named capability if configured.
+    pub fn get_capability_uuid(&self, name: &str) -> Option<UUID> {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.get_capability_uuid(name),
+        }
+    }
+
+    /// Returns the system label from configuration, if present.
+    pub fn get_system_label(&self) -> Option<String> {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.get_system_label().map(str::to_owned),
+        }
+    }
+
+    /// Registers a remote RADIO URI for multi-process topologies.
+    ///
+    /// Call before the first `create_reader`; peers added after reader
+    /// creation are not picked up by existing readers.
+    pub fn add_receive_peer(&mut self, uri: impl Into<String>) {
+        match &mut *self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.add_receive_peer(uri),
+        }
+    }
+
+    /// Returns `true` if both handles refer to the same underlying instance.
+    #[cfg(test)]
+    pub(crate) fn same_instance(&self, other: &Cal) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AbstractServiceBus + AbstractCal for Cal
+// ════════════════════════════════════════════════════════════════════════════
+
+impl AbstractServiceBus for Cal {
+    fn get_logger(&self) -> &slog::Logger {
+        &self.logger
+    }
+    fn service_identifier(&self) -> &str {
+        &self.service_identifier
+    }
+    fn asb_identifier(&self) -> &str {
+        &self.asb_identifier
+    }
+    fn get_system_uuid(&self) -> UUID {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.get_system_uuid(),
+        }
+    }
+    fn get_service_uuid(&self) -> Option<UUID> {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.get_service_uuid(),
+        }
+    }
+    fn get_subsystem_uuid(&self) -> Option<UUID> {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.get_subsystem_uuid(),
+        }
+    }
+    fn get_component_uuid(&self, name: &str) -> Option<UUID> {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.get_component_uuid(name),
+        }
+    }
+    fn get_capability_uuid(&self, name: &str) -> Option<UUID> {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.get_capability_uuid(name),
+        }
+    }
+    fn oms_schema_version(&self) -> &str {
+        &self.oms_schema_version
+    }
+    fn oms_schema_compiler_version(&self) -> &str {
+        &self.oms_schema_compiler_version
+    }
+    fn get_system_label(&self) -> Option<&str> {
+        self.system_label.as_deref()
+    }
+    fn get_asb_connection_version(&self) -> &str {
+        &self.asb_connection_version
+    }
+    fn get_oms_api_version(&self) -> &str {
+        &self.oms_api_version
+    }
+    fn connection_status(&self) -> &AsbStatus {
+        // ponytail: snapshot at construction; live status via Cal::connection_status()
+        &self.cached_status
+    }
+    fn register_status_listener(&mut self, listener: Arc<dyn AsbStatusListener>) -> CalResult<()> {
+        match &mut *self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.register_status_listener(listener),
+        }
+    }
+    fn unregister_status_listener(
+        &mut self,
+        listener: &Arc<dyn AsbStatusListener>,
+    ) -> CalResult<()> {
+        match &mut *self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.unregister_status_listener(listener),
+        }
+    }
+    fn close(&mut self) -> CalResult<()> {
+        match &mut *self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.close(),
+        }
+    }
+}
+
+impl AbstractCal for Cal {
+    fn message_header_defaults(&self) -> MessageHeaderDefaults {
+        match &*self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.message_header_defaults(),
+        }
+    }
+    fn create_writer<M: CalMessage>(
+        &mut self,
+        topic: &str,
+        qos: TopicQos,
+    ) -> CalResult<Box<dyn AbstractWriter<M>>> {
+        match &mut *self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.create_writer::<M>(topic, qos),
+        }
+    }
+    fn create_reader<M: CalMessage>(
+        &mut self,
+        topic: &str,
+        qos: TopicQos,
+    ) -> CalResult<Box<dyn AbstractReader<M>>> {
+        match &mut *self.inner.lock().unwrap() {
+            #[cfg(feature = "zmq")]
+            CalBackend::Zmq(z) => z.create_reader::<M>(topic, qos),
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Factory
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -349,13 +692,12 @@ pub(crate) struct AsbKey {
     pub(crate) asb_identifier: String,
 }
 
-type CalInstance = Arc<Mutex<dyn AbstractCal>>;
-type CalFactoryMap = HashMap<AsbKey, CalInstance>;
+type CalFactoryMap = HashMap<AsbKey, Cal>;
 
 static CAL_FACTORY: LazyLock<tokio::sync::Mutex<CalFactoryMap>> =
     LazyLock::new(|| tokio::sync::Mutex::new(CalFactoryMap::new()));
 
-/// Returns the [`AbstractCal`] instance for `(service_identifier, asb_identifier)`,
+/// Returns the [`Cal`] instance for `(service_identifier, asb_identifier)`,
 /// creating it if it does not yet exist.
 ///
 /// Satisfies CERT CAL-005201 (mechanism to obtain a fully initialised CAL
@@ -365,13 +707,30 @@ static CAL_FACTORY: LazyLock<tokio::sync::Mutex<CalFactoryMap>> =
 /// transport is configured, or when the underlying constructor fails.
 pub async fn get_cal(
     service_identifier: impl Into<String>,
-    asb_identifier: impl Into<String>,
+    asb_identifier: Option<impl Into<String>>,
     config: Arc<CalConfig>,
     logger: slog::Logger,
-) -> CalResult<CalInstance> {
-    let key = AsbKey {
-        service_identifier: service_identifier.into(),
-        asb_identifier: asb_identifier.into(),
+) -> CalResult<Cal> {
+    let service_identifier = service_identifier.into();
+    let key = if let Some(asbid) = asb_identifier {
+        AsbKey {
+            service_identifier,
+            asb_identifier: asbid.into(),
+        }
+    } else {
+        AsbKey {
+            service_identifier: service_identifier.clone(),
+            asb_identifier: config
+                .get_transport_for_service(service_identifier.clone().as_str())
+                .ok_or_else(|| {
+                    CalError::new_impl(
+                        crate::uci::CalImplementationErrorKind::ConfigError,
+                        "Service does not have a valid transport.",
+                    )
+                })?
+                .id
+                .clone(),
+        }
     };
 
     // Hold the factory lock for the entire construction to prevent concurrent
@@ -379,7 +738,7 @@ pub async fn get_cal(
     let mut map = CAL_FACTORY.lock().await;
 
     if let Some(existing) = map.get(&key) {
-        return Ok(Arc::clone(existing));
+        return Ok(existing.clone());
     }
 
     let transport = config
@@ -401,18 +760,18 @@ pub async fn get_cal(
             )
         })?;
 
-    let instance: CalInstance = match transport.type_.as_str() {
+    let backend = match transport.type_.as_str() {
         #[cfg(feature = "zmq")]
-        ZMQ_ASB_ID => Arc::new(Mutex::new(
+        ZMQ_ASB_ID => CalBackend::Zmq(
             ZmqAsb::new(
                 key.service_identifier.clone(),
                 key.asb_identifier.clone(),
-                logger,
+                logger.clone(),
                 Arc::clone(&config),
                 transport,
             )
             .await?,
-        )),
+        ),
         other => {
             return Err(CalError::new(
                 CalErrorKind::InitializationFailure,
@@ -421,7 +780,13 @@ pub async fn get_cal(
         }
     };
 
-    map.insert(key, Arc::clone(&instance));
+    let instance = Cal::new(
+        backend,
+        key.service_identifier.clone(),
+        key.asb_identifier.clone(),
+        logger,
+    );
+    map.insert(key, instance.clone());
     Ok(instance)
 }
 
@@ -445,24 +810,34 @@ mod tests {
         let p2 = NEXT_TEST_PORT.fetch_add(1, Ordering::SeqCst);
         let config = test_config_on_ports(&[p1, p2]);
 
-        let a = get_cal("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
-            .await
-            .expect("first get_cal must succeed");
-        let b = get_cal("test_svc", "TestZmq", Arc::clone(&config), logger.clone())
-            .await
-            .expect("second get_cal must succeed");
+        let a = get_cal(
+            "test_svc",
+            Some("TestZmq"),
+            Arc::clone(&config),
+            logger.clone(),
+        )
+        .await
+        .expect("first get_cal must succeed");
+        let b = get_cal(
+            "test_svc",
+            Some("TestZmq"),
+            Arc::clone(&config),
+            logger.clone(),
+        )
+        .await
+        .expect("second get_cal must succeed");
         let c = get_cal(
             "test_svc_2",
-            "TestZmq2",
+            Some("TestZmq2"),
             Arc::clone(&config),
             logger.clone(),
         )
         .await
         .expect("different service must succeed");
 
-        assert!(Arc::ptr_eq(&a, &b), "same key should return the same Arc");
+        assert!(a.same_instance(&b), "same key should return the same Arc");
         assert!(
-            !Arc::ptr_eq(&a, &c),
+            !a.same_instance(&c),
             "different service key must be a distinct instance"
         );
     }

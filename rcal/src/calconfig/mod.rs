@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use crate::uci::base::UUID;
 use crate::uci::{CalError, CalImplementationErrorKind, CalResult};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
@@ -20,9 +20,36 @@ pub struct CalConfig {
     /// without a section for defaults.  Add a `[externalizer.<name>]` section to override
     /// options or to define a named chain.
     pub externalizer: HashMap<String, ExternalizerConfig>,
+    /// Extension sections for service-specific configuration.
+    ///
+    /// Any top-level TOML key not consumed by the standard fields is collected here.
+    /// Services retrieve their section via [`CalConfig::get_extension`].
+    #[serde(flatten)]
+    pub extensions: HashMap<String, toml::Value>,
 }
 
 impl CalConfig {
+    /// Deserialize a service-specific extension section from `CalConfig`.
+    ///
+    /// Looks up the top-level TOML key `key` in [`CalConfig::extensions`] and
+    /// deserializes it into `T`.  Returns a `ConfigError` if the key is absent or
+    /// if the value cannot be deserialized into `T`.
+    pub fn get_extension<T: DeserializeOwned>(&self, key: &str) -> CalResult<T> {
+        let val = self.extensions.get(key).ok_or_else(|| {
+            CalError::new_impl(
+                CalImplementationErrorKind::ConfigError,
+                format!("Missing config section '[{key}]'"),
+            )
+        })?;
+        val.clone().try_into().map_err(|err| {
+            CalError::with_impl_source(
+                CalImplementationErrorKind::ConfigError,
+                format!("Failed to parse config section '[{key}]'"),
+                err,
+            )
+        })
+    }
+
     pub fn get_service(&self, name: &str) -> Option<&Service> {
         self.service.iter().find(|item| item.id == name)
     }
@@ -169,10 +196,10 @@ pub struct UUIDFactory {
     pub node: Option<mac_address::MacAddress>,
 }
 
-/// Serialization format used internally by [`XmlExternalizer`][crate::externalizer::XmlExternalizer].
+/// Serialization format used by externalizers.
 ///
-/// This type controls XML whitespace only.  Transport-level externalizer selection
-/// is configured via [`Transport::externalizer`] and [`CalConfig::externalizer`].
+/// Transport-level externalizer selection is configured via
+/// [`Transport::externalizer`] and [`CalConfig::externalizer`].
 #[derive(Deserialize, Serialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SerializationFormat {
@@ -181,6 +208,8 @@ pub enum SerializationFormat {
     Xml,
     /// Indented, human-readable XML.
     PrettyXml,
+    /// TOML serialization.
+    Toml,
 }
 
 /// Configuration for a named externalizer.
@@ -211,6 +240,8 @@ pub enum ExternalizerConfig {
         #[serde(default)]
         pretty: bool,
     },
+    /// TOML serialization.
+    Toml,
     /// Byte-level compression chain wrapping an inner externalizer.
     ///
     /// Requires the `compression` feature.
@@ -461,5 +492,31 @@ writer_buffer = 5
         let cfg = parse_config(toml).unwrap();
         let topic = &cfg.get_service("Svc").unwrap().topic[0];
         assert!(topic.qos.is_none());
+    }
+
+    #[test]
+    fn test_get_extension_roundtrip() {
+        #[derive(Deserialize, PartialEq, Debug)]
+        struct MyExt {
+            value: u32,
+            label: String,
+        }
+        let toml = r#"
+[system]
+id = "test"
+[my_service]
+value = 42
+label = "hello"
+"#;
+        let cfg = parse_config(toml).unwrap();
+        let ext: MyExt = cfg.get_extension("my_service").unwrap();
+        assert_eq!(ext.value, 42);
+        assert_eq!(ext.label, "hello");
+    }
+
+    #[test]
+    fn test_get_extension_missing_returns_error() {
+        let cfg = parse_config("[system]\nid=\"foo\"\n").unwrap();
+        assert!(cfg.get_extension::<toml::Value>("nonexistent").is_err());
     }
 }

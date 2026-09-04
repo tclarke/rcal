@@ -187,8 +187,19 @@ where
     M: CalMessage + serde::de::DeserializeOwned,
 {
     let decoded = decode_chain(ext, bytes)?;
-    quick_xml::de::from_reader(decoded.as_slice())
-        .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))
+    let format = find_format(ext).unwrap_or_default();
+    match format {
+        SerializationFormat::Xml | SerializationFormat::PrettyXml => {
+            quick_xml::de::from_reader(decoded.as_slice())
+                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))
+        }
+        SerializationFormat::Toml => {
+            let s = std::str::from_utf8(&decoded)
+                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
+            toml::from_str(s)
+                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))
+        }
+    }
 }
 
 /// Decode `s` through the full externalizer chain and deserialize to `M` (CXX-012115).
@@ -252,6 +263,9 @@ fn serialize_xml<M: serde::Serialize>(
                 .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
             Ok(buf.into_bytes())
         }
+        SerializationFormat::Toml => toml::to_string(msg)
+            .map(String::into_bytes)
+            .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string())),
     }
 }
 
@@ -263,6 +277,8 @@ fn serialize_xml<M: serde::Serialize>(
 pub const XML_EXTERNALIZER_CAL_API_VERSION: &str = "2.5";
 /// Encoding identifier for the XML externalizer.
 pub const XML_EXTERNALIZER_ENCODING: &str = "xml";
+/// Encoding identifier for the TOML externalizer.
+pub const TOML_EXTERNALIZER_ENCODING: &str = "toml";
 /// Vendor name for this implementation.
 pub const XML_EXTERNALIZER_VENDOR: &str = "rcal";
 
@@ -549,6 +565,10 @@ impl ExternalizerBuilder {
         match next {
             None => match effective_kind.as_str() {
                 "xml" => Ok(Box::new(xml_from_options(&options))),
+                "toml" => Ok(Box::new(TomlExternalizer {
+                    format: SerializationFormat::Toml,
+                    next: None,
+                })),
                 other => Err(CalError::new(
                     CalErrorKind::SerializationError,
                     format!("unknown leaf externalizer type: '{other}'"),
@@ -614,6 +634,10 @@ fn build_from_config(
             };
             Ok(Box::new(XmlExternalizer { format, next: None }))
         }
+        ExternalizerConfig::Toml => Ok(Box::new(TomlExternalizer {
+            format: SerializationFormat::Toml,
+            next: None,
+        })),
         #[cfg(feature = "compression")]
         ExternalizerConfig::Compression {
             inner,
@@ -639,6 +663,10 @@ fn build_builtin(name: &str) -> CalResult<Box<dyn Externalizer>> {
     match name {
         "xml" => Ok(Box::new(XmlExternalizer {
             format: SerializationFormat::Xml,
+            next: None,
+        })),
+        "toml" => Ok(Box::new(TomlExternalizer {
+            format: SerializationFormat::Toml,
             next: None,
         })),
         #[cfg(feature = "compression")]
@@ -678,6 +706,77 @@ impl ExternalizerLoader for XmlExternalizerLoader {
         match encoding {
             XML_EXTERNALIZER_ENCODING => Ok(Box::new(XmlExternalizer {
                 format: SerializationFormat::default(),
+                next: None,
+            })),
+            other => Err(CalError::new(
+                CalErrorKind::SerializationError,
+                format!("unsupported externalizer encoding: '{other}'"),
+            )),
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TomlExternalizer
+// ════════════════════════════════════════════════════════════════════════════
+
+/// TOML-format descriptor [`Externalizer`].
+///
+/// Acts as the leaf in an externalizer chain. Its `encode`/`decode` are identity
+/// transforms; it reports [`SerializationFormat::Toml`] or
+/// [`SerializationFormat::PrettyToml`] so that [`write_to_bytes`] and related
+/// free functions serialize via the `toml` crate.
+pub struct TomlExternalizer {
+    format: SerializationFormat,
+    /// Optional next byte-transform in the chain.
+    pub next: Option<Box<dyn Externalizer>>,
+}
+
+impl TomlExternalizer {
+    /// Construct with the given format and no chained externalizer.
+    pub fn new(format: SerializationFormat) -> Self {
+        Self { format, next: None }
+    }
+}
+
+impl Externalizer for TomlExternalizer {
+    fn next(&self) -> Option<&dyn Externalizer> {
+        self.next.as_deref()
+    }
+
+    fn serialization_format(&self) -> Option<SerializationFormat> {
+        Some(self.format)
+    }
+
+    fn get_cal_api_version(&self) -> &str {
+        XML_EXTERNALIZER_CAL_API_VERSION
+    }
+
+    fn get_encoding(&self) -> &str {
+        TOML_EXTERNALIZER_ENCODING
+    }
+
+    fn get_vendor(&self) -> &str {
+        XML_EXTERNALIZER_VENDOR
+    }
+}
+
+/// [`ExternalizerLoader`] that produces [`TomlExternalizer`] instances.
+///
+/// Supports `"toml"` encoding.
+#[derive(Default)]
+pub struct TomlExternalizerLoader;
+
+impl ExternalizerLoader for TomlExternalizerLoader {
+    fn get_externalizer(
+        &self,
+        encoding: &str,
+        _schema_version: &str,
+        _vendor_version: &str,
+    ) -> CalResult<Box<dyn Externalizer>> {
+        match encoding {
+            TOML_EXTERNALIZER_ENCODING => Ok(Box::new(TomlExternalizer {
+                format: SerializationFormat::Toml,
                 next: None,
             })),
             other => Err(CalError::new(

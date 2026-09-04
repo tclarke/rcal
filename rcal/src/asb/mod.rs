@@ -24,7 +24,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 #[cfg(feature = "zmq")]
-pub mod zmq;
+pub(crate) mod zmq;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Config helpers

@@ -48,7 +48,9 @@ pub mod sealed {
 /// Abstract message types (schema `abstract="true"`) must NOT implement this
 /// trait (CERT CAL-016035). Only concrete, instantiable message types are
 /// permitted.
-pub trait CalMessage: Send + Sync + 'static {
+pub trait CalMessage:
+    Send + Sync + 'static + serde::Serialize + serde::de::DeserializeOwned
+{
     /// Returns the fully-qualified OMS message type name as defined in the
     /// OMS Message Schema. Used to enforce one-type-per-topic association
     /// (CERT CAL-005208).

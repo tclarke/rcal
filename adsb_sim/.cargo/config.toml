@@ -1,0 +1,2 @@
+[env]
+RCAL_CALCONFIG_PATH = { value = "CALConfig.toml", relative = true }

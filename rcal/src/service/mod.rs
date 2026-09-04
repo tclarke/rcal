@@ -15,8 +15,8 @@ use std::time::Duration;
 use slog::{error, info, trace, warn};
 
 use crate::cal::{
-    AbstractCal, AbstractCalCreateMessage, AbstractCalExt, AbstractReader, AbstractWriter,
-    MessageListener, TopicQos,
+    AbstractCal, AbstractCalCreateMessage, AbstractReader, AbstractWriter, MessageListener,
+    TopicQos,
 };
 use crate::calconfig::CalConfig;
 use crate::uci::{CalMessage, CalResult};
@@ -92,7 +92,7 @@ where
 /// Concrete AbstractService implementation, generic over the CAL type `A`.
 ///
 /// `A` is held directly (not via `dyn AbstractCal`) so that the
-/// generic `AbstractCalExt<M>` methods remain callable at the method level.
+/// generic `create_writer<M>` and `create_reader<M>` methods remain callable.
 #[rcal_macros::monitor]
 pub struct AbstractServiceImpl<A> {
     service_id: String,
@@ -155,7 +155,6 @@ impl<A: AbstractCal> AbstractServiceImpl<A> {
     ) -> CalResult<Box<dyn AbstractWriter<M>>>
     where
         M: CalMessage,
-        A: AbstractCalExt<M>,
     {
         trace!(self.logger, "AbstractServiceImpl::create_writer";
             "service_id" => &self.service_id,
@@ -172,7 +171,6 @@ impl<A: AbstractCal> AbstractServiceImpl<A> {
     pub fn create_reader<M, F>(&mut self, topic: &str, qos: TopicQos, callback: F) -> CalResult<()>
     where
         M: CalMessage + 'static,
-        A: AbstractCalExt<M>,
         F: Fn(&Arc<M>, &str) + Send + Sync + 'static,
     {
         trace!(self.logger, "AbstractServiceImpl::create_reader";
@@ -220,7 +218,6 @@ impl<A: AbstractCal> AbstractServiceImpl<A> {
     ) -> CalResult<Box<dyn AbstractReader<M>>>
     where
         M: CalMessage + 'static,
-        A: AbstractCalExt<M>,
     {
         trace!(self.logger, "AbstractServiceImpl::create_polling_reader";
             "service_id" => &self.service_id,
@@ -469,6 +466,22 @@ mod tests {
 
     impl AbstractCal for NullAsb {
         fn message_header_defaults(&self) -> MessageHeaderDefaults {
+            unimplemented!()
+        }
+
+        fn create_writer<M: crate::uci::CalMessage>(
+            &mut self,
+            _topic: &str,
+            _qos: TopicQos,
+        ) -> crate::uci::CalResult<Box<dyn AbstractWriter<M>>> {
+            unimplemented!()
+        }
+
+        fn create_reader<M: crate::uci::CalMessage>(
+            &mut self,
+            _topic: &str,
+            _qos: TopicQos,
+        ) -> crate::uci::CalResult<Box<dyn AbstractReader<M>>> {
             unimplemented!()
         }
     }

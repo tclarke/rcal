@@ -10,10 +10,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rcal::QName;
-use rcal::asb::AbstractServiceBus;
-use rcal::asb::zmq::ZmqAsb;
+use rcal::cal;
 use rcal::uci::CalMessage;
-use rcal::uci::base::{AbstractCalExt, TopicQos, UUID};
+use rcal::uci::base::{TopicQos, UUID};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct IntMsg {
@@ -51,16 +50,15 @@ async fn main() {
          \n[[transport]]\nid = \"T\"\ntype = \"zmq\"\nuri = \"tcp://127.0.0.1:{port}\"\n"
     );
     let config = Arc::new(rcal::calconfig::parse_config(&toml).unwrap());
-    let tconfig = config.get_transport("T").unwrap();
 
     let logger = slog::Logger::root(slog::Discard, slog::o!());
-    let mut bus = ZmqAsb::new("sender", "T", logger, config.clone(), tconfig)
+    let mut bus = cal::get_cal("sender", Some("T"), config.clone(), logger)
         .await
         .unwrap();
 
-    let mut writer =
-        <ZmqAsb as AbstractCalExt<IntMsg>>::create_writer(&mut bus, "data", TopicQos::default())
-            .unwrap();
+    let mut writer = bus
+        .create_writer::<IntMsg>("data", TopicQos::default())
+        .unwrap();
 
     // Allow receiver process to connect before publishing.
     // ponytail: fixed delay, use a ready-signal if startup variance matters
