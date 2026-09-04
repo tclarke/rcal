@@ -11,8 +11,7 @@ use std::time::Duration;
 
 use slog::{error, info};
 
-use rcal::asb::{AbstractServiceBus, zmq::ZmqAsb};
-use rcal::cal::{AbstractCalCreateMessage, AbstractCalExt, TopicQos};
+use rcal::cal::{self, TopicQos};
 use rcal::uci::CalMessage;
 use rcal::uci::base::UUID;
 use rcal::uci::types::*;
@@ -34,7 +33,6 @@ async fn main() {
         .unwrap_or_else(|| panic!("transport '{transport_id}' not in config"))
         .clone();
 
-    // Determine pretty-print flag before config is moved into ZmqAsb.
     let pretty = {
         let ext_name = tconfig.externalizer.as_deref().unwrap_or("xml");
         matches!(
@@ -43,30 +41,23 @@ async fn main() {
         )
     };
 
-    let mut bus = ZmqAsb::new(
+    let mut bus = cal::get_cal(
         "SystemStatusExample",
-        transport_id,
+        Some(&transport_id),
+        Arc::clone(&config),
         root_logger.clone(),
-        config,
-        &tconfig,
     )
     .await
     .expect("ASB init failed");
 
     // Create reader before writer so no messages are missed.
-    let mut reader = <ZmqAsb as AbstractCalExt<SystemStatus_>>::create_reader(
-        &mut bus,
-        TOPIC,
-        TopicQos::default(),
-    )
-    .expect("create_reader failed");
+    let mut reader = bus
+        .create_reader::<SystemStatus_>(TOPIC, TopicQos::default())
+        .expect("create_reader failed");
 
-    let mut writer = <ZmqAsb as AbstractCalExt<SystemStatus_>>::create_writer(
-        &mut bus,
-        TOPIC,
-        TopicQos::default(),
-    )
-    .expect("create_writer failed");
+    let mut writer = bus
+        .create_writer::<SystemStatus_>(TOPIC, TopicQos::default())
+        .expect("create_writer failed");
 
     // Spawn a blocking thread: read → validate → print XML.
     // Loop exits when the ASB closes (Err return from read).
@@ -120,10 +111,6 @@ async fn main() {
         .system_id_mut()
         .descriptive_label_mut()
         .replace(&mut "This is an example system".to_string());
-    (*msg)
-        .message_header_mut()
-        .schema_version_mut()
-        .clone_from(&bus.oms_schema_version().to_string());
     *(*msg).message_header_mut().mode_mut() = MessageModeEnum::Simulation;
 
     let sysid = (*msg).message_header().system_id().clone();

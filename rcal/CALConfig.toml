@@ -1,0 +1,36 @@
+[system]
+id = "ASB Dump"
+label = "Dump all monitored topics to TOML"
+uuid = "cbeb8cff-4f48-37c8-8534-30b3f190b95e"
+default_transport = "asb"
+
+[system.logging]
+default_level = "debug"
+
+[[system.logging.sink]]
+type = "stdout"
+level = "debug"
+format = "pretty"
+
+[[transport]]
+id = "asb"
+type = "zmq"
+uri = "tcp://127.0.0.1:2200"
+
+[[service]]
+id = "asb_dump"
+
+[[service.topic]]
+id = "Entity"
+
+[[service.topic]]
+id = "SystemStatus"
+
+[[service.topic]]
+id = "ServiceStatus"
+
+[[service.topic]]
+id = "ServiceStatusDataRequest"
+
+[[service.topic]]
+id = "ServiceStatusDataRequestStatus"

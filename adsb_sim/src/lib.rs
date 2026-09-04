@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use slog::{error, info, warn};
 
-use rcal::cal::{AbstractCal, AbstractCalExt, AbstractWriter, TopicQos};
+use rcal::cal::{AbstractCal, AbstractWriter, TopicQos};
 use rcal::calconfig::CalConfig;
 use rcal::service::{AbstractService, AbstractServiceImpl, ServiceLifecycleState};
 use rcal::uci::base::UUID;
@@ -36,13 +36,9 @@ pub struct AdsbSimService {
 }
 
 impl AdsbSimService {
-    pub fn new<A>(asb: A, cal_config: Arc<CalConfig>, logger: slog::Logger) -> CalResult<Self>
+    pub fn new<A>(cal: A, cal_config: Arc<CalConfig>, logger: slog::Logger) -> CalResult<Self>
     where
-        A: AbstractCal
-            + AbstractCalExt<Entity_>
-            + AbstractCalExt<SystemStatus_>
-            + AbstractCalExt<ServiceStatus_>
-            + 'static,
+        A: AbstractCal + 'static,
     {
         let adsb_config: AdsbSimConfig = cal_config.get_extension("adsb_sim").unwrap_or_default();
 
@@ -56,7 +52,7 @@ impl AdsbSimService {
             "adsb_sim",
             cal_config.system.id.clone(),
             vec![],
-            asb,
+            cal,
             Arc::clone(&cal_config),
             logger.clone(),
         );

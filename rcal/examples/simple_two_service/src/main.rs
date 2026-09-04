@@ -18,8 +18,7 @@ use std::time::Duration;
 
 use slog::{error, info, o, warn};
 
-use rcal::asb::zmq::ZmqAsb;
-use rcal::cal::TopicQos;
+use rcal::cal::{self, TopicQos};
 use rcal::service::{AbstractService, AbstractServiceImpl};
 use rcal::uci::types::*;
 use rcal::update_message_header;
@@ -53,38 +52,29 @@ async fn main() {
         }
     };
 
-    let tconfig = match config.get_transport(transport_id) {
-        Some(t) => t.clone(),
-        None => {
-            error!(root_logger, "transport not in config"; "id" => transport_id);
-            std::process::exit(1);
-        }
-    };
-
-    let mut asb = match ZmqAsb::new(
+    let mut cal = match cal::get_cal(
         &service_name,
-        transport_id,
-        root_logger.clone(),
+        Some(transport_id),
         Arc::clone(&config),
-        &tconfig,
+        root_logger.clone(),
     )
     .await
     {
         Ok(a) => a,
         Err(e) => {
-            error!(root_logger, "ZmqAsb init failed"; "error" => %e);
+            error!(root_logger, "CAL init failed"; "error" => %e);
             std::process::exit(1);
         }
     };
 
     // Connect the DISH side to the other service's RADIO.
-    asb.add_receive_peer(peer_uri);
+    cal.add_receive_peer(peer_uri);
 
     let mut svc = AbstractServiceImpl::new(
         service_name.clone(),
         config.system.id.clone(),
         vec![],
-        asb,
+        cal,
         Arc::clone(&config),
         root_logger.clone(),
     );
