@@ -63,8 +63,11 @@ impl AdsbSimService {
             svc.create_writer::<ServiceStatus_>("ServiceStatus", TopicQos::default())?;
 
         let entity_template = svc.create_message::<Entity_>()?;
-        let sys_msg = svc.create_message::<SystemStatus_>()?;
-        let svc_msg = svc.create_message::<ServiceStatus_>()?;
+        let mut sys_msg = svc.create_message::<SystemStatus_>()?;
+        *sys_msg.message_data_mut().system_state_mut() = SystemStateEnum::Operational;
+        *sys_msg.message_data_mut().source_mut() = SystemSourceEnum::Actual;
+        let mut svc_msg = svc.create_message::<ServiceStatus_>()?;
+        *svc_msg.message_data_mut().service_state_mut() = ServiceStateEnum::Normal;
 
         Ok(Self {
             lifecycle: Box::new(svc),
