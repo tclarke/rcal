@@ -46,6 +46,10 @@ glob = "0.3.4"
 name = "zmq_peer_sender"
 required-features = ["zmq"]
 
+[[bin]]
+name = "asb_dump"
+required-features = ["zmq"]
+
 [[example]]
 name = "system_status"
 

@@ -196,10 +196,10 @@ pub struct UUIDFactory {
     pub node: Option<mac_address::MacAddress>,
 }
 
-/// Serialization format used internally by [`XmlExternalizer`][crate::externalizer::XmlExternalizer].
+/// Serialization format used by externalizers.
 ///
-/// This type controls XML whitespace only.  Transport-level externalizer selection
-/// is configured via [`Transport::externalizer`] and [`CalConfig::externalizer`].
+/// Transport-level externalizer selection is configured via
+/// [`Transport::externalizer`] and [`CalConfig::externalizer`].
 #[derive(Deserialize, Serialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SerializationFormat {
@@ -208,6 +208,8 @@ pub enum SerializationFormat {
     Xml,
     /// Indented, human-readable XML.
     PrettyXml,
+    /// TOML serialization.
+    Toml,
 }
 
 /// Configuration for a named externalizer.
@@ -238,6 +240,8 @@ pub enum ExternalizerConfig {
         #[serde(default)]
         pretty: bool,
     },
+    /// TOML serialization.
+    Toml,
     /// Byte-level compression chain wrapping an inner externalizer.
     ///
     /// Requires the `compression` feature.
