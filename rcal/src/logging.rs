@@ -237,9 +237,10 @@ pub fn build_logger(config: &LoggingConfig) -> Logger {
         drains.push(Box::new(filtered));
     }
 
+    // No root-level filter: each sink applies its own level in `build_sink`, so a
+    // sink configured at `trace` must be able to see trace records.
     let fanned = FanoutDrain { drains };
-    let filtered = slog::LevelFilter::new(fanned, default_level).fuse();
-    Logger::root(filtered, o!())
+    Logger::root(fanned.fuse(), o!())
 }
 
 /// Build a test logger: stdout, debug level.

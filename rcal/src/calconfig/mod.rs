@@ -366,6 +366,15 @@ impl Service {
             .find(|c| c.name == name)
             .map(|c| c.uuid)
     }
+
+    /// Returns the configured [`TopicDirection`] for `topic_id`, or `Both` when not configured.
+    pub fn topic_direction(&self, topic_id: &str) -> TopicDirection {
+        self.topic
+            .iter()
+            .find(|t| t.id == topic_id)
+            .map(|t| t.direction)
+            .unwrap_or_default()
+    }
 }
 
 /// Reliability policy in TOML config — mirrors `cal::Reliability` but serde-friendly.
@@ -403,8 +412,27 @@ pub struct Topic {
     #[serde(rename = "type")]
     pub type_: Option<String>,
     pub topic: Option<String>,
+    /// Allowed data-flow direction (`In`, `Out`, or `Both`; default `Both`).
+    pub direction: TopicDirection,
     /// Optional per-topic QoS defaults (CAL-005210).
     pub qos: Option<TopicQosConfig>,
+}
+
+/// Permitted data-flow direction for a configured topic.
+///
+/// - `In`   — subscribe/read only; publish/write is rejected.
+/// - `Out`  — publish/write only; subscribe/read is rejected.
+/// - `Both` — all operations permitted (default).
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "PascalCase")]
+pub enum TopicDirection {
+    /// Receive only.
+    In,
+    /// Send only.
+    Out,
+    /// Both send and receive (default).
+    #[default]
+    Both,
 }
 
 pub fn parse_config_from_file(filename: &str) -> CalResult<CalConfig> {
@@ -459,6 +487,35 @@ mod tests {
         parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"Random\"\n").unwrap();
         parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\n").unwrap();
         parse_config("[system]\nid=\"foo\"\n[uuid-factory]\ntype=\"TimeBased\"\nnode=\"00:11:22:33:44:55\"\n").unwrap();
+    }
+
+    #[test]
+    fn test_topic_direction_parses_and_defaults() {
+        let toml = r#"
+[system]
+id = "test"
+
+[[service]]
+id = "Svc"
+
+[[service.topic]]
+id = "InOnly"
+direction = "In"
+
+[[service.topic]]
+id = "OutOnly"
+direction = "Out"
+
+[[service.topic]]
+id = "Unset"
+"#;
+        let cfg = parse_config(toml).unwrap();
+        let svc = cfg.get_service("Svc").unwrap();
+        assert_eq!(svc.topic_direction("InOnly"), TopicDirection::In);
+        assert_eq!(svc.topic_direction("OutOnly"), TopicDirection::Out);
+        // Absent `direction` and unknown topics both fall back to `Both`.
+        assert_eq!(svc.topic_direction("Unset"), TopicDirection::Both);
+        assert_eq!(svc.topic_direction("NoSuchTopic"), TopicDirection::Both);
     }
 
     #[test]

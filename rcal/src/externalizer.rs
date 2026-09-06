@@ -723,8 +723,7 @@ impl ExternalizerLoader for XmlExternalizerLoader {
 /// TOML-format descriptor [`Externalizer`].
 ///
 /// Acts as the leaf in an externalizer chain. Its `encode`/`decode` are identity
-/// transforms; it reports [`SerializationFormat::Toml`] or
-/// [`SerializationFormat::PrettyToml`] so that [`write_to_bytes`] and related
+/// transforms; it reports [`SerializationFormat::Toml`] so that [`write_to_bytes`] and related
 /// free functions serialize via the `toml` crate.
 pub struct TomlExternalizer {
     format: SerializationFormat,

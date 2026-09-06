@@ -35,8 +35,14 @@ pub struct AdsbSimService {
     task_handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
+#[rcal_macros::rcal_trace]
 impl AdsbSimService {
-    pub fn new<A>(service_name: &str, cal: A, cal_config: Arc<CalConfig>, logger: slog::Logger) -> CalResult<Self>
+    pub fn new<A>(
+        service_name: &str,
+        cal: A,
+        cal_config: Arc<CalConfig>,
+        logger: slog::Logger,
+    ) -> CalResult<Self>
     where
         A: AbstractCal + 'static,
     {
@@ -88,6 +94,7 @@ impl AdsbSimService {
     }
 }
 
+#[rcal_macros::rcal_trace]
 impl AbstractService for AdsbSimService {
     fn system_id(&self) -> &str {
         self.lifecycle.system_id()

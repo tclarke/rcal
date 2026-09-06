@@ -63,6 +63,7 @@ struct TomlPrinter {
     logger: slog::Logger,
 }
 
+#[rcal_macros::rcal_trace]
 impl MessageListener<AnyMsg> for TomlPrinter {
     fn on_message(&self, msg: &Arc<AnyMsg>) {
         slog::trace!(self.logger, "message received"; "topic" => &self.topic);

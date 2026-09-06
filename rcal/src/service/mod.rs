@@ -107,6 +107,7 @@ pub struct AbstractServiceImpl<A> {
     _readers: std::sync::Mutex<Vec<Box<dyn Any + Send>>>,
 }
 
+#[rcal_macros::rcal_trace]
 impl<A: AbstractCal> AbstractServiceImpl<A> {
     /// Constructs a new `AbstractServiceImpl`.
     ///
@@ -263,6 +264,7 @@ impl<A: AbstractCal> AbstractServiceImpl<A> {
     }
 }
 
+#[rcal_macros::rcal_trace]
 impl<A: AbstractCal> AbstractService for AbstractServiceImpl<A> {
     fn system_id(&self) -> &str {
         &self.system_id

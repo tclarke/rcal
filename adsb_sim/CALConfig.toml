@@ -3,11 +3,10 @@ id = "SIM-1"
 label = "Simulator system 1"
 uuid = "1f508135-4346-4228-b037-a6ea43f6f7b7"
 default_transport = "adsb_sim"
-logging.default_level = "trace"
 
 [[system.logging.sink]]
 type = "stdout"
-level = "trace"
+level = "info"
 format = "pretty"
 
 [[transport]]

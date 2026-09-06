@@ -14,7 +14,7 @@ use crate::cal::{
     AbstractCal, AbstractReader, AbstractWriter, Expiration, MessageBuffer, MessageHeaderDefaults,
     MessageListener, Reliability, TimeBasedFilter, TopicQos,
 };
-use crate::calconfig::{CalConfig, ReliabilityConfig, Transport};
+use crate::calconfig::{CalConfig, ReliabilityConfig, TopicDirection, Transport};
 use crate::externalizer::{Externalizer, build_externalizer, read_from_bytes, write_to_bytes};
 use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
 use serde::Deserialize as _;
@@ -54,6 +54,33 @@ fn validate_topic_type<M: CalMessage>(
         ));
     }
     Ok(())
+}
+
+/// Validates that the requested operation direction is permitted by the topic config.
+///
+/// `writing` — `true` for publish/create_writer, `false` for subscribe/create_reader.
+/// No-op when the service or topic is not configured (direction defaults to `Both`).
+fn validate_topic_direction(
+    config: &CalConfig,
+    service_id: &str,
+    topic: &str,
+    writing: bool,
+) -> CalResult<()> {
+    let direction = config
+        .get_service(service_id)
+        .map(|s| s.topic_direction(topic))
+        .unwrap_or_default();
+    match (direction, writing) {
+        (TopicDirection::In, true) => Err(CalError::new(
+            CalErrorKind::OperationNotPermitted,
+            format!("Topic '{topic}' is configured In-only; publish/write not permitted"),
+        )),
+        (TopicDirection::Out, false) => Err(CalError::new(
+            CalErrorKind::OperationNotPermitted,
+            format!("Topic '{topic}' is configured Out-only; subscribe/read not permitted"),
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Returns the remapped CAL topic name for `topic` if the service config defines
@@ -162,6 +189,7 @@ pub struct ZmqAsb {
     write_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
+#[rcal_macros::rcal_trace]
 impl ZmqAsb {
     /// Constructs a new `ZmqAsb` in the `Initializing` state.
     ///
@@ -274,6 +302,7 @@ impl ZmqAsb {
 // AbstractServiceBus implementation
 // ════════════════════════════════════════════════════════════════════════════
 
+#[rcal_macros::rcal_trace]
 impl AbstractServiceBus for ZmqAsb {
     fn get_logger(&self) -> &Logger {
         &self.logger
@@ -394,6 +423,7 @@ impl AbstractServiceBus for ZmqAsb {
 // AbstractCal implementation
 // ════════════════════════════════════════════════════════════════════════════
 
+#[rcal_macros::rcal_trace]
 impl AbstractCal for ZmqAsb {
     fn message_header_defaults(&self) -> MessageHeaderDefaults {
         use crate::uci::types::{
@@ -452,6 +482,7 @@ impl AbstractCal for ZmqAsb {
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractWriter<M>>> {
         validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
+        validate_topic_direction(&self.config, &self.service_name, topic, true)?;
         let qos = apply_config_qos(&self.config, &self.service_name, topic, qos);
         if qos.reliability == Reliability::Reliable {
             return Err(CalError::new(
@@ -523,6 +554,7 @@ impl AbstractCal for ZmqAsb {
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractReader<M>>> {
         validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
+        validate_topic_direction(&self.config, &self.service_name, topic, false)?;
         let qos = apply_config_qos(&self.config, &self.service_name, topic, qos);
         if qos.reliability == Reliability::Reliable {
             return Err(CalError::new(
@@ -667,6 +699,7 @@ pub struct ZmqWriter<M: CalMessage> {
     _phantom: PhantomData<M>,
 }
 
+#[rcal_macros::rcal_trace]
 impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for ZmqWriter<M> {
     fn topic(&self) -> &str {
         &self.topic
@@ -757,6 +790,7 @@ pub struct ZmqReader<M: CalMessage> {
     task: tokio::task::JoinHandle<()>,
 }
 
+#[rcal_macros::rcal_trace]
 impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for ZmqReader<M> {
     fn topic(&self) -> &str {
         &self.topic
@@ -922,6 +956,46 @@ mod tests {
         ZmqAsb::new("Test Service", "TestZmq", logger, config.clone(), tconfig)
             .await
             .unwrap()
+    }
+
+    #[test]
+    fn test_validate_topic_direction() {
+        let config = crate::calconfig::parse_config(
+            r#"
+[system]
+id = "test"
+
+[[service]]
+id = "Svc"
+
+[[service.topic]]
+id = "InOnly"
+direction = "In"
+
+[[service.topic]]
+id = "OutOnly"
+direction = "Out"
+
+[[service.topic]]
+id = "Unset"
+"#,
+        )
+        .unwrap();
+
+        // In-only: reads allowed, writes rejected.
+        assert!(validate_topic_direction(&config, "Svc", "InOnly", false).is_ok());
+        let err = validate_topic_direction(&config, "Svc", "InOnly", true).unwrap_err();
+        assert!(matches!(err.kind(), CalErrorKind::OperationNotPermitted));
+
+        // Out-only: writes allowed, reads rejected.
+        assert!(validate_topic_direction(&config, "Svc", "OutOnly", true).is_ok());
+        let err = validate_topic_direction(&config, "Svc", "OutOnly", false).unwrap_err();
+        assert!(matches!(err.kind(), CalErrorKind::OperationNotPermitted));
+
+        // Default `Both`, and unconfigured service/topic, permit everything.
+        assert!(validate_topic_direction(&config, "Svc", "Unset", true).is_ok());
+        assert!(validate_topic_direction(&config, "Svc", "Unset", false).is_ok());
+        assert!(validate_topic_direction(&config, "NoSvc", "Whatever", true).is_ok());
     }
 
     // ── Test message type ─────────────────────────────────────────────────

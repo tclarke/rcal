@@ -356,6 +356,7 @@ pub struct Cal {
     cached_status: AsbStatus,
 }
 
+#[rcal_macros::rcal_trace]
 impl Cal {
     fn new(
         backend: CalBackend,
@@ -571,6 +572,7 @@ impl Cal {
 // AbstractServiceBus + AbstractCal for Cal
 // ════════════════════════════════════════════════════════════════════════════
 
+#[rcal_macros::rcal_trace]
 impl AbstractServiceBus for Cal {
     fn get_logger(&self) -> &slog::Logger {
         &self.logger
@@ -653,6 +655,7 @@ impl AbstractServiceBus for Cal {
     }
 }
 
+#[rcal_macros::rcal_trace]
 impl AbstractCal for Cal {
     fn message_header_defaults(&self) -> MessageHeaderDefaults {
         match &*self.inner.lock().unwrap() {

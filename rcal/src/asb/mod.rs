@@ -40,7 +40,8 @@ pub(crate) mod zmq;
 /// Returns `Err(InitializationFailure)` when the resolved path does not exist.
 pub fn get_asb_config_location(path: Option<String>) -> CalResult<String> {
     let config_file = path.unwrap_or_else(|| {
-        env::var("RCAL_CALCONFIG_PATH").unwrap_or_else(|_| String::from_str("./CALConfig.toml").unwrap())
+        env::var("RCAL_CALCONFIG_PATH")
+            .unwrap_or_else(|_| String::from_str("./CALConfig.toml").unwrap())
     });
 
     if Path::new(&config_file).exists() {

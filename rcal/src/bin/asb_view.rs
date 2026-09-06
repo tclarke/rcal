@@ -28,16 +28,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use ratatui::Frame;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
-use ratatui::crossterm::terminal::{
-    EnterAlternateScreen, enable_raw_mode,
-};
 use ratatui::crossterm::execute;
+use ratatui::crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
-use ratatui::Frame;
 
 /// 8 distinct background colors for locked topic highlights.
 const LOCK_BG_COLORS: [Color; 8] = [
@@ -219,17 +217,13 @@ impl Ui {
         let mut idxs: Vec<usize> = messages
             .iter()
             .enumerate()
-            .filter(|(_, m)| {
-                filter_lc.is_empty() || m.topic.to_lowercase().contains(&filter_lc)
-            })
+            .filter(|(_, m)| filter_lc.is_empty() || m.topic.to_lowercase().contains(&filter_lc))
             .map(|(i, _)| i)
             .collect();
         match self.sort {
             SortField::Time => {} // already insertion order = time order
             SortField::Topic => {
-                idxs.sort_by(|&a, &b| {
-                    messages[a].topic.cmp(&messages[b].topic).then(a.cmp(&b))
-                });
+                idxs.sort_by(|&a, &b| messages[a].topic.cmp(&messages[b].topic).then(a.cmp(&b)));
             }
         }
         idxs
@@ -268,62 +262,85 @@ impl Ui {
         }
 
         // Topic of the currently selected message for transient same-topic highlight.
-        let selected_topic: Option<&str> = self.list_state.selected()
+        let selected_topic: Option<&str> = self
+            .list_state
+            .selected()
             .and_then(|si| idxs.get(si))
             .map(|&i| st.messages[i].topic.as_str());
 
         // Left pane — message list
-        let items: Vec<ListItem> = idxs.iter().enumerate().map(|(vis_i, &i)| {
-            let m = &st.messages[i];
-            let time_str = match self.time_fmt {
-                TimeFmt::Iso => m.wall_time.format("%T%.3f").to_string(),
-                TimeFmt::Elapsed => {
-                    let e = m.received_at.duration_since(st.start).as_secs_f32();
-                    format!("{e:8.2}s")
+        let items: Vec<ListItem> = idxs
+            .iter()
+            .enumerate()
+            .map(|(vis_i, &i)| {
+                let m = &st.messages[i];
+                let time_str = match self.time_fmt {
+                    TimeFmt::Iso => m.wall_time.format("%T%.3f").to_string(),
+                    TimeFmt::Elapsed => {
+                        let e = m.received_at.duration_since(st.start).as_secs_f32();
+                        format!("{e:8.2}s")
+                    }
+                };
+                let id_str: &str = if m.identifier.is_empty() {
+                    &m.topic
+                } else {
+                    &m.identifier
+                };
+                let id_color = self
+                    .system_colors
+                    .get(id_str)
+                    .map(|&ci| ID_FG_COLORS[ci])
+                    .unwrap_or(Color::Gray);
+
+                let line = Line::from(vec![
+                    Span::raw(format!("{time_str}  ")),
+                    Span::styled(
+                        format!("{:<20}", m.topic),
+                        Style::default().fg(Color::White),
+                    ),
+                    Span::raw("  "),
+                    Span::styled(id_str.to_string(), Style::default().fg(id_color)),
+                ]);
+
+                // Row background: locked > transient same-topic > default.
+                // (selected item bg is overridden by list highlight_style.)
+                let is_selected = self.list_state.selected() == Some(vis_i);
+                let row_bg = if is_selected {
+                    None
+                } else if let Some(&ci) = self.locked_highlights.get(&m.topic) {
+                    Some(LOCK_BG_COLORS[ci])
+                } else if selected_topic == Some(m.topic.as_str()) {
+                    Some(Color::Rgb(35, 55, 55))
+                } else {
+                    None
+                };
+
+                let item = ListItem::new(line);
+                if let Some(bg) = row_bg {
+                    item.style(Style::default().bg(bg))
+                } else {
+                    item
                 }
-            };
-            let id_str: &str = if m.identifier.is_empty() { &m.topic } else { &m.identifier };
-            let id_color = self.system_colors.get(id_str)
-                .map(|&ci| ID_FG_COLORS[ci])
-                .unwrap_or(Color::Gray);
-
-            let line = Line::from(vec![
-                Span::raw(format!("{time_str}  ")),
-                Span::styled(format!("{:<20}", m.topic), Style::default().fg(Color::White)),
-                Span::raw("  "),
-                Span::styled(id_str.to_string(), Style::default().fg(id_color)),
-            ]);
-
-            // Row background: locked > transient same-topic > default.
-            // (selected item bg is overridden by list highlight_style.)
-            let is_selected = self.list_state.selected() == Some(vis_i);
-            let row_bg = if is_selected {
-                None
-            } else if let Some(&ci) = self.locked_highlights.get(&m.topic) {
-                Some(LOCK_BG_COLORS[ci])
-            } else if selected_topic == Some(m.topic.as_str()) {
-                Some(Color::Rgb(35, 55, 55))
-            } else {
-                None
-            };
-
-            let item = ListItem::new(line);
-            if let Some(bg) = row_bg {
-                item.style(Style::default().bg(bg))
-            } else {
-                item
-            }
-        }).collect();
+            })
+            .collect();
 
         let list_title = format!(
             " Messages ({}/{}) [sort:{}] ",
             idxs.len(),
             messages,
-            match self.sort { SortField::Time => "time", SortField::Topic => "topic" }
+            match self.sort {
+                SortField::Time => "time",
+                SortField::Topic => "topic",
+            }
         );
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL).title(list_title))
-            .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .highlight_symbol("▶ ");
 
         f.render_stateful_widget(list, main[0], &mut self.list_state);
@@ -372,21 +389,37 @@ impl Ui {
                             if self.detail_cursor < scroll {
                                 self.detail_scroll = self.detail_cursor as u16;
                             } else if self.detail_cursor >= scroll + detail_height {
-                                self.detail_scroll = (self.detail_cursor + 1).saturating_sub(detail_height) as u16;
+                                self.detail_scroll =
+                                    (self.detail_cursor + 1).saturating_sub(detail_height) as u16;
                             }
                         }
-                        let cursor = if self.detail_focused { Some(self.detail_cursor) } else { None };
-                        let lines = form_lines.iter().enumerate().map(|(i, fl)| {
-                            if cursor == Some(i) {
-                                Line::from(
-                                    fl.line.spans.iter().map(|s| {
-                                        Span::styled(s.content.clone(), s.style.bg(Color::DarkGray))
-                                    }).collect::<Vec<_>>()
-                                )
-                            } else {
-                                fl.line.clone()
-                            }
-                        }).collect();
+                        let cursor = if self.detail_focused {
+                            Some(self.detail_cursor)
+                        } else {
+                            None
+                        };
+                        let lines = form_lines
+                            .iter()
+                            .enumerate()
+                            .map(|(i, fl)| {
+                                if cursor == Some(i) {
+                                    Line::from(
+                                        fl.line
+                                            .spans
+                                            .iter()
+                                            .map(|s| {
+                                                Span::styled(
+                                                    s.content.clone(),
+                                                    s.style.bg(Color::DarkGray),
+                                                )
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    )
+                                } else {
+                                    fl.line.clone()
+                                }
+                            })
+                            .collect();
                         self.form_line_cache = form_lines;
                         lines
                     }
@@ -405,7 +438,12 @@ impl Ui {
             Style::default()
         };
         let detail = Paragraph::new(detail_text)
-            .block(Block::default().borders(Borders::ALL).border_style(detail_border_style).title(format!(" Detail [{view_label}] ")))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(detail_border_style)
+                    .title(format!(" Detail [{view_label}] ")),
+            )
             .wrap(Wrap { trim: false })
             .scroll((self.detail_scroll, 0));
 
@@ -422,9 +460,13 @@ impl Ui {
             format!("Filter: {}  [Esc clear]  ", self.filter)
         };
         let status = if self.detail_focused {
-            "Detail: [j/k] navigate  [Space/Enter] collapse  [y] copy  [Tab/Esc] back  [q] quit".to_string()
+            "Detail: [j/k] navigate  [Space/Enter] collapse  [y] copy  [Tab/Esc] back  [q] quit"
+                .to_string()
         } else {
-            format!("{}  [Tab] detail  [s] sort  [i] time  [F]orm [X]ml [T]oml  [h] lock color  [H] clear  [q] quit", filter_part)
+            format!(
+                "{}  [Tab] detail  [s] sort  [i] time  [F]orm [X]ml [T]oml  [h] lock color  [H] clear  [q] quit",
+                filter_part
+            )
         };
         f.render_widget(
             Paragraph::new(status).style(Style::default().fg(Color::DarkGray)),
@@ -474,7 +516,9 @@ impl Ui {
                     self.detail_cursor = self.detail_cursor.saturating_sub(1);
                 }
                 KeyCode::Char(' ') | KeyCode::Enter => {
-                    if let Some(path) = self.form_line_cache.get(self.detail_cursor)
+                    if let Some(path) = self
+                        .form_line_cache
+                        .get(self.detail_cursor)
                         .and_then(|fl| fl.collapsible_path.clone())
                     {
                         if self.collapsed.contains(&path) {
@@ -485,7 +529,9 @@ impl Ui {
                     }
                 }
                 KeyCode::Char('y') => {
-                    if let Some(val) = self.form_line_cache.get(self.detail_cursor)
+                    if let Some(val) = self
+                        .form_line_cache
+                        .get(self.detail_cursor)
                         .and_then(|fl| fl.leaf_value.as_deref())
                     {
                         copy_to_clipboard(val);
@@ -574,7 +620,9 @@ impl Ui {
                 if let Some(&msg_i) = self.list_state.selected().and_then(|si| idxs.get(si)) {
                     let topic = st.messages[msg_i].topic.clone();
                     drop(st);
-                    let next = self.locked_highlights.get(&topic)
+                    let next = self
+                        .locked_highlights
+                        .get(&topic)
                         .map(|&ci| (ci + 1) % LOCK_BG_COLORS.len())
                         .unwrap_or(0);
                     self.locked_highlights.insert(topic, next);
@@ -670,7 +718,9 @@ fn render_value(
                                 ),
                                 Span::styled(
                                     format!("{k}{count}"),
-                                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                                    Style::default()
+                                        .fg(Color::Yellow)
+                                        .add_modifier(Modifier::BOLD),
                                 ),
                             ]),
                             collapsible_path: Some(child_path.clone()),
@@ -695,7 +745,9 @@ fn render_value(
                                 ),
                                 Span::styled(
                                     format!("{k}{count}"),
-                                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                                    Style::default()
+                                        .fg(Color::Cyan)
+                                        .add_modifier(Modifier::BOLD),
                                 ),
                             ]),
                             collapsible_path: Some(child_path.clone()),
@@ -721,10 +773,7 @@ fn render_value(
                         out.push(FormLine {
                             line: Line::from(vec![
                                 Span::raw(format!("{indent}  ")),
-                                Span::styled(
-                                    format!("{k}: "),
-                                    Style::default().fg(Color::Green),
-                                ),
+                                Span::styled(format!("{k}: "), Style::default().fg(Color::Green)),
                                 Span::raw(val_str.clone()),
                             ]),
                             collapsible_path: None,
@@ -789,12 +838,7 @@ async fn main() -> CalResult<()> {
     // Find service — prefer "asb_view", fall back to first service with topics
     let service = config
         .get_service("asb_view")
-        .or_else(|| {
-            config
-                .service
-                .iter()
-                .find(|s| !s.topic.is_empty())
-        })
+        .or_else(|| config.service.iter().find(|s| !s.topic.is_empty()))
         .ok_or_else(|| {
             CalError::new(
                 CalErrorKind::InitializationFailure,
@@ -850,41 +894,58 @@ async fn main() -> CalResult<()> {
     // Run TUI in a blocking thread so tokio can keep the CAL listeners alive.
     let state_clone = Arc::clone(&app_state);
     let notify_clone = Arc::clone(&notify);
-    let tui_result = tokio::task::spawn_blocking(move || {
-        run_tui(state_clone, notify_clone)
-    })
-    .await
-    .map_err(|e| CalError::new_impl(CalImplementationErrorKind::UserInterfaceError, e.to_string()))??;
+    let tui_result = tokio::task::spawn_blocking(move || run_tui(state_clone, notify_clone))
+        .await
+        .map_err(|e| {
+            CalError::new_impl(
+                CalImplementationErrorKind::UserInterfaceError,
+                e.to_string(),
+            )
+        })??;
 
     Ok(tui_result)
 }
 
-fn run_tui(
-    state: Arc<Mutex<AppState>>,
-    _notify: Arc<tokio::sync::Notify>,
-) -> CalResult<()> {
-    enable_raw_mode()
-        .map_err(|e| CalError::new_impl(CalImplementationErrorKind::UserInterfaceError, e.to_string()))?;
+fn run_tui(state: Arc<Mutex<AppState>>, _notify: Arc<tokio::sync::Notify>) -> CalResult<()> {
+    enable_raw_mode().map_err(|e| {
+        CalError::new_impl(
+            CalImplementationErrorKind::UserInterfaceError,
+            e.to_string(),
+        )
+    })?;
     let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen)
-        .map_err(|e| CalError::new_impl(CalImplementationErrorKind::UserInterfaceError, e.to_string()))?;
+    execute!(stdout, EnterAlternateScreen).map_err(|e| {
+        CalError::new_impl(
+            CalImplementationErrorKind::UserInterfaceError,
+            e.to_string(),
+        )
+    })?;
 
     let mut terminal = ratatui::init();
     let mut ui = Ui::new(Arc::clone(&state));
 
     loop {
-        terminal
-            .draw(|f| ui.draw(f))
-            .map_err(|e| CalError::new_impl(CalImplementationErrorKind::UserInterfaceError, e.to_string()))?;
+        terminal.draw(|f| ui.draw(f)).map_err(|e| {
+            CalError::new_impl(
+                CalImplementationErrorKind::UserInterfaceError,
+                e.to_string(),
+            )
+        })?;
 
         // Poll for keyboard events with a short timeout so we also redraw on
         // incoming messages (notified via the Notify channel from listeners).
-        if event::poll(Duration::from_millis(50))
-            .map_err(|e| CalError::new_impl(CalImplementationErrorKind::UserInterfaceError, e.to_string()))?
-        {
-            if let Event::Key(key) = event::read()
-                .map_err(|e| CalError::new_impl(CalImplementationErrorKind::UserInterfaceError, e.to_string()))?
-            {
+        if event::poll(Duration::from_millis(50)).map_err(|e| {
+            CalError::new_impl(
+                CalImplementationErrorKind::UserInterfaceError,
+                e.to_string(),
+            )
+        })? {
+            if let Event::Key(key) = event::read().map_err(|e| {
+                CalError::new_impl(
+                    CalImplementationErrorKind::UserInterfaceError,
+                    e.to_string(),
+                )
+            })? {
                 if ui.handle_key(key.code, key.modifiers) {
                     break;
                 }
