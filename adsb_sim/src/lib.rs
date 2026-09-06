@@ -5,7 +5,7 @@ pub mod replay;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use slog::{error, info, warn};
+use slog::{debug, error, info, warn};
 
 use rcal::cal::{AbstractCal, AbstractWriter, TopicQos};
 use rcal::calconfig::CalConfig;
@@ -36,7 +36,7 @@ pub struct AdsbSimService {
 }
 
 impl AdsbSimService {
-    pub fn new<A>(cal: A, cal_config: Arc<CalConfig>, logger: slog::Logger) -> CalResult<Self>
+    pub fn new<A>(service_name: &str, cal: A, cal_config: Arc<CalConfig>, logger: slog::Logger) -> CalResult<Self>
     where
         A: AbstractCal + 'static,
     {
@@ -44,12 +44,14 @@ impl AdsbSimService {
 
         let system_uuid = cal_config.system.uuid;
         let service_uuid = cal_config
-            .get_service("adsb_sim")
+            .get_service(service_name)
             .and_then(|s| s.uuid)
             .unwrap_or_else(UUID::generate_v4);
+        debug!(logger, "System: {} ({})", cal_config.system.id, system_uuid);
+        debug!(logger, "Service: {} ({})", service_name, service_uuid);
 
         let mut svc = AbstractServiceImpl::new(
-            "adsb_sim",
+            service_name,
             cal_config.system.id.clone(),
             vec![],
             cal,

@@ -214,6 +214,9 @@ impl fmt::Display for CalErrorKind {
             Self::ImplementationError {
                 kind: Some(CalImplementationErrorKind::ListenerError),
             } => write!(f, "Status listener error"),
+            Self::ImplementationError {
+                kind: Some(CalImplementationErrorKind::UserInterfaceError),
+            } => write!(f, "GUI/TUI error"),
             Self::ValidationError(e) => write!(f, "Message validation failed: {e}"),
         }
     }
@@ -231,6 +234,9 @@ pub enum CalImplementationErrorKind {
     ConfigError,
     /// An error occurred registering or unregistering a status listener.
     ListenerError,
+    /// An error in a user interface component. Not used by the core
+    /// rcal but useful for GUIs/TUIs.
+    UserInterfaceError,
 }
 
 // ════════════════════════════════════════════════════════════════════════════

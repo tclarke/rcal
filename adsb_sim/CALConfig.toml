@@ -1,19 +1,14 @@
 [system]
-id = "AdsbSim"
-label = "ADS-B Simulation Service"
-uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+id = "SIM-1"
+label = "Simulator system 1"
+uuid = "1f508135-4346-4228-b037-a6ea43f6f7b7"
 default_transport = "adsb_sim"
+logging.default_level = "trace"
 
 [[system.logging.sink]]
 type = "stdout"
-level = "debug"
+level = "trace"
 format = "pretty"
-
-[[system.logging.sink]]
-type = "file"
-level = "warn"
-format = "logfmt"
-path = "adsb_sim.log"
 
 [[transport]]
 id = "adsb_sim"
@@ -23,6 +18,8 @@ peers = ["tcp://127.0.0.1:2200"]
 
 [[service]]
 id = "adsb_sim"
+label = "ADS-B Simulation Service"
+uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
 [[service.topic]]
 id = "Entity"

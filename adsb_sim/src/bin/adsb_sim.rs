@@ -24,7 +24,7 @@ async fn main() {
         std::process::exit(1);
     });
 
-    let mut svc = AdsbSimService::new(cal, rcal_config.clone(), root_logger.clone())
+    let mut svc = AdsbSimService::new(service_name, cal, rcal_config.clone(), root_logger.clone())
         .unwrap_or_else(|err| {
             error!(root_logger, "AdsbSimService init failed"; "error" => %err);
             std::process::exit(2);

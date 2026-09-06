@@ -34,13 +34,13 @@ pub(crate) mod zmq;
 ///
 /// Resolution order:
 /// 1. `path` argument, if `Some`.
-/// 2. `RCAL_CONFIG` environment variable.
+/// 2. `RCAL_CALCONFIG_PATH` environment variable.
 /// 3. `./CALConfig.toml` default.
 ///
 /// Returns `Err(InitializationFailure)` when the resolved path does not exist.
 pub fn get_asb_config_location(path: Option<String>) -> CalResult<String> {
     let config_file = path.unwrap_or_else(|| {
-        env::var("RCAL_CONFIG").unwrap_or_else(|_| String::from_str("./CALConfig.toml").unwrap())
+        env::var("RCAL_CALCONFIG_PATH").unwrap_or_else(|_| String::from_str("./CALConfig.toml").unwrap())
     });
 
     if Path::new(&config_file).exists() {

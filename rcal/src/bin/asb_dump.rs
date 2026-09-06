@@ -21,7 +21,7 @@
 //! id = "my_topic"
 //! ```
 //!
-//! Config path: `RCAL_CONFIG` env var, or `./CALConfig.toml`.
+//! Config path: `RCAL_CALCONFIG_PATH` env var, or `./CALConfig.toml`.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
