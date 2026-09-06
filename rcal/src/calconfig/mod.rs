@@ -314,6 +314,11 @@ pub struct Transport {
     /// Use a built-in name (`"xml"`, `"compression"`) or reference a
     /// `[externalizer.<name>]` section in `CalConfig`.
     pub externalizer: Option<String>,
+    /// Remote RADIO URIs that DISH readers should connect to in addition to
+    /// this transport's own RADIO socket.  Use for multi-process topologies
+    /// where this service needs to receive from other services' RADIO sockets.
+    #[serde(default)]
+    pub peers: Vec<String>,
 }
 
 /// A name-to-UUID mapping used for components and capabilities (CAL-005203).

@@ -16,6 +16,7 @@ format = "pretty"
 id = "asb"
 type = "zmq"
 uri = "tcp://127.0.0.1:2200"
+peers = ["tcp://127.0.0.1:2201"]
 
 [[service]]
 id = "asb_dump"

@@ -222,7 +222,7 @@ impl ZmqAsb {
             logger,
             config,
             transport_uri,
-            peer_uris: Vec::new(),
+            peer_uris: tconfig.peers.clone(),
             externalizer_name: tconfig
                 .externalizer
                 .clone()

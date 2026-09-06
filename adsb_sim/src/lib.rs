@@ -269,24 +269,20 @@ fn populate_entity_msg(
         let mdt = msg.message_data_mut();
         *mdt.entity_id_mut().uuid_mut() = entity_uuid;
         *mdt.source_mut().system_id_mut().uuid_mut() = system_uuid;
+        *mdt.source_mut().source_type_mut() = EntitySourceEnum::External_other;
         *mdt.entity_status_mut() = EntityStatusEnum::Confirmed;
         *mdt.creation_timestamp_mut().date_time_mut() = xs_ts;
         *mdt.identity_mut().identity_timestamp_mut() = xs_ts;
 
-        if let Some(callsign) = &aircraft.callsign {
-            let trimmed = callsign.trim().to_string();
-            if !trimmed.is_empty() {
-                mdt.identity_mut().self_reported_identity_set(trimmed);
-            }
-        }
+        // SelfReportedIdentity has maxLength=0 in schema; callsign cannot be stored here
     }
 
     if let (Some(lat), Some(lon)) = (aircraft.lat, aircraft.lon) {
         let mut fixed = FixedPositionType_::default();
         {
             let pt = fixed.fixed_point_mut();
-            *pt.latitude_mut() = lat;
-            *pt.longitude_mut() = lon;
+            *pt.latitude_mut() = lat.to_radians();
+            *pt.longitude_mut() = lon.to_radians();
             if let Some(alt_ft) = aircraft.alt_baro_feet() {
                 pt.altitude_set(alt_ft * 0.3048);
             }

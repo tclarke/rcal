@@ -4,18 +4,22 @@ label = "ADS-B Simulation Service"
 uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 default_transport = "adsb_sim"
 
-[system.logging]
-default_level = "info"
-
 [[system.logging.sink]]
 type = "stdout"
-level = "info"
+level = "debug"
 format = "pretty"
+
+[[system.logging.sink]]
+type = "file"
+level = "warn"
+format = "logfmt"
+path = "adsb_sim.log"
 
 [[transport]]
 id = "adsb_sim"
 type = "zmq"
-uri = "tcp://127.0.0.1:2200"
+uri = "tcp://127.0.0.1:2201"
+peers = ["tcp://127.0.0.1:2200"]
 
 [[service]]
 id = "adsb_sim"
@@ -30,6 +34,6 @@ id = "SystemStatus"
 id = "ServiceStatus"
 
 [adsb_sim]
-json_file = "data/adsb_snapshot.json"
+json_file = "data/001715Z.json"
 speed_multiplier = 1.0
 delete_timeout_secs = 30.0
