@@ -14,7 +14,6 @@ use rcal::uci::base::UUID;
 use rcal::uci::types::*;
 use rcal::uci::CalResult;
 use rcal::update_message_header;
-use rcal::xs;
 
 use config::AdsbSimConfig;
 use data::{in_geo_filter, AdsbSnapshot, Aircraft};
@@ -29,7 +28,6 @@ pub struct AdsbSimService {
     sys_msg: SystemStatus_,
     svc_msg: ServiceStatus_,
     adsb_config: AdsbSimConfig,
-    system_uuid: UUID,
     service_uuid: UUID,
     logger: slog::Logger,
     task_handles: Vec<tokio::task::JoinHandle<()>>,
@@ -70,12 +68,33 @@ impl AdsbSimService {
         let svc_writer =
             svc.create_writer::<ServiceStatus_>("ServiceStatus", TopicQos::default())?;
 
-        let entity_template = svc.create_message::<Entity_>()?;
+        let mut entity_template = svc.create_message::<Entity_>()?;
+
+        *entity_template.message_data_mut().source_mut().system_id_mut().uuid_mut() = system_uuid;
+        if let Some(ref name) = cal_config.system.label {
+            entity_template.message_data_mut().source_mut().system_id_mut().descriptive_label_set(name.clone());
+
+        };
+        entity_template.message_data_mut().source_mut().service_id_enable();
+        *entity_template.message_data_mut().source_mut().service_id_mut().unwrap().uuid_mut() = service_uuid;
+        entity_template.message_data_mut().source_mut().service_id_mut().unwrap().descriptive_label_set(service_name.into());
+
         let mut sys_msg = svc.create_message::<SystemStatus_>()?;
         *sys_msg.message_data_mut().system_state_mut() = SystemStateEnum::Operational;
         *sys_msg.message_data_mut().source_mut() = SystemSourceEnum::Actual;
+        *sys_msg.message_data_mut().system_id_mut().uuid_mut() = system_uuid;
+        if let Some(ref name) = cal_config.system.label {
+            sys_msg.message_data_mut().system_id_mut().descriptive_label_set(name.clone());
+
+        };
+        sys_msg.message_data_mut().service_id_mut().resize(1);
+        *sys_msg.message_data_mut().service_id_mut()[0].uuid_mut() = service_uuid;
+        sys_msg.message_data_mut().service_id_mut()[0].descriptive_label_set(service_name.into());
+
         let mut svc_msg = svc.create_message::<ServiceStatus_>()?;
         *svc_msg.message_data_mut().service_state_mut() = ServiceStateEnum::Normal;
+        *svc_msg.message_data_mut().service_id_mut().uuid_mut() = service_uuid;
+        svc_msg.message_data_mut().service_id_mut().descriptive_label_set(service_name.into());
 
         Ok(Self {
             lifecycle: Box::new(svc),
@@ -86,7 +105,6 @@ impl AdsbSimService {
             sys_msg,
             svc_msg,
             adsb_config,
-            system_uuid,
             service_uuid,
             logger,
             task_handles: Vec::new(),
@@ -149,7 +167,6 @@ impl AbstractService for AdsbSimService {
             .expect("entity_writer already taken");
         let entity_template = self.entity_template.clone();
         let adsb_config = self.adsb_config.clone();
-        let system_uuid = self.system_uuid;
         let service_uuid = self.service_uuid;
         let replay_logger = self.logger.clone();
         let replay_handle = tokio::spawn(async move {
@@ -157,7 +174,6 @@ impl AbstractService for AdsbSimService {
                 entity_writer,
                 entity_template,
                 adsb_config,
-                system_uuid,
                 service_uuid,
                 replay_logger,
             )
@@ -188,7 +204,6 @@ async fn run_replay(
     mut entity_writer: Box<dyn AbstractWriter<Entity_>>,
     entity_template: Entity_,
     config: AdsbSimConfig,
-    system_uuid: UUID,
     service_uuid: UUID,
     logger: slog::Logger,
 ) {
@@ -215,47 +230,33 @@ async fn run_replay(
             return;
         }
     };
+    if snapshot.aircraft.is_empty() {
+        error!(logger, "adsb_sim: no aircraft position entries available");
+        return;
+    }
 
-    let data_t0 = snapshot.now;
     let wall_t0 = Instant::now();
-
-    let snap_ts = chrono::DateTime::from_timestamp(snapshot.now as i64, 0)
-        .unwrap_or_default()
-        .with_timezone(&chrono::Utc);
-
-    if let Some(start) = config.datetime_start {
-        if snap_ts < start {
-            info!(logger, "adsb_sim: snapshot before datetime_start, skipping");
-            return;
-        }
-    }
-    if let Some(end) = config.datetime_end {
-        if snap_ts > end {
-            info!(logger, "adsb_sim: snapshot after datetime_end, done");
-            return;
-        }
-    }
-
-    let send_at = wall_send_time(snapshot.now, data_t0, wall_t0, config.speed_multiplier);
-    tokio::time::sleep_until(send_at.into()).await;
+    let data_t0 = snapshot.aircraft.peek().unwrap().seen_pos.unwrap();
 
     for aircraft in &snapshot.aircraft {
-        let (Some(lat), Some(lon)) = (aircraft.lat, aircraft.lon) else {
-            continue;
-        };
         if !in_geo_filter(
-            lat,
-            lon,
+            aircraft.lat.unwrap(),
+            aircraft.lon.unwrap(),
             config.geo_center_lat,
             config.geo_center_lon,
             config.geo_radius_km,
         ) {
             continue;
         }
+        let data_t = aircraft.seen_pos.unwrap();
+        let send_at = wall_send_time(data_t0, data_t, wall_t0, config.speed_multiplier);
+        debug!(logger, "t0: {data_t0:?}  t: {data_t:?}  diff: {:?}", data_t0 - data_t);
+        debug!(logger, "{:?} - {:?} = {:?}", send_at, wall_t0, send_at - wall_t0);
+        tokio::time::sleep_until(send_at.into()).await;
 
         let entity_uuid = UUID::generate_v3(&service_uuid, aircraft.hex.as_bytes());
         let mut msg = entity_template.clone();
-        populate_entity_msg(&mut msg, aircraft, entity_uuid, system_uuid, snap_ts);
+        populate_entity_msg(&mut msg, aircraft, entity_uuid);
         update_message_header!(msg);
         if let Err(e) = entity_writer.write(&msg) {
             error!(logger, "adsb_sim: Entity write failed"; "hex" => &aircraft.hex, "error" => %e);
@@ -267,21 +268,19 @@ fn populate_entity_msg(
     msg: &mut Entity_,
     aircraft: &Aircraft,
     entity_uuid: UUID,
-    system_uuid: UUID,
-    snap_ts: chrono::DateTime<chrono::Utc>,
 ) {
     msg.object_state_set(ObjectStateEnum::New);
-
-    let xs_ts = xs::DateTime::from(snap_ts);
 
     {
         let mdt = msg.message_data_mut();
         *mdt.entity_id_mut().uuid_mut() = entity_uuid;
-        *mdt.source_mut().system_id_mut().uuid_mut() = system_uuid;
+        if let Some(ref callsign) = aircraft.callsign {
+            mdt.entity_id_mut().descriptive_label_set(callsign.clone());
+        }
         *mdt.source_mut().source_type_mut() = EntitySourceEnum::External_other;
         *mdt.entity_status_mut() = EntityStatusEnum::Confirmed;
-        *mdt.creation_timestamp_mut().date_time_mut() = xs_ts;
-        *mdt.identity_mut().identity_timestamp_mut() = xs_ts;
+        //*mdt.creation_timestamp_mut().date_time_mut() = xs_ts;
+        //*mdt.identity_mut().identity_timestamp_mut() = xs_ts;
 
         // SelfReportedIdentity has maxLength=0 in schema; callsign cannot be stored here
     }
@@ -299,7 +298,7 @@ fn populate_entity_msg(
 
         let mut new_kinem = KinematicsType_::default();
         new_kinem.position_mut().fixed_position_type_set(fixed);
-        new_kinem.kinematics_time_stamp_set(xs_ts);
+        //new_kinem.kinematics_time_stamp_set(xs_ts);
         msg.message_data_mut().kinematics_set(new_kinem);
     }
 }

@@ -1,15 +1,23 @@
+use std::{cmp::Ordering, collections::BinaryHeap};
+
 use serde::Deserialize;
 
 /// One aircraft record from an ADS-B Exchange JSON snapshot.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Aircraft {
     pub hex: String,
+    #[serde(rename = "type")]
+    pub msg_type: String,
     #[serde(rename = "flight")]
     pub callsign: Option<String>,
+    pub seen_pos: Option<f64>,
     pub lat: Option<f64>,
     pub lon: Option<f64>,
     pub alt_baro: Option<serde_json::Value>,
+    pub alt_geom: Option<serde_json::Value>,
     pub gs: Option<f64>,
+    pub ias: Option<f64>,
+    pub tas: Option<f64>,
     pub track: Option<f64>,
     pub baro_rate: Option<f64>,
 }
@@ -23,16 +31,52 @@ impl Aircraft {
     }
 }
 
+
+impl Ord for Aircraft {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let diff = self.seen_pos.unwrap_or(0.) - other.seen_pos.unwrap_or(0.);
+        if diff.abs() < 0.00001 {
+            Ordering::Equal
+        } else if diff < 0. {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    }
+}
+
+impl PartialOrd for Aircraft {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Aircraft {
+    fn eq(&self, other: &Self) -> bool {
+        self.hex == other.hex && self.msg_type == other.msg_type && self.callsign == other.callsign && self.seen_pos == other.seen_pos && self.lat == other.lat && self.lon == other.lon && self.alt_baro == other.alt_baro && self.alt_geom == other.alt_geom && self.gs == other.gs && self.ias == other.ias && self.tas == other.tas && self.track == other.track && self.baro_rate == other.baro_rate
+    }
+}
+
+impl Eq for Aircraft {
+}
+
 /// Top-level ADS-B Exchange JSON snapshot.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AdsbSnapshot {
     pub now: f64,
-    pub aircraft: Vec<Aircraft>,
+    pub aircraft: BinaryHeap<Aircraft>,
 }
 
 impl AdsbSnapshot {
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
+        let mut obj: Self = serde_json::from_str(json)?;
+        obj.aircraft.retain(|acft| {
+            acft.seen_pos.is_some()
+            && acft.msg_type == "adsb_icao"
+            && acft.lat.is_some()
+            && acft.lon.is_some()
+        });
+        Ok(obj)
     }
 }
 

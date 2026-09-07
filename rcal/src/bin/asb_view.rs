@@ -5,6 +5,10 @@
 //! id is `"asb_view"`.  Falls back to the first service with topics if
 //! `"asb_view"` is not present.
 //!
+//! Usage: asb_view [FILE]
+//!   If FILE is given, load a previously saved capture instead of connecting
+//!   to the ASB.
+//!
 //! Key bindings:
 //!   j / ↓      next message
 //!   k / ↑      previous message
@@ -21,6 +25,7 @@
 //!   Esc        unfocus detail pane / clear filter
 //!   h          lock/cycle highlight color for selected topic (8 colors)
 //!   H          clear all locked highlights
+//!   w          save filtered messages to a file (prompts for path)
 //!   q          quit
 
 use std::collections::{HashMap, HashSet};
@@ -91,6 +96,64 @@ struct ReceivedMsg {
     wall_time: DateTime<Utc>,
     identifier: String,
     raw: toml::Value,
+}
+
+// ── Save / load ───────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SaveRecord {
+    topic: String,
+    wall_time: String,
+    identifier: String,
+    /// TOML-encoded raw message value.
+    raw_toml: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SaveFile {
+    messages: Vec<SaveRecord>,
+}
+
+fn save_to_file(path: &str, records: Vec<SaveRecord>) -> Result<usize, String> {
+    let count = records.len();
+    let file = SaveFile { messages: records };
+    let content = toml::to_string(&file).map_err(|e| e.to_string())?;
+    std::fs::write(path, content).map_err(|e| e.to_string())?;
+    Ok(count)
+}
+
+fn load_from_file(path: &str) -> Result<(Vec<ReceivedMsg>, Instant), String> {
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let file: SaveFile = toml::from_str(&content).map_err(|e| e.to_string())?;
+    let start = Instant::now();
+    let first_wall = file
+        .messages
+        .first()
+        .and_then(|r| DateTime::parse_from_rfc3339(&r.wall_time).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+    let messages = file
+        .messages
+        .into_iter()
+        .map(|r| {
+            let wall_time = DateTime::parse_from_rfc3339(&r.wall_time)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            let received_at = first_wall
+                .and_then(|first| wall_time.signed_duration_since(first).to_std().ok())
+                .map(|d| start + d)
+                .unwrap_or(start);
+            let raw = toml::from_str::<toml::Value>(&r.raw_toml)
+                .unwrap_or_else(|_| toml::Value::Table(Default::default()));
+            ReceivedMsg {
+                topic: r.topic,
+                received_at,
+                wall_time,
+                identifier: r.identifier,
+                raw,
+            }
+        })
+        .collect();
+    Ok((messages, start))
 }
 
 fn extract_identifier(v: &toml::Value) -> String {
@@ -187,6 +250,9 @@ struct Ui {
     /// identifier -> index into ID_FG_COLORS (auto-assigned)
     system_colors: HashMap<String, usize>,
     next_system_color: usize,
+    save_input: bool,
+    save_path: String,
+    status_msg: Option<String>,
 }
 
 impl Ui {
@@ -209,6 +275,9 @@ impl Ui {
             locked_highlights: HashMap::new(),
             system_colors: HashMap::new(),
             next_system_color: 0,
+            save_input: false,
+            save_path: String::new(),
+            status_msg: None,
         }
     }
 
@@ -459,12 +528,16 @@ impl Ui {
         } else {
             format!("Filter: {}  [Esc clear]  ", self.filter)
         };
-        let status = if self.detail_focused {
+        let status = if self.save_input {
+            format!("Save to: {}█  [Enter] save  [Esc] cancel", self.save_path)
+        } else if let Some(ref msg) = self.status_msg {
+            msg.clone()
+        } else if self.detail_focused {
             "Detail: [j/k] navigate  [Space/Enter] collapse  [y] copy  [Tab/Esc] back  [q] quit"
                 .to_string()
         } else {
             format!(
-                "{}  [Tab] detail  [s] sort  [i] time  [F]orm [X]ml [T]oml  [h] lock color  [H] clear  [q] quit",
+                "{}  [Tab] detail  [s] sort  [i] time  [F]orm [X]ml [T]oml  [h] lock color  [H] clear  [w] save  [q] quit",
                 filter_part
             )
         };
@@ -480,6 +553,52 @@ impl Ui {
             || (matches!(code, KeyCode::Char('c')) && modifiers.contains(KeyModifiers::CONTROL))
         {
             return true;
+        }
+
+        self.status_msg = None;
+
+        if self.save_input {
+            match code {
+                KeyCode::Esc => {
+                    self.save_input = false;
+                    self.save_path.clear();
+                }
+                KeyCode::Enter => {
+                    self.save_input = false;
+                    let path = std::mem::take(&mut self.save_path);
+                    let records: Vec<SaveRecord> = {
+                        let st = self.state.lock().unwrap();
+                        let idxs = self.visible_indices(&st.messages);
+                        idxs.iter()
+                            .map(|&i| {
+                                let m = &st.messages[i];
+                                SaveRecord {
+                                    topic: m.topic.clone(),
+                                    wall_time: m.wall_time.to_rfc3339(),
+                                    identifier: m.identifier.clone(),
+                                    raw_toml: toml::to_string(&m.raw).unwrap_or_default(),
+                                }
+                            })
+                            .collect()
+                    };
+                    match save_to_file(&path, records) {
+                        Ok(n) => {
+                            self.status_msg = Some(format!("Saved {n} messages to {path}"));
+                        }
+                        Err(e) => {
+                            self.status_msg = Some(format!("Save failed: {e}"));
+                        }
+                    }
+                }
+                KeyCode::Backspace => {
+                    self.save_path.pop();
+                }
+                KeyCode::Char(c) => {
+                    self.save_path.push(c);
+                }
+                _ => {}
+            }
+            return false;
         }
 
         if self.filter_input {
@@ -630,6 +749,10 @@ impl Ui {
             }
             KeyCode::Char('H') => {
                 self.locked_highlights.clear();
+            }
+            KeyCode::Char('w') => {
+                self.save_input = true;
+                self.save_path.clear();
             }
             _ => {}
         }
@@ -832,6 +955,16 @@ fn copy_to_clipboard(text: &str) {
 
 #[tokio::main]
 async fn main() -> CalResult<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(path) = args.get(1) {
+        let (messages, start) = load_from_file(path).map_err(|e| {
+            CalError::new(CalErrorKind::InitializationFailure, e)
+        })?;
+        let app_state = Arc::new(Mutex::new(AppState { messages, start }));
+        let notify = Arc::new(tokio::sync::Notify::new());
+        return run_tui(app_state, notify);
+    }
+
     let config_path = get_asb_config_location(None)?;
     let config = Arc::new(parse_config_from_file(&config_path)?);
 

@@ -229,7 +229,7 @@ impl Facets {
 
 #[derive(Debug)]
 enum SimpleTypeKind {
-    Enum(Vec<String>),
+    Enum(Vec<(String, Option<String>)>),
     Restriction { base: String, facets: Facets },
 }
 
@@ -308,8 +308,9 @@ fn parse_xsd_file(
     let mut in_doc = false;
     let mut doc_buf = String::new();
     let mut pending_doc: Option<String> = None;
-    // 0=none, 1=complexType, 2=simpleType, 3=field
+    // 0=none, 1=complexType, 2=simpleType, 3=field, 4=enumeration
     let mut doc_context: u8 = 0;
+    let mut pending_enum_value: Option<String> = None;
 
     loop {
         let ev = reader.read_event();
@@ -397,11 +398,17 @@ fn parse_xsd_file(
                         current_facets = Facets::default();
                     }
                     "enumeration" => {
-                        if let (Some(st), Some(val)) = (current_simple.as_mut(), attr(e, "value")) {
-                            if let SimpleTypeKind::Enum(ref mut vals) = st.kind {
-                                vals.push(val);
+                        if let Some(val) = attr(e, "value") {
+                            if is_empty {
+                                if let Some(st) = current_simple.as_mut() {
+                                    if let SimpleTypeKind::Enum(ref mut vals) = st.kind {
+                                        vals.push((val, None));
+                                    } else {
+                                        st.kind = SimpleTypeKind::Enum(vec![(val, None)]);
+                                    }
+                                }
                             } else {
-                                st.kind = SimpleTypeKind::Enum(vec![val]);
+                                pending_enum_value = Some(val);
                             }
                         }
                     }
@@ -445,7 +452,9 @@ fn parse_xsd_file(
                         }
                     }
                     "annotation" if !is_empty => {
-                        doc_context = if pending_field_attrs.is_some() {
+                        doc_context = if pending_enum_value.is_some() {
+                            4 // enumeration value
+                        } else if pending_field_attrs.is_some() {
                             3 // field element
                         } else if current_complex.is_some() {
                             1 // complexType
@@ -500,11 +509,10 @@ fn parse_xsd_file(
                 }
             }
             Ok(Event::Text(ref e)) => {
-                if in_doc {
-                    if let Ok(t) = e.unescape() {
+                if in_doc
+                    && let Ok(t) = e.unescape() {
                         doc_buf.push_str(&t);
                     }
-                }
             }
             Ok(Event::End(ref e)) => {
                 let local = local_name(e.name().as_ref());
@@ -528,7 +536,20 @@ fn parse_xsd_file(
                             let _ = pending_doc.take();
                         }
                         // doc_context == 3 (field): pending_doc stays until </element>
+                        // doc_context == 4 (enumeration): pending_doc stays until </enumeration>
                         doc_context = 0;
+                    }
+                    "enumeration" => {
+                        if let Some(val) = pending_enum_value.take() {
+                            let doc = pending_doc.take();
+                            if let Some(st) = current_simple.as_mut() {
+                                if let SimpleTypeKind::Enum(ref mut vals) = st.kind {
+                                    vals.push((val, doc));
+                                } else {
+                                    st.kind = SimpleTypeKind::Enum(vec![(val, doc)]);
+                                }
+                            }
+                        }
                     }
                     "element" => {
                         if let Some((name, type_, min_occurs, max_occurs)) =
@@ -1088,13 +1109,13 @@ fn compute_needed_names(message_types: &HashSet<String>, schema: &Schema) -> Has
     needed
 }
 
-fn gen_enum(name: &str, vals: &[String]) -> String {
+fn gen_enum(name: &str, vals: &[(String, Option<String>)]) -> String {
     let pascal_name = pascal(name);
 
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let variants: Vec<(String, &str)> = vals
+    let variants: Vec<(String, &str, Option<&str>)> = vals
         .iter()
-        .map(|v| {
+        .map(|(v, doc)| {
             let base = enum_variant(v);
             let count = seen.entry(base.clone()).or_insert(0);
             *count += 1;
@@ -1103,7 +1124,7 @@ fn gen_enum(name: &str, vals: &[String]) -> String {
             } else {
                 format!("{base}{}", *count)
             };
-            (variant, v.as_str())
+            (variant, v.as_str(), doc.as_deref())
         })
         .collect();
 
@@ -1112,13 +1133,13 @@ fn gen_enum(name: &str, vals: &[String]) -> String {
     match_arms.push_str(
         &variants
             .iter()
-            .map(|(variant, orig)| {
+            .map(|(variant, orig, _doc)| {
                 format!("                    \"{orig}\" => Ok({pascal_name}::{variant}),\n")
             })
             .collect::<String>(),
     );
     let mut variant_names: Vec<String> = vec!["\"enumNotSet\"".to_string()];
-    variant_names.extend(variants.iter().map(|(_, orig)| format!("\"{orig}\"")));
+    variant_names.extend(variants.iter().map(|(_, orig, _doc)| format!("\"{orig}\"")));
     let variant_names_str = variant_names.join(", ");
 
     let mut out = String::new();
@@ -1128,9 +1149,13 @@ fn gen_enum(name: &str, vals: &[String]) -> String {
     out.push_str(&format!("#[serde(rename = \"{pascal_name}\")]\n"));
     out.push_str(&format!("pub enum {pascal_name} {{\n"));
     out.push_str("    /// Unset/default sentinel.\n    #[default]\n    #[serde(rename = \"enumNotSet\")]\n    EnumNotSet,\n");
-    for (variant, orig) in &variants {
+    for (variant, orig, doc) in &variants {
+        let doc_comment = match doc {
+            Some(d) => doc_lines(d, 4),
+            None => format!("    /// `{orig}` variant.\n"),
+        };
         out.push_str(&format!(
-            "    /// `{orig}` variant.\n    #[serde(rename = \"{orig}\")]\n    {variant},\n"
+            "{doc_comment}    #[serde(rename = \"{orig}\")]\n    {variant},\n"
         ));
     }
     out.push_str("}\n\n");
@@ -1706,6 +1731,8 @@ fn gen_struct(
                  {mc}    fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}>;\n\
                  \x20   /// Enables the optional XSD element `{elem}` with the given value (CAL-005290).\n\
                  \x20   fn {field_name}_set(&mut self, value: {rust_type});\n\
+                 \x20   /// Enables the optional XSD element `{elem}` with the default value (CAL-005290).\n\
+                 \x20   fn {field_name}_enable(&mut self);\n\
                  \x20   /// Disables the optional XSD element `{elem}` (CAL-005290).\n\
                  \x20   fn {field_name}_disable(&mut self);\n",
                 elem = f.name,
@@ -1831,6 +1858,7 @@ fn gen_struct(
                         "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref() }}\n\
                          fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut() }}\n\
                          fn {field_name}_set(&mut self, value: {rust_type}) {{ self.{field_name} = Some(value); }}\n\
+                         fn {field_name}_enable(&mut self) {{ self.{field_name} = Some({rust_type}::default()); }}\n\
                          fn {field_name}_disable(&mut self) {{ self.{field_name} = None; }}\n"
                     )
                 } else {
@@ -1838,6 +1866,7 @@ fn gen_struct(
                         "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref().map(|v| v as &{dyn_rt}) }}\n\
                          fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n\
                          fn {field_name}_set(&mut self, value: {rust_type}) {{ self.{field_name} = Some(value); }}\n\
+                         fn {field_name}_enable(&mut self) {{ self.{field_name} = Some({rust_type}::default()); }}\n\
                          fn {field_name}_disable(&mut self) {{ self.{field_name} = None; }}\n"
                     )
                 }
@@ -1884,6 +1913,7 @@ fn gen_struct(
                                 "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref() }}\n\
                                  fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut() }}\n\
                                  fn {field_name}_set(&mut self, value: {rust_type}) {{ self.{field_name} = Some(value); }}\n\
+                                 fn {field_name}_enable(&mut self) {{ self.{field_name} = Some({rust_type}::default()); }}\n\
                                  fn {field_name}_disable(&mut self) {{ self.{field_name} = None; }}\n"
                             )
                         } else {
@@ -1891,6 +1921,7 @@ fn gen_struct(
                                 "    fn {field_name}(&self) -> Option<&{dyn_rt}> {{ self.{field_name}.as_ref().map(|v| v as &{dyn_rt}) }}\n\
                                  fn {field_name}_mut(&mut self) -> Option<&mut {dyn_rt}> {{ self.{field_name}.as_mut().map(|v| v as &mut {dyn_rt}) }}\n\
                                  fn {field_name}_set(&mut self, value: {rust_type}) {{ self.{field_name} = Some(value); }}\n\
+                                 fn {field_name}_enable(&mut self) {{ self.{field_name} = Some({rust_type}::default()); }}\n\
                                  fn {field_name}_disable(&mut self) {{ self.{field_name} = None; }}\n"
                             )
                         }

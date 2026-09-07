@@ -34,8 +34,12 @@ use crate::asb::zmq::{ZMQ_ASB_ID, ZmqAsb};
 pub struct MessageHeaderDefaults {
     /// System UUID for the `MessageHeader.SystemID.UUID` field (required).
     pub system_id: UUID,
+    /// Optional system Name for the `MessageHeader.SystemID.DescriptiveLabel` field.
+    pub system_name: Option<String>,
     /// Optional service UUID for the `MessageHeader.ServiceID.UUID` field.
     pub service_id: Option<UUID>,
+    /// Optional service UUID for the `MessageHeader.ServiceID.DescriptiveLabel` field.
+    pub service_name: Option<String>,
     /// Optional mission UUID for the `MessageHeader.MissionID.UUID` field.
     pub mission_id: Option<UUID>,
     /// Schema version string for `MessageHeader.SchemaVersion`.
@@ -306,11 +310,17 @@ impl<T: AbstractCal> AbstractCalCreateMessage for T {
             let defaults = self.message_header_defaults();
             let hdr = mt.message_header_mut();
             *hdr.system_id_mut().uuid_mut() = defaults.system_id;
+            if let Some(system_name) = defaults.system_name {
+                hdr.system_id_mut().descriptive_label_set(system_name);
+            }
             *hdr.schema_version_mut() = defaults.schema_version;
             *hdr.mode_mut() = defaults.mode;
             *hdr.timestamp_mut() = Utc::now().into();
             if let (Some(sid), Some(sfield)) = (defaults.service_id, hdr.service_id_mut()) {
                 *sfield.uuid_mut() = sid;
+            }
+            if let (Some(sname), Some(sfield)) = (defaults.service_name, hdr.service_id_mut()) {
+                sfield.descriptive_label_set(sname);
             }
             if let (Some(mid), Some(mfield)) = (defaults.mission_id, hdr.mission_id_mut()) {
                 *mfield.uuid_mut() = mid;

@@ -467,7 +467,9 @@ impl AbstractCal for ZmqAsb {
         };
         MessageHeaderDefaults {
             system_id: sys.uuid,
+            system_name: Some(self.config.system.id.clone()),
             service_id,
+            service_name: Some(self.service_name.clone()),
             mission_id,
             schema_version: self.oms_schema_version().to_string(),
             mode,

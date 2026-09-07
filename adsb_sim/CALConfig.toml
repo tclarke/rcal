@@ -33,3 +33,7 @@ id = "ServiceStatus"
 json_file = "data/001715Z.json"
 speed_multiplier = 1.0
 delete_timeout_secs = 30.0
+# 50km around KJFK. Should be plenty of targets
+geo_center_lat = 40.641766
+geo_center_lon = -73.780968
+geo_radius_km = 50

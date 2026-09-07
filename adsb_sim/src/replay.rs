@@ -5,12 +5,12 @@ use std::time::{Duration, Instant};
 /// Returns the wall-clock `Instant` at which the snapshot should be emitted.
 /// `data_t0` and `wall_t0` mark the start of the replay.
 pub fn wall_send_time(
-    snapshot_now: f64,
     data_t0: f64,
+    data_t: f64,
     wall_t0: Instant,
     speed_multiplier: f64,
 ) -> Instant {
-    let data_elapsed = snapshot_now - data_t0;
+    let data_elapsed = data_t0 - data_t;
     let wall_elapsed_secs = data_elapsed / speed_multiplier.max(f64::MIN_POSITIVE);
     wall_t0 + Duration::from_secs_f64(wall_elapsed_secs.max(0.0))
 }
