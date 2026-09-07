@@ -76,10 +76,18 @@ impl<W: std::io::Write + Send + Sync + 'static> Drain for LogfmtDrain<W> {
         record: &slog::Record,
         values: &slog::OwnedKVList,
     ) -> Result<Self::Ok, Self::Err> {
+        let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let level_name = match record.level() {
+            slog::Level::Critical => "critical",
+            slog::Level::Error => "error",
+            slog::Level::Warning => "warn",
+            slog::Level::Info => "info",
+            slog::Level::Debug => "debug",
+            slog::Level::Trace => "trace",
+        };
         let mut buf = format!(
-            "level={} msg={:?}",
-            record.level().as_short_str().to_lowercase(),
-            record.msg().to_string(),
+            "ts={ts} level={level_name} msg={:?}",
+            record.msg().to_string()
         );
         let mut ser = LogfmtSerializer(&mut buf);
         let _ = values.serialize(record, &mut ser);

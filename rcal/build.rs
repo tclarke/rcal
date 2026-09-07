@@ -498,8 +498,7 @@ fn parse_xsd_file(
                                     documentation: None,
                                 });
                             }
-                        } else if let (Some(name), Some(type_)) =
-                            (attr(e, "name"), attr(e, "type"))
+                        } else if let (Some(name), Some(type_)) = (attr(e, "name"), attr(e, "type"))
                         {
                             // Has children (annotation): defer creation until </element>.
                             pending_field_attrs = Some((name, type_, min_occurs, max_occurs));
@@ -509,10 +508,9 @@ fn parse_xsd_file(
                 }
             }
             Ok(Event::Text(ref e)) => {
-                if in_doc
-                    && let Ok(t) = e.unescape() {
-                        doc_buf.push_str(&t);
-                    }
+                if in_doc && let Ok(t) = e.unescape() {
+                    doc_buf.push_str(&t);
+                }
             }
             Ok(Event::End(ref e)) => {
                 let local = local_name(e.name().as_ref());
@@ -787,10 +785,14 @@ fn generate_types(schema: &Schema, out_dir: &Path, subset: Option<&HashSet<Strin
         let pascal_name = pascal(&ct.name);
         let entry = if ct.is_choice || (ct.fields.is_empty() && ct.extension_base.is_some()) {
             // xs:choice enums and type aliases: inline everything
-            format!("#[doc(hidden)]\n#[allow(missing_docs)]\npub mod {mod_name};\n#[doc(inline)]\npub use {mod_name}::*;")
+            format!(
+                "#[doc(hidden)]\n#[allow(missing_docs)]\npub mod {mod_name};\n#[doc(inline)]\npub use {mod_name}::*;"
+            )
         } else {
             // trait + struct pair: inline trait, hide struct
-            format!("#[doc(hidden)]\n#[allow(missing_docs)]\npub mod {mod_name};\n#[doc(inline)]\npub use {mod_name}::{pascal_name};\n#[doc(hidden)]\npub use {mod_name}::{pascal_name}_;")
+            format!(
+                "#[doc(hidden)]\n#[allow(missing_docs)]\npub mod {mod_name};\n#[doc(inline)]\npub use {mod_name}::{pascal_name};\n#[doc(hidden)]\npub use {mod_name}::{pascal_name}_;"
+            )
         };
         mod_entries.push(entry);
         complex_count += 1;
@@ -1195,7 +1197,13 @@ fn gen_enum(name: &str, vals: &[(String, Option<String>)]) -> String {
          \x20   }}\n\
          }}\n\n"
     ));
-    // is_valid
+    // is_valid + as_str
+    let as_str_arms: String = variants
+        .iter()
+        .map(|(variant, orig, _)| {
+            format!("            {pascal_name}::{variant} => Some(\"{orig}\"),\n")
+        })
+        .collect();
     out.push_str(&format!(
         "impl {pascal_name} {{\n\
          \x20   /// Returns `Err` if this enum is still at the default `EnumNotSet` sentinel.\n\
@@ -1207,6 +1215,14 @@ fn gen_enum(name: &str, vals: &[(String, Option<String>)]) -> String {
          \x20           }});\n\
          \x20       }}\n\
          \x20       Ok(())\n\
+         \x20   }}\n\
+         \n\
+         \x20   /// Returns the XSD string value for this variant, or `None` if unset.\n\
+         \x20   pub fn as_str(&self) -> Option<&'static str> {{\n\
+         \x20       match self {{\n\
+         \x20           {pascal_name}::EnumNotSet => None,\n\
+         {as_str_arms}\
+         \x20       }}\n\
          \x20   }}\n\
          }}\n"
     ));
@@ -1963,6 +1979,11 @@ fn gen_struct(
     ));
     out.push_str(&format!("pub trait {pascal_name} {supertrait}{{\n"));
     out.push_str(&trait_methods);
+    if pascal_name == "SecurityInformationType" {
+        out.push_str(
+            "    fn to_banner(&self) -> String where Self: Sized { crate::uci::security_banner(self) }\n",
+        );
+    }
     out.push_str("}\n\n");
 
     out.push_str("#[doc(hidden)]\n");
