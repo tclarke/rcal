@@ -353,7 +353,7 @@ impl AbstractServiceBus for ZmqAsb {
     }
 
     fn get_system_label(&self) -> Option<&str> {
-        self.config.system.label.as_deref()
+        Some(self.config.system.id.as_str())
     }
 
     fn get_asb_connection_version(&self) -> &str {
@@ -909,7 +909,7 @@ pub(crate) fn test_config_on_ports(ports: &[u16]) -> Arc<CalConfig> {
         ));
     }
     let toml = format!(
-        "[system]\nid = \"TestSystem\"\nlabel = \"OMS Test System\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n{transports}"
+        "[system]\nid = \"TestSystem\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n{transports}"
     );
     Arc::new(calconfig::parse_config(&toml).unwrap())
 }
@@ -923,7 +923,7 @@ pub(super) fn test_config_inproc(name: &str) -> Arc<CalConfig> {
     let ns = UUID::parse_str(BASE_UUID).unwrap();
     let sys_uuid = UUID::generate_v3(&ns, name.as_bytes());
     let toml = format!(
-        "[system]\nid = \"TestSystem\"\nlabel = \"OMS Test System\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n\n[[transport]]\nid = \"TestZmq\"\ntype = \"zmq\"\nuri = \"inproc://{name}\"\n"
+        "[system]\nid = \"TestSystem\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n\n[[transport]]\nid = \"TestZmq\"\ntype = \"zmq\"\nuri = \"inproc://{name}\"\n"
     );
     Arc::new(calconfig::parse_config(&toml).unwrap())
 }
@@ -1055,7 +1055,7 @@ id = "Unset"
         assert!(!a.get_asb_connection_version().is_empty());
         assert!(!a.get_oms_api_version().is_empty());
         // Label comes from calconfig_sample.toml.
-        assert_eq!(a.get_system_label(), Some("OMS Test System"));
+        assert_eq!(a.get_system_label(), Some("TestSystem"));
     }
 
     // ── Transport: inproc ─────────────────────────────────────────────────
@@ -1455,7 +1455,7 @@ id = "Unset"
         let ns = UUID::parse_str(BASE_UUID).unwrap();
         let sys_uuid = UUID::generate_v3(&ns, port.to_string().as_bytes());
         let toml = format!(
-            "[system]\nid = \"TestSystem\"\nlabel = \"OMS Test System\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n\n[[transport]]\nid = \"TestZmq\"\ntype = \"zmq\"\nuri = \"tcp://127.0.0.1:{port}\"\nexternalizer = \"pretty\"\n\n[externalizer.pretty]\ntype = \"xml\"\npretty = true\n"
+            "[system]\nid = \"TestSystem\"\nuuid = \"{sys_uuid}\"\ndefault_transport = \"TestZmq\"\n\n[[transport]]\nid = \"TestZmq\"\ntype = \"zmq\"\nuri = \"tcp://127.0.0.1:{port}\"\nexternalizer = \"pretty\"\n\n[externalizer.pretty]\ntype = \"xml\"\npretty = true\n"
         );
         let config = Arc::new(calconfig::parse_config(&toml).unwrap());
         let tconfig = config.get_transport(&String::from("TestZmq")).unwrap();
@@ -1924,7 +1924,6 @@ id = "Unset"
         let toml = r#"
 [system]
 id = "TestSystem"
-label = "OMS Test System"
 uuid = "6ef79d81-8a79-4750-9c6a-e5e50a30f81b"
 default_transport = "main"
 

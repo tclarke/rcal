@@ -1,6 +1,5 @@
 [system]
-id = "ASB Dump"
-label = "Dump all monitored topics to TOML"
+id = "ASB View"
 uuid = "cbeb8cff-4f48-37c8-8534-30b3f190b95e"
 default_transport = "asb"
 

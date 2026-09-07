@@ -93,16 +93,18 @@ pub fn init_test_logger(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let init = quote! {
         let logger = {
-            use slog::{Drain, Logger, o};
+            use slog::{Drain, Level, Logger, o};
             use slog_term::{FullFormat, PlainDecorator, TermDecorator};
             use slog_async::Async;
             if ::std::env::var("NO_COLOR").is_err() {
                 let d = FullFormat::new(TermDecorator::new().stdout().build()).build().fuse();
                 let d = Async::new(d).build().fuse();
+                let d = d.filter_level(Level::Warning).fuse();
                 Logger::root(d, o!("test_context" => "unit_tests"))
             } else {
                 let d = FullFormat::new(PlainDecorator::new(::std::io::stdout())).build().fuse();
                 let d = Async::new(d).build().fuse();
+                let d = d.filter_level(Level::Warning).fuse();
                 Logger::root(d, o!("test_context" => "unit_tests"))
             }
         };

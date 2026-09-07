@@ -160,7 +160,6 @@ pub struct LoggingConfig {
 #[serde(default)]
 pub struct System {
     pub id: String,
-    pub label: Option<String>,
     pub uuid: UUID,
     pub default_transport: Option<String>,
     pub logging: LoggingConfig,
