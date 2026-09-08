@@ -1785,7 +1785,7 @@ fn gen_struct(
             } else {
                 ""
             };
-            format!("{doc}{serde_rename}{maybe_skip}    {field_name}: {full_type},\n")
+            format!("{doc}{serde_rename}{maybe_skip}    pub(super) {field_name}: {full_type},\n")
         })
         .collect();
 
@@ -1826,7 +1826,7 @@ fn gen_struct(
             } else {
                 ""
             };
-            format!("{doc}{serde_rename}{maybe_skip}    {field_name}: {full_type},\n")
+            format!("{doc}{serde_rename}{maybe_skip}    pub(super) {field_name}: {full_type},\n")
         })
         .collect();
 
@@ -1979,11 +1979,6 @@ fn gen_struct(
     ));
     out.push_str(&format!("pub trait {pascal_name} {supertrait}{{\n"));
     out.push_str(&trait_methods);
-    if pascal_name == "SecurityInformationType" {
-        out.push_str(
-            "    fn to_banner(&self) -> String where Self: Sized { crate::uci::security_banner(self) }\n",
-        );
-    }
     out.push_str("}\n\n");
 
     out.push_str("#[doc(hidden)]\n");
