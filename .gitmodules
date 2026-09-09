@@ -1,0 +1,3 @@
+[submodule ".\\specs\\a-gra"]
+	path = .\\specs\\a-gra
+	url = https://github.com/open-arsenal/a-gra.git

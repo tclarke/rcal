@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use crate::uci::base::UUID;
 use crate::uci::{CalError, CalImplementationErrorKind, CalResult};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
@@ -20,9 +20,36 @@ pub struct CalConfig {
     /// without a section for defaults.  Add a `[externalizer.<name>]` section to override
     /// options or to define a named chain.
     pub externalizer: HashMap<String, ExternalizerConfig>,
+    /// Extension sections for service-specific configuration.
+    ///
+    /// Any top-level TOML key not consumed by the standard fields is collected here.
+    /// Services retrieve their section via [`CalConfig::get_extension`].
+    #[serde(flatten)]
+    pub extensions: HashMap<String, toml::Value>,
 }
 
 impl CalConfig {
+    /// Deserialize a service-specific extension section from `CalConfig`.
+    ///
+    /// Looks up the top-level TOML key `key` in [`CalConfig::extensions`] and
+    /// deserializes it into `T`.  Returns a `ConfigError` if the key is absent or
+    /// if the value cannot be deserialized into `T`.
+    pub fn get_extension<T: DeserializeOwned>(&self, key: &str) -> CalResult<T> {
+        let val = self.extensions.get(key).ok_or_else(|| {
+            CalError::new_impl(
+                CalImplementationErrorKind::ConfigError,
+                format!("Missing config section '[{key}]'"),
+            )
+        })?;
+        val.clone().try_into().map_err(|err| {
+            CalError::with_impl_source(
+                CalImplementationErrorKind::ConfigError,
+                format!("Failed to parse config section '[{key}]'"),
+                err,
+            )
+        })
+    }
+
     pub fn get_service(&self, name: &str) -> Option<&Service> {
         self.service.iter().find(|item| item.id == name)
     }
@@ -133,7 +160,6 @@ pub struct LoggingConfig {
 #[serde(default)]
 pub struct System {
     pub id: String,
-    pub label: Option<String>,
     pub uuid: UUID,
     pub default_transport: Option<String>,
     pub logging: LoggingConfig,
@@ -169,10 +195,10 @@ pub struct UUIDFactory {
     pub node: Option<mac_address::MacAddress>,
 }
 
-/// Serialization format used internally by [`XmlExternalizer`][crate::externalizer::XmlExternalizer].
+/// Serialization format used by externalizers.
 ///
-/// This type controls XML whitespace only.  Transport-level externalizer selection
-/// is configured via [`Transport::externalizer`] and [`CalConfig::externalizer`].
+/// Transport-level externalizer selection is configured via
+/// [`Transport::externalizer`] and [`CalConfig::externalizer`].
 #[derive(Deserialize, Serialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SerializationFormat {
@@ -181,6 +207,8 @@ pub enum SerializationFormat {
     Xml,
     /// Indented, human-readable XML.
     PrettyXml,
+    /// TOML serialization.
+    Toml,
 }
 
 /// Configuration for a named externalizer.
@@ -211,6 +239,8 @@ pub enum ExternalizerConfig {
         #[serde(default)]
         pretty: bool,
     },
+    /// TOML serialization.
+    Toml,
     /// Byte-level compression chain wrapping an inner externalizer.
     ///
     /// Requires the `compression` feature.
@@ -283,6 +313,11 @@ pub struct Transport {
     /// Use a built-in name (`"xml"`, `"compression"`) or reference a
     /// `[externalizer.<name>]` section in `CalConfig`.
     pub externalizer: Option<String>,
+    /// Remote RADIO URIs that DISH readers should connect to in addition to
+    /// this transport's own RADIO socket.  Use for multi-process topologies
+    /// where this service needs to receive from other services' RADIO sockets.
+    #[serde(default)]
+    pub peers: Vec<String>,
 }
 
 /// A name-to-UUID mapping used for components and capabilities (CAL-005203).
@@ -330,6 +365,15 @@ impl Service {
             .find(|c| c.name == name)
             .map(|c| c.uuid)
     }
+
+    /// Returns the configured [`TopicDirection`] for `topic_id`, or `Both` when not configured.
+    pub fn topic_direction(&self, topic_id: &str) -> TopicDirection {
+        self.topic
+            .iter()
+            .find(|t| t.id == topic_id)
+            .map(|t| t.direction)
+            .unwrap_or_default()
+    }
 }
 
 /// Reliability policy in TOML config — mirrors `cal::Reliability` but serde-friendly.
@@ -367,8 +411,27 @@ pub struct Topic {
     #[serde(rename = "type")]
     pub type_: Option<String>,
     pub topic: Option<String>,
+    /// Allowed data-flow direction (`In`, `Out`, or `Both`; default `Both`).
+    pub direction: TopicDirection,
     /// Optional per-topic QoS defaults (CAL-005210).
     pub qos: Option<TopicQosConfig>,
+}
+
+/// Permitted data-flow direction for a configured topic.
+///
+/// - `In`   — subscribe/read only; publish/write is rejected.
+/// - `Out`  — publish/write only; subscribe/read is rejected.
+/// - `Both` — all operations permitted (default).
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "PascalCase")]
+pub enum TopicDirection {
+    /// Receive only.
+    In,
+    /// Send only.
+    Out,
+    /// Both send and receive (default).
+    #[default]
+    Both,
 }
 
 pub fn parse_config_from_file(filename: &str) -> CalResult<CalConfig> {
@@ -426,6 +489,35 @@ mod tests {
     }
 
     #[test]
+    fn test_topic_direction_parses_and_defaults() {
+        let toml = r#"
+[system]
+id = "test"
+
+[[service]]
+id = "Svc"
+
+[[service.topic]]
+id = "InOnly"
+direction = "In"
+
+[[service.topic]]
+id = "OutOnly"
+direction = "Out"
+
+[[service.topic]]
+id = "Unset"
+"#;
+        let cfg = parse_config(toml).unwrap();
+        let svc = cfg.get_service("Svc").unwrap();
+        assert_eq!(svc.topic_direction("InOnly"), TopicDirection::In);
+        assert_eq!(svc.topic_direction("OutOnly"), TopicDirection::Out);
+        // Absent `direction` and unknown topics both fall back to `Both`.
+        assert_eq!(svc.topic_direction("Unset"), TopicDirection::Both);
+        assert_eq!(svc.topic_direction("NoSuchTopic"), TopicDirection::Both);
+    }
+
+    #[test]
     fn test_topic_qos_config_parses() {
         let toml = r#"
 [system]
@@ -461,5 +553,31 @@ writer_buffer = 5
         let cfg = parse_config(toml).unwrap();
         let topic = &cfg.get_service("Svc").unwrap().topic[0];
         assert!(topic.qos.is_none());
+    }
+
+    #[test]
+    fn test_get_extension_roundtrip() {
+        #[derive(Deserialize, PartialEq, Debug)]
+        struct MyExt {
+            value: u32,
+            label: String,
+        }
+        let toml = r#"
+[system]
+id = "test"
+[my_service]
+value = 42
+label = "hello"
+"#;
+        let cfg = parse_config(toml).unwrap();
+        let ext: MyExt = cfg.get_extension("my_service").unwrap();
+        assert_eq!(ext.value, 42);
+        assert_eq!(ext.label, "hello");
+    }
+
+    #[test]
+    fn test_get_extension_missing_returns_error() {
+        let cfg = parse_config("[system]\nid=\"foo\"\n").unwrap();
+        assert!(cfg.get_extension::<toml::Value>("nonexistent").is_err());
     }
 }

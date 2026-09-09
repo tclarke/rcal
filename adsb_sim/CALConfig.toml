@@ -1,0 +1,39 @@
+[system]
+id = "SIM-1"
+label = "Simulator system 1"
+uuid = "1f508135-4346-4228-b037-a6ea43f6f7b7"
+default_transport = "adsb_sim"
+
+[[system.logging.sink]]
+type = "stdout"
+level = "debug"
+format = "pretty"
+
+[[transport]]
+id = "adsb_sim"
+type = "zmq"
+uri = "tcp://127.0.0.1:2201"
+peers = ["tcp://127.0.0.1:2200"]
+
+[[service]]
+id = "adsb_sim"
+label = "ADS-B Simulation Service"
+uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+[[service.topic]]
+id = "Entity"
+
+[[service.topic]]
+id = "SystemStatus"
+
+[[service.topic]]
+id = "ServiceStatus"
+
+[adsb_sim]
+json_file = "data/001715Z.json"
+speed_multiplier = 1.0
+delete_timeout_secs = 30.0
+# 50km around KJFK. Should be plenty of targets
+geo_center_lat = 40.641766
+geo_center_lon = -73.780968
+geo_radius_km = 50

@@ -19,6 +19,7 @@ description = "OMS Critical Abstraction Layer (CAL) implementation for Rust"
 service = []
 zmq = ["dep:omq-tokio"]
 compression = ["dep:flate2"]
+tui = ["dep:ratatui"]
 default = ["service", "zmq"]
 
 [dependencies]
@@ -26,11 +27,15 @@ regex = "1"
 mac_address = { version = "1.1.8", features = ["serde"] }
 rcal_macros = { path = "./rcal_macros", version = "2.1.2" }
 serde = { version = "1.0.229", features = ["derive"] }
-slog = "2.8.2"
+# max_level_trace / release_max_level_trace keep `trace!` from being compiled out
+# (slog defaults to a Debug static max in debug builds, Info in release), so the
+# per-sink `level` in CALConfig is what actually governs trace output.
+slog = { version = "2.8.2", features = ["max_level_trace", "release_max_level_trace"] }
 slog-async = "2.8.0"
 slog-json = "2.6.1"
 slog-term = "2.9.2"
 toml = "1.1.4"
+ratatui = { version = "0.29", optional = true }
 uuid = { version = "1.24.0", features = ["v1", "v3", "v4", "slog", "serde", "rng"] }
 omq-tokio = { version = "0.21.1", optional = true }
 flate2 = { version = "1", optional = true }
@@ -45,6 +50,14 @@ glob = "0.3.4"
 [[bin]]
 name = "zmq_peer_sender"
 required-features = ["zmq"]
+
+[[bin]]
+name = "asb_dump"
+required-features = ["zmq"]
+
+[[bin]]
+name = "asb_view"
+required-features = ["tui"]
 
 [[example]]
 name = "system_status"
