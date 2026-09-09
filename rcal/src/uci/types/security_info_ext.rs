@@ -1,7 +1,8 @@
 //! Extension methods for [`SecurityInformationType`]
 
-use super::SecurityInformationType_;
+use super::{ReleasableToChoiceType_, SecurityInformationType_};
 
+/// Extension trait for [`SecurityInformation`]
 pub trait SecurityInformationExt {
     /// Render a US classification banner string from a [`SecurityInformationType`].
     ///
@@ -10,11 +11,15 @@ pub trait SecurityInformationExt {
     /// If `CUI_Basic` is non-empty and `Classification` is `U`, the banner begins
     /// with `CUI` instead.  Dissemination controls and releasable-to entries that
     /// carry no string value (`EnumNotSet`) are silently omitted.
-    pub fn security_banner(&self&) -> String {
-        use types::ReleasableToChoiceType_;
+    fn security_banner(&self) -> String;
+}
+
+impl SecurityInformationExt for SecurityInformationType_ {
+    fn security_banner(&self) -> String {
+        use ReleasableToChoiceType_;
 
         let class_str = self.classification.as_str().unwrap_or("U");
-        let banner_class = if !self.cuibasic().is_empty() && class_str == "U" {
+        let banner_class = if !self.cuibasic.is_empty() && class_str == "U" {
             "CUI"
         } else {
             class_str
@@ -30,10 +35,10 @@ pub trait SecurityInformationExt {
         }
 
         // SAR identifiers: //SAR-Id (each its own section)
-        for sar in self.saridentifier {
+        for sar in &self.saridentifier {
             if !sar.is_empty() {
                 banner.push_str("//");
-                banner.push_str(sar);
+                banner.push_str(sar.as_str());
             }
         }
 
@@ -54,7 +59,7 @@ pub trait SecurityInformationExt {
             .iter()
             .filter_map(|v| match v {
                 ReleasableToChoiceType_::GovernmentIdentifier { inner } => {
-                    inner.as_str().map(|self| self.to_string())
+                    inner.as_str().map(|s| s.to_string())
                 }
                 ReleasableToChoiceType_::NATO_SpecialWord { inner } => {
                     if inner.is_empty() {

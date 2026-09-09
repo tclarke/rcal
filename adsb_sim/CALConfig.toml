@@ -6,7 +6,7 @@ default_transport = "adsb_sim"
 
 [[system.logging.sink]]
 type = "stdout"
-level = "info"
+level = "debug"
 format = "pretty"
 
 [[transport]]

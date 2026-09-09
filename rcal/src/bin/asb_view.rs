@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use ratatui::Frame;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -1079,7 +1079,7 @@ fn run_tui(state: Arc<Mutex<AppState>>, _notify: Arc<tokio::sync::Notify>) -> Ca
                     e.to_string(),
                 )
             })? {
-                if ui.handle_key(key.code, key.modifiers) {
+                if key.kind == KeyEventKind::Press && ui.handle_key(key.code, key.modifiers) {
                     break;
                 }
             }

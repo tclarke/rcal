@@ -149,17 +149,18 @@ mod tests {
 
     #[test]
     fn test_parse_snapshot() {
-        let json = r#"{"now":1700000000.0,"aircraft":[{"hex":"abc123","lat":40.0,"lon":-75.0,"alt_baro":35000}]}"#;
+        let json = r#"{"now":1700000000.0,"aircraft":[{"hex":"abc123","type":"adsb_icao","seen_pos":0.1,"lat":40.0,"lon":-75.0,"alt_baro":35000}]}"#;
         let snap = AdsbSnapshot::from_json(json).unwrap();
         assert_eq!(snap.aircraft.len(), 1);
-        assert_eq!(snap.aircraft[0].hex, "abc123");
-        assert_eq!(snap.aircraft[0].alt_baro_feet(), Some(35000.0));
+        let acft = snap.aircraft.peek().unwrap();
+        assert_eq!(acft.hex, "abc123");
+        assert_eq!(acft.alt_baro_feet(), Some(35000.0));
     }
 
     #[test]
     fn test_parse_snapshot_alt_ground() {
-        let json = r#"{"now":1700000000.0,"aircraft":[{"hex":"abc","alt_baro":"ground"}]}"#;
+        let json = r#"{"now":1700000000.0,"aircraft":[{"hex":"abc","type":"adsb_icao","seen_pos":0.1,"lat":40.0,"lon":-75.0,"alt_baro":"ground"}]}"#;
         let snap = AdsbSnapshot::from_json(json).unwrap();
-        assert!(snap.aircraft[0].alt_baro_feet().is_none());
+        assert!(snap.aircraft.peek().unwrap().alt_baro_feet().is_none());
     }
 }

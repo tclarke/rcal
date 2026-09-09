@@ -2060,7 +2060,9 @@ fn is_see_annotations_doc(text: &str) -> bool {
 /// Format a doc string as a `///` comment block indented by `spaces`.
 /// Each line of the source gets its own `/// ` prefix so multi-line XSD
 /// documentation renders correctly in the generated Rust source.
+/// Also replaces tabs with spaces to make rustdoc happy.
 fn doc_lines(text: &str, spaces: usize) -> String {
+    let text = text.replace("\t", "    ");
     let indent = " ".repeat(spaces);
     let mut out = String::new();
     for line in text.lines() {
