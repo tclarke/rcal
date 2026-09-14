@@ -207,8 +207,8 @@ pub enum SerializationFormat {
     Xml,
     /// Indented, human-readable XML.
     PrettyXml,
-    /// TOML serialization.
-    Toml,
+    /// Human-readable cargo-tree style hierarchy.
+    Pretty,
 }
 
 /// Configuration for a named externalizer.
@@ -239,8 +239,8 @@ pub enum ExternalizerConfig {
         #[serde(default)]
         pretty: bool,
     },
-    /// TOML serialization.
-    Toml,
+    /// Cargo-tree style hierarchy display (write-only).
+    Pretty,
     /// Byte-level compression chain wrapping an inner externalizer.
     ///
     /// Requires the `compression` feature.

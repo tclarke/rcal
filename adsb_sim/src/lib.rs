@@ -3,8 +3,9 @@ pub mod data;
 pub mod replay;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use chrono::Utc;
 use slog::{debug, error, info, warn};
 
 use rcal::cal::{AbstractCal, AbstractWriter, TopicQos};
@@ -228,9 +229,18 @@ async fn run_replay(
         error!(logger, "adsb_sim: no aircraft position entries available");
         return;
     }
+    info!(logger, "Found {} aircraft position entries.", snapshot.aircraft.len());
 
-    let wall_t0 = Instant::now();
+    let wall_t0 = Utc::now();
     let data_t0 = snapshot.aircraft.peek().unwrap().seen_pos.unwrap();
+    let data_last = snapshot.aircraft.iter().min().unwrap().seen_pos.unwrap();
+    {
+        let first = wall_send_time(data_t0, data_t0, wall_t0, config.speed_multiplier);
+        let first: chrono::DateTime<chrono::Local> = first.into();
+        let last = wall_send_time(data_t0, data_last, wall_t0, config.speed_multiplier);
+        let last: chrono::DateTime<chrono::Local> = last.into();
+        info!(logger, "Time span: {first} - {last}");
+    }
 
     for aircraft in &snapshot.aircraft {
         if !in_geo_filter(
@@ -244,9 +254,8 @@ async fn run_replay(
         }
         let data_t = aircraft.seen_pos.unwrap();
         let send_at = wall_send_time(data_t0, data_t, wall_t0, config.speed_multiplier);
-        debug!(logger, "t0: {data_t0:?}  t: {data_t:?}  diff: {:?}", data_t0 - data_t);
-        debug!(logger, "{:?} - {:?} = {:?}", send_at, wall_t0, send_at - wall_t0);
-        tokio::time::sleep_until(send_at.into()).await;
+        let sleep_dur = (send_at - Utc::now()).to_std().unwrap_or_default();
+        tokio::time::sleep(sleep_dur).await;
 
         let entity_uuid = UUID::generate_v3(&service_uuid, aircraft.hex.as_bytes());
         let mut msg = entity_template.clone();
@@ -273,10 +282,8 @@ fn populate_entity_msg(
         }
         *mdt.source_mut().source_type_mut() = EntitySourceEnum::External_other;
         *mdt.entity_status_mut() = EntityStatusEnum::Confirmed;
-        //*mdt.creation_timestamp_mut().date_time_mut() = xs_ts;
-        //*mdt.identity_mut().identity_timestamp_mut() = xs_ts;
-
-        // SelfReportedIdentity has maxLength=0 in schema; callsign cannot be stored here
+        *mdt.creation_timestamp_mut().date_time_mut() = chrono::Utc::now().into();
+        *mdt.identity_mut().identity_timestamp_mut() = chrono::Utc::now().into();
     }
 
     if let (Some(lat), Some(lon)) = (aircraft.lat, aircraft.lon) {
@@ -292,7 +299,7 @@ fn populate_entity_msg(
 
         let mut new_kinem = KinematicsType_::default();
         new_kinem.position_mut().fixed_position_type_set(fixed);
-        //new_kinem.kinematics_time_stamp_set(xs_ts);
+        new_kinem.kinematics_time_stamp_set(chrono::Utc::now().into());
         msg.message_data_mut().kinematics_set(new_kinem);
     }
 }

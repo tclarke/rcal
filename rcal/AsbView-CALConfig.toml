@@ -43,3 +43,9 @@ id = "asb_dump"
 
 [[service.topic]]
 id = "Entity"
+
+[[service.topic]]
+id = "SystemStatus"
+
+[[service.topic]]
+id = "ServiceStatus"

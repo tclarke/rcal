@@ -712,6 +712,7 @@ dependencies = [
  "rcal_macros",
  "regex",
  "serde",
+ "serde_json",
  "slog",
  "slog-async",
  "slog-json",

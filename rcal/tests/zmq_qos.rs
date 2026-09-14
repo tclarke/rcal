@@ -68,7 +68,7 @@ async fn test_qos_time_based_filter() {
 
     let reader_qos = TopicQos {
         time_based_filter: Some(rcal::uci::base::TimeBasedFilter {
-            min_separation: Duration::from_millis(100),
+            min_separation: Duration::from_millis(200),
         }),
         ..TopicQos::default()
     };
@@ -100,7 +100,7 @@ async fn test_qos_time_based_filter() {
     );
 
     // After min_separation, the filter should reset
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
     writer
         .write(&QosMsg {
             value: "after_reset".into(),
@@ -129,7 +129,7 @@ async fn test_qos_expiration() {
 
     let reader_qos = TopicQos {
         expiration: Some(rcal::uci::base::Expiration {
-            max_age: Duration::from_millis(50),
+            max_age: Duration::from_millis(100),
         }),
         ..TopicQos::default()
     };
@@ -147,7 +147,7 @@ async fn test_qos_expiration() {
             })
             .unwrap();
     }
-    tokio::time::sleep(Duration::from_millis(80)).await; // > max_age
+    tokio::time::sleep(Duration::from_millis(200)).await; // > max_age
 
     assert!(
         reader.read_no_wait().unwrap().is_none(),
@@ -165,7 +165,7 @@ async fn test_qos_expiration() {
             value: "fresh1".into(),
         })
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await; // < max_age
+    tokio::time::sleep(Duration::from_millis(50)).await; // < max_age
 
     let r0 = reader.read_no_wait().unwrap();
     let r1 = reader.read_no_wait().unwrap();

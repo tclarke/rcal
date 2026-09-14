@@ -18,7 +18,7 @@
 //!   i          toggle time display: ISO ↔ elapsed seconds
 //!   F          form view (default)
 //!   X          XML view
-//!   T          TOML view
+//!   T          Tree view (cargo-tree style hierarchy)
 //!   Tab        focus detail pane (form view)
 //!   Space/Enter  collapse/expand node (detail pane, form view)
 //!   y          copy value to clipboard (detail pane, form view)
@@ -70,21 +70,22 @@ use rcal::QName;
 use rcal::asb::get_asb_config_location;
 use rcal::cal::{AbstractReader, MessageListener, TopicQos, get_cal};
 use rcal::calconfig::{SerializationFormat, parse_config_from_file};
-use rcal::externalizer::{XmlExternalizer, write_to_bytes};
+use rcal::externalizer::{PrettyExternalizer, XmlExternalizer, read_from_bytes, write_to_bytes};
+use rcal::uci::types::{SecurityInformationType, SecurityInformationType_};
 use rcal::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
 
 // ── AnyMsg ───────────────────────────────────────────────────────────────────
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-struct AnyMsg(toml::Value);
+struct AnyMsg(serde_json::Value);
 
 impl CalMessage for AnyMsg {
     fn message_type_name() -> QName {
         QName::new(None, "any")
     }
     fn cal_create() -> Self {
-        AnyMsg(toml::Value::Table(Default::default()))
+        AnyMsg(serde_json::Value::Object(Default::default()))
     }
 }
 
@@ -95,69 +96,108 @@ struct ReceivedMsg {
     received_at: Instant,
     wall_time: DateTime<Utc>,
     identifier: String,
-    raw: toml::Value,
+    raw: serde_json::Value,
 }
 
 // ── Save / load ───────────────────────────────────────────────────────────────
+//
+// Format: one line per message, each line is:
+//   <RcalMessageRecord><WallTime>…</WallTime><Identifier>…</Identifier><Topic>…</Topic><Message>{message xml}</Message></RcalMessageRecord>
+// The message XML retains its xmlns attributes; no xmlns on the wrapper element.
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct SaveRecord {
-    topic: String,
-    wall_time: String,
-    identifier: String,
-    /// TOML-encoded raw message value.
-    raw_toml: String,
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct SaveFile {
-    messages: Vec<SaveRecord>,
-}
-
-fn save_to_file(path: &str, records: Vec<SaveRecord>) -> Result<usize, String> {
-    let count = records.len();
-    let file = SaveFile { messages: records };
-    let content = toml::to_string(&file).map_err(|e| e.to_string())?;
-    std::fs::write(path, content).map_err(|e| e.to_string())?;
-    Ok(count)
+fn save_to_file(
+    path: &str,
+    records: &[(DateTime<Utc>, String, String, serde_json::Value)],
+) -> Result<usize, String> {
+    let ext = XmlExternalizer::new(SerializationFormat::Xml);
+    let mut lines = Vec::with_capacity(records.len());
+    for (wall_time, identifier, topic, raw) in records {
+        let msg = AnyMsg(raw.clone());
+        let xml_bytes = write_to_bytes(&ext, &msg, topic).map_err(|e| e.to_string())?;
+        let xml = String::from_utf8(xml_bytes).map_err(|e| e.to_string())?;
+        let xml = xml.trim_end_matches('\n');
+        lines.push(format!(
+            "<RcalMessageRecord><WallTime>{}</WallTime><Identifier>{}</Identifier><Topic>{}</Topic><Message>{xml}</Message></RcalMessageRecord>",
+            wall_time.to_rfc3339(),
+            identifier,
+            topic,
+        ));
+    }
+    std::fs::write(path, lines.join("\n") + "\n").map_err(|e| e.to_string())?;
+    Ok(records.len())
 }
 
 fn load_from_file(path: &str) -> Result<(Vec<ReceivedMsg>, Instant), String> {
     let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let file: SaveFile = toml::from_str(&content).map_err(|e| e.to_string())?;
+    let ext = XmlExternalizer::new(SerializationFormat::Xml);
     let start = Instant::now();
-    let first_wall = file
-        .messages
-        .first()
-        .and_then(|r| DateTime::parse_from_rfc3339(&r.wall_time).ok())
-        .map(|dt| dt.with_timezone(&Utc));
-    let messages = file
-        .messages
-        .into_iter()
-        .map(|r| {
-            let wall_time = DateTime::parse_from_rfc3339(&r.wall_time)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
-            let received_at = first_wall
-                .and_then(|first| wall_time.signed_duration_since(first).to_std().ok())
-                .map(|d| start + d)
-                .unwrap_or(start);
-            let raw = toml::from_str::<toml::Value>(&r.raw_toml)
-                .unwrap_or_else(|_| toml::Value::Table(Default::default()));
-            ReceivedMsg {
-                topic: r.topic,
-                received_at,
-                wall_time,
-                identifier: r.identifier,
-                raw,
-            }
-        })
-        .collect();
+    let mut first_wall: Option<DateTime<Utc>> = None;
+    let mut messages = Vec::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || !line.starts_with("<RcalMessageRecord>") {
+            continue;
+        }
+        let Some(topic) = tag_text(line, "Topic") else {
+            continue;
+        };
+        let Some(message_xml) = tag_inner(line, "Message") else {
+            continue;
+        };
+
+        let wall_time = tag_text(line, "WallTime")
+            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+        let identifier = tag_text(line, "Identifier").unwrap_or_default();
+
+        if first_wall.is_none() {
+            first_wall = Some(wall_time);
+        }
+        let received_at = first_wall
+            .and_then(|first| wall_time.signed_duration_since(first).to_std().ok())
+            .map(|d| start + d)
+            .unwrap_or(start);
+
+        let raw = read_from_bytes::<AnyMsg>(&ext, message_xml.as_bytes())
+            .map(|m| m.0)
+            .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+
+        messages.push(ReceivedMsg {
+            topic,
+            received_at,
+            wall_time,
+            identifier,
+            raw,
+        });
+    }
     Ok((messages, start))
 }
 
-fn extract_identifier(v: &toml::Value) -> String {
-    // Prefer DescriptiveLabel, fall back to UUID string from MessageHeader.SystemID
+/// Extract the text content of the first `<tag>…</tag>` in `s`.
+fn tag_text(s: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = s.find(&open)? + open.len();
+    let end = s[start..].find(&close)? + start;
+    Some(s[start..end].to_string())
+}
+
+/// Extract the raw inner content of `<tag>…</tag>`, using rfind for the close
+/// so that nested XML inside (which uses different element names) is preserved.
+fn tag_inner(s: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = s.find(&open)? + open.len();
+    let end = s.rfind(&close)?;
+    if end < start {
+        return None;
+    }
+    Some(s[start..end].to_string())
+}
+
+fn extract_identifier(v: &serde_json::Value) -> String {
     let hdr = v.get("MessageHeader");
     if let Some(label) = hdr
         .and_then(|h| h.get("SystemID"))
@@ -184,12 +224,56 @@ struct Collector {
     topic: String,
     state: Arc<Mutex<AppState>>,
     notify: Arc<tokio::sync::Notify>,
+    logger: slog::Logger,
+}
+
+fn extract_header_str<'a>(v: &'a serde_json::Value, field: &str) -> &'a str {
+    v.get("MessageHeader")
+        .and_then(|h| h.get(field))
+        .and_then(|f| f.as_str())
+        .unwrap_or("")
+}
+
+fn extract_system_id(v: &serde_json::Value) -> String {
+    let hdr = v.get("MessageHeader");
+    if let Some(label) = hdr
+        .and_then(|h| h.get("SystemID"))
+        .and_then(|s| s.get("DescriptiveLabel"))
+        .and_then(|d| d.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return label.to_string();
+    }
+    hdr.and_then(|h| h.get("SystemID"))
+        .and_then(|s| s.get("UUID"))
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 impl MessageListener<AnyMsg> for Collector {
     fn on_message(&self, msg: &Arc<AnyMsg>) {
         let raw = msg.0.clone();
-        let identifier = extract_identifier(&normalize_value(&raw));
+        let norm = normalize_value(&raw);
+        let identifier = extract_identifier(&norm);
+        let classification = norm
+            .get("MessageHeader")
+            .and_then(|h| h.get("SecurityInformation"))
+            .and_then(|si| serde_json::from_value::<SecurityInformationType_>(si.clone()).ok())
+            .map(|si| si.to_banner())
+            .unwrap_or_default();
+        let system_id = extract_system_id(&norm);
+        let service_id = extract_header_str(&norm, "ServiceID");
+        let msg_type = AnyMsg::message_type_name().to_string();
+        slog::debug!(
+            self.logger,
+            "message received";
+            "topic" => &self.topic,
+            "msg_type" => &msg_type,
+            "classification" => &classification,
+            "system_id" => &system_id,
+            "service_id" => service_id,
+        );
         let record = ReceivedMsg {
             topic: self.topic.clone(),
             received_at: Instant::now(),
@@ -210,7 +294,7 @@ impl MessageListener<AnyMsg> for Collector {
 enum ViewMode {
     Form,
     Xml,
-    Toml,
+    Pretty,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -425,10 +509,14 @@ impl Ui {
             Some(&idx) => {
                 let m = &st.messages[idx];
                 match self.view {
-                    ViewMode::Toml => {
+                    ViewMode::Pretty => {
                         self.form_line_cache.clear();
-                        toml::to_string(&normalize_value(&m.raw))
-                            .unwrap_or_else(|e| format!("toml error: {e}"))
+                        let ext = PrettyExternalizer::new();
+                        let amsg = AnyMsg(m.raw.clone());
+                        write_to_bytes(&ext, &amsg, &m.topic)
+                            .ok()
+                            .and_then(|b| String::from_utf8(b).ok())
+                            .unwrap_or_else(|| "(render error)".to_string())
                             .lines()
                             .map(|l| Line::from(l.to_string()))
                             .collect()
@@ -446,7 +534,8 @@ impl Ui {
                             .collect()
                     }
                     ViewMode::Form => {
-                        let form_lines = render_form(&normalize_value(&m.raw), &self.collapsed);
+                        let norm = normalize_value(&m.raw);
+                        let form_lines = render_form(&norm, &self.collapsed);
                         let total = form_lines.len();
                         // Clamp cursor
                         if self.detail_cursor >= total && total > 0 {
@@ -499,7 +588,7 @@ impl Ui {
         let view_label = match self.view {
             ViewMode::Form => "Form",
             ViewMode::Xml => "XML",
-            ViewMode::Toml => "TOML",
+            ViewMode::Pretty => "Tree",
         };
         let detail_border_style = if self.detail_focused {
             Style::default().fg(Color::Cyan)
@@ -537,7 +626,7 @@ impl Ui {
                 .to_string()
         } else {
             format!(
-                "{}  [Tab] detail  [s] sort  [i] time  [F]orm [X]ml [T]oml  [h] lock color  [H] clear  [w] save  [q] quit",
+                "{}  [Tab] detail  [s] sort  [i] time  [F]orm [X]ml [T]ree  [h] lock color  [H] clear  [w] save  [q] quit",
                 filter_part
             )
         };
@@ -566,22 +655,22 @@ impl Ui {
                 KeyCode::Enter => {
                     self.save_input = false;
                     let path = std::mem::take(&mut self.save_path);
-                    let records: Vec<SaveRecord> = {
+                    let records: Vec<(DateTime<Utc>, String, String, serde_json::Value)> = {
                         let st = self.state.lock().unwrap();
                         let idxs = self.visible_indices(&st.messages);
                         idxs.iter()
                             .map(|&i| {
                                 let m = &st.messages[i];
-                                SaveRecord {
-                                    topic: m.topic.clone(),
-                                    wall_time: m.wall_time.to_rfc3339(),
-                                    identifier: m.identifier.clone(),
-                                    raw_toml: toml::to_string(&m.raw).unwrap_or_default(),
-                                }
+                                (
+                                    m.wall_time,
+                                    m.identifier.clone(),
+                                    m.topic.clone(),
+                                    m.raw.clone(),
+                                )
                             })
                             .collect()
                     };
-                    match save_to_file(&path, records) {
+                    match save_to_file(&path, &records) {
                         Ok(n) => {
                             self.status_msg = Some(format!("Saved {n} messages to {path}"));
                         }
@@ -728,7 +817,7 @@ impl Ui {
                 self.detail_focused = false;
             }
             KeyCode::Char('T') => {
-                self.view = ViewMode::Toml;
+                self.view = ViewMode::Pretty;
                 self.detail_scroll = 0;
                 self.detail_focused = false;
             }
@@ -763,25 +852,26 @@ impl Ui {
 // ── Value normalizer ──────────────────────────────────────────────────────────
 
 /// Strip XML metadata keys (`$text` promotion, `xmlns` namespace attrs) so
-/// the Form and TOML views don't expose deserialization artefacts.
-fn normalize_value(v: &toml::Value) -> toml::Value {
+/// the Form view doesn't expose deserialization artefacts.
+fn normalize_value(v: &serde_json::Value) -> serde_json::Value {
     match v {
-        toml::Value::Table(t) => {
-            // If the only meaningful content is $text, promote it to a leaf.
+        serde_json::Value::Object(t) => {
             if let Some(text) = t.get("$text") {
                 let has_only_meta = t.keys().all(|k| k == "$text" || is_xml_meta_key(k));
                 if has_only_meta {
                     return normalize_value(text);
                 }
             }
-            let filtered: toml::map::Map<_, _> = t
+            let filtered: serde_json::Map<_, _> = t
                 .iter()
                 .filter(|(k, _)| !is_xml_meta_key(k))
                 .map(|(k, val)| (k.clone(), normalize_value(val)))
                 .collect();
-            toml::Value::Table(filtered)
+            serde_json::Value::Object(filtered)
         }
-        toml::Value::Array(a) => toml::Value::Array(a.iter().map(normalize_value).collect()),
+        serde_json::Value::Array(a) => {
+            serde_json::Value::Array(a.iter().map(normalize_value).collect())
+        }
         other => other.clone(),
     }
 }
@@ -801,14 +891,14 @@ struct FormLine {
     leaf_value: Option<String>,
 }
 
-fn render_form(v: &toml::Value, collapsed: &HashSet<String>) -> Vec<FormLine> {
+fn render_form(v: &serde_json::Value, collapsed: &HashSet<String>) -> Vec<FormLine> {
     let mut lines = Vec::new();
     render_value(v, "", 0, collapsed, &mut lines);
     lines
 }
 
 fn render_value(
-    v: &toml::Value,
+    v: &serde_json::Value,
     path: &str,
     depth: usize,
     collapsed: &HashSet<String>,
@@ -817,7 +907,7 @@ fn render_value(
     let indent = "  ".repeat(depth);
 
     match v {
-        toml::Value::Table(t) => {
+        serde_json::Value::Object(t) => {
             for (k, child) in t {
                 let child_path = if path.is_empty() {
                     k.clone()
@@ -826,7 +916,7 @@ fn render_value(
                 };
                 let child_collapsed = collapsed.contains(&child_path);
                 match child {
-                    toml::Value::Table(inner) => {
+                    serde_json::Value::Object(inner) => {
                         let marker = if child_collapsed { "▶" } else { "▼" };
                         let count = if child_collapsed {
                             format!(" ({} fields)", inner.len())
@@ -853,7 +943,7 @@ fn render_value(
                             render_value(child, &child_path, depth + 1, collapsed, out);
                         }
                     }
-                    toml::Value::Array(arr) => {
+                    serde_json::Value::Array(arr) => {
                         let marker = if child_collapsed { "▶" } else { "▼" };
                         let count = if child_collapsed {
                             format!(" [{} items]", arr.len())
@@ -917,15 +1007,14 @@ fn render_value(
     }
 }
 
-fn leaf_display(v: &toml::Value) -> String {
+fn leaf_display(v: &serde_json::Value) -> String {
     match v {
-        toml::Value::String(s) => s.clone(),
-        toml::Value::Integer(i) => i.to_string(),
-        toml::Value::Float(f) => format!("{f:.6}"),
-        toml::Value::Boolean(b) => b.to_string(),
-        toml::Value::Datetime(dt) => dt.to_string(),
-        toml::Value::Array(a) => format!("[{} items]", a.len()),
-        toml::Value::Table(t) => format!("{{{} fields}}", t.len()),
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Array(a) => format!("[{} items]", a.len()),
+        serde_json::Value::Object(t) => format!("{{{} fields}}", t.len()),
     }
 }
 
@@ -957,9 +1046,8 @@ fn copy_to_clipboard(text: &str) {
 async fn main() -> CalResult<()> {
     let args: Vec<String> = std::env::args().collect();
     if let Some(path) = args.get(1) {
-        let (messages, start) = load_from_file(path).map_err(|e| {
-            CalError::new(CalErrorKind::InitializationFailure, e)
-        })?;
+        let (messages, start) = load_from_file(path)
+            .map_err(|e| CalError::new(CalErrorKind::InitializationFailure, e))?;
         let app_state = Arc::new(Mutex::new(AppState { messages, start }));
         let notify = Arc::new(tokio::sync::Notify::new());
         return run_tui(app_state, notify);
@@ -991,6 +1079,9 @@ async fn main() -> CalResult<()> {
         .clone();
 
     let logger = rcal::logging::build_logger(&config.system.logging);
+    slog::info!(logger, "asb_view starting"; "config" => &config_path);
+    slog::debug!(logger, "using transport"; "id" => &tconfig.id);
+
     let mut bus = get_cal(
         service.id.clone(),
         Some(tconfig.id.clone()),
@@ -1008,11 +1099,13 @@ async fn main() -> CalResult<()> {
 
     let mut readers: Vec<Box<dyn AbstractReader<AnyMsg>>> = Vec::new();
     for topic in &service.topic {
+        slog::debug!(logger, "subscribing to topic"; "id" => &topic.id);
         let mut reader = bus.create_reader::<AnyMsg>(&topic.id, TopicQos::default())?;
         reader.add_listener(Arc::new(Collector {
             topic: topic.id.clone(),
             state: Arc::clone(&app_state),
             notify: Arc::clone(&notify),
+            logger: logger.clone(),
         }))?;
         readers.push(reader);
     }
@@ -1023,6 +1116,7 @@ async fn main() -> CalResult<()> {
             "no topics configured — add [[service.topic]] entries",
         ));
     }
+    slog::info!(logger, "listening"; "topics" => readers.len());
 
     // Run TUI in a blocking thread so tokio can keep the CAL listeners alive.
     let state_clone = Arc::clone(&app_state);
