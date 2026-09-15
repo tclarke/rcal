@@ -71,9 +71,9 @@ use rcal::asb::get_asb_config_location;
 use rcal::cal::{AbstractReader, MessageListener, TopicQos, get_cal};
 use rcal::calconfig::{SerializationFormat, parse_config_from_file};
 use rcal::externalizer::{PrettyExternalizer, XmlExternalizer, read_from_bytes, write_to_bytes};
-use rcal::uci::types::{SecurityInformationType, SecurityInformationType_};
+use rcal::uci::types::SecurityInformationExt;
+use rcal::uci::types::SecurityInformationType_;
 use rcal::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
-
 // ── AnyMsg ───────────────────────────────────────────────────────────────────
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -260,7 +260,7 @@ impl MessageListener<AnyMsg> for Collector {
             .get("MessageHeader")
             .and_then(|h| h.get("SecurityInformation"))
             .and_then(|si| serde_json::from_value::<SecurityInformationType_>(si.clone()).ok())
-            .map(|si| si.to_banner())
+            .map(|si| si.security_banner())
             .unwrap_or_default();
         let system_id = extract_system_id(&norm);
         let service_id = extract_header_str(&norm, "ServiceID");
@@ -1121,7 +1121,7 @@ async fn main() -> CalResult<()> {
     // Run TUI in a blocking thread so tokio can keep the CAL listeners alive.
     let state_clone = Arc::clone(&app_state);
     let notify_clone = Arc::clone(&notify);
-    let tui_result = tokio::task::spawn_blocking(move || run_tui(state_clone, notify_clone))
+    tokio::task::spawn_blocking(move || run_tui(state_clone, notify_clone))
         .await
         .map_err(|e| {
             CalError::new_impl(
@@ -1130,7 +1130,7 @@ async fn main() -> CalResult<()> {
             )
         })??;
 
-    Ok(tui_result)
+    Ok(())
 }
 
 fn run_tui(state: Arc<Mutex<AppState>>, _notify: Arc<tokio::sync::Notify>) -> CalResult<()> {
@@ -1166,17 +1166,15 @@ fn run_tui(state: Arc<Mutex<AppState>>, _notify: Arc<tokio::sync::Notify>) -> Ca
                 CalImplementationErrorKind::UserInterfaceError,
                 e.to_string(),
             )
-        })? {
-            if let Event::Key(key) = event::read().map_err(|e| {
-                CalError::new_impl(
-                    CalImplementationErrorKind::UserInterfaceError,
-                    e.to_string(),
-                )
-            })? {
-                if key.kind == KeyEventKind::Press && ui.handle_key(key.code, key.modifiers) {
-                    break;
-                }
-            }
+        })? && let Event::Key(key) = event::read().map_err(|e| {
+            CalError::new_impl(
+                CalImplementationErrorKind::UserInterfaceError,
+                e.to_string(),
+            )
+        })? && key.kind == KeyEventKind::Press
+            && ui.handle_key(key.code, key.modifiers)
+        {
+            break;
         }
     }
 

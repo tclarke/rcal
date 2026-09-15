@@ -9,3 +9,4 @@
 include!(concat!(env!("OUT_DIR"), "/uci_types/mod.rs"));
 
 pub mod security_info_ext;
+pub use security_info_ext::SecurityInformationExt;

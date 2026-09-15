@@ -7,9 +7,9 @@
 use crate::calconfig::CompressionType;
 use crate::calconfig::{CalConfig, ExternalizerConfig, SerializationFormat};
 use crate::uci::{CalError, CalErrorKind, CalMessage, CalResult};
+use serde_json;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use serde_json;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Externalizer

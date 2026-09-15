@@ -31,7 +31,6 @@ impl Aircraft {
     }
 }
 
-
 impl Ord for Aircraft {
     fn cmp(&self, other: &Self) -> Ordering {
         let diff = self.seen_pos.unwrap_or(0.) - other.seen_pos.unwrap_or(0.);
@@ -53,12 +52,23 @@ impl PartialOrd for Aircraft {
 
 impl PartialEq for Aircraft {
     fn eq(&self, other: &Self) -> bool {
-        self.hex == other.hex && self.msg_type == other.msg_type && self.callsign == other.callsign && self.seen_pos == other.seen_pos && self.lat == other.lat && self.lon == other.lon && self.alt_baro == other.alt_baro && self.alt_geom == other.alt_geom && self.gs == other.gs && self.ias == other.ias && self.tas == other.tas && self.track == other.track && self.baro_rate == other.baro_rate
+        self.hex == other.hex
+            && self.msg_type == other.msg_type
+            && self.callsign == other.callsign
+            && self.seen_pos == other.seen_pos
+            && self.lat == other.lat
+            && self.lon == other.lon
+            && self.alt_baro == other.alt_baro
+            && self.alt_geom == other.alt_geom
+            && self.gs == other.gs
+            && self.ias == other.ias
+            && self.tas == other.tas
+            && self.track == other.track
+            && self.baro_rate == other.baro_rate
     }
 }
 
-impl Eq for Aircraft {
-}
+impl Eq for Aircraft {}
 
 /// Top-level ADS-B Exchange JSON snapshot.
 #[derive(Debug, Clone, Deserialize)]
@@ -72,9 +82,9 @@ impl AdsbSnapshot {
         let mut obj: Self = serde_json::from_str(json)?;
         obj.aircraft.retain(|acft| {
             acft.seen_pos.is_some()
-            && acft.msg_type == "adsb_icao"
-            && acft.lat.is_some()
-            && acft.lon.is_some()
+                && acft.msg_type == "adsb_icao"
+                && acft.lat.is_some()
+                && acft.lon.is_some()
         });
         Ok(obj)
     }

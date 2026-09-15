@@ -118,10 +118,10 @@ impl MessageListener<AnyMsg> for Printer {
                     if let Ok(mut w) = f.lock() {
                         let _ = w.write_all(line.as_bytes());
                     }
-                    if let Some(ref s) = self.stats {
-                        if let Ok(mut st) = s.lock() {
-                            st.record(&self.topic);
-                        }
+                    if let Some(ref s) = self.stats
+                        && let Ok(mut st) = s.lock()
+                    {
+                        st.record(&self.topic);
                     }
                 }
                 Err(e) => {
@@ -247,26 +247,23 @@ async fn main() -> CalResult<()> {
         tokio::select! {
             _ = &mut ctrl_c => break,
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                if let Some(ref s) = stats {
-                    if let Ok(mut st) = s.lock() {
-                        st.maybe_print();
-                    }
+                if let Some(ref s) = stats && let Ok(mut st) = s.lock() {
+                    st.maybe_print();
                 }
             }
         }
     }
 
-    if let Some(ref s) = stats {
-        if let Ok(mut st) = s.lock() {
-            if st.dirty {
-                st.print_now();
-            }
-        }
+    if let Some(ref s) = stats
+        && let Ok(mut st) = s.lock()
+        && st.dirty
+    {
+        st.print_now();
     }
-    if let Some(f) = output_file {
-        if let Ok(mut w) = f.lock() {
-            let _ = w.flush();
-        }
+    if let Some(f) = output_file
+        && let Ok(mut w) = f.lock()
+    {
+        let _ = w.flush();
     }
 
     Ok(())

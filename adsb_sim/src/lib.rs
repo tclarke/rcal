@@ -71,17 +71,41 @@ impl AdsbSimService {
 
         let mut entity_template = svc.create_message::<Entity_>()?;
 
-        *entity_template.message_data_mut().source_mut().system_id_mut().uuid_mut() = system_uuid;
-        entity_template.message_data_mut().source_mut().system_id_mut().descriptive_label_set(cal_config.system.id.clone());
-        entity_template.message_data_mut().source_mut().service_id_enable();
-        *entity_template.message_data_mut().source_mut().service_id_mut().unwrap().uuid_mut() = service_uuid;
-        entity_template.message_data_mut().source_mut().service_id_mut().unwrap().descriptive_label_set(service_name.into());
+        *entity_template
+            .message_data_mut()
+            .source_mut()
+            .system_id_mut()
+            .uuid_mut() = system_uuid;
+        entity_template
+            .message_data_mut()
+            .source_mut()
+            .system_id_mut()
+            .descriptive_label_set(cal_config.system.id.clone());
+        entity_template
+            .message_data_mut()
+            .source_mut()
+            .service_id_enable();
+        *entity_template
+            .message_data_mut()
+            .source_mut()
+            .service_id_mut()
+            .unwrap()
+            .uuid_mut() = service_uuid;
+        entity_template
+            .message_data_mut()
+            .source_mut()
+            .service_id_mut()
+            .unwrap()
+            .descriptive_label_set(service_name.into());
 
         let mut sys_msg = svc.create_message::<SystemStatus_>()?;
         *sys_msg.message_data_mut().system_state_mut() = SystemStateEnum::Operational;
         *sys_msg.message_data_mut().source_mut() = SystemSourceEnum::Actual;
         *sys_msg.message_data_mut().system_id_mut().uuid_mut() = system_uuid;
-        sys_msg.message_data_mut().system_id_mut().descriptive_label_set(cal_config.system.id.clone());
+        sys_msg
+            .message_data_mut()
+            .system_id_mut()
+            .descriptive_label_set(cal_config.system.id.clone());
         sys_msg.message_data_mut().service_id_mut().resize(1);
         *sys_msg.message_data_mut().service_id_mut()[0].uuid_mut() = service_uuid;
         sys_msg.message_data_mut().service_id_mut()[0].descriptive_label_set(service_name.into());
@@ -89,7 +113,10 @@ impl AdsbSimService {
         let mut svc_msg = svc.create_message::<ServiceStatus_>()?;
         *svc_msg.message_data_mut().service_state_mut() = ServiceStateEnum::Normal;
         *svc_msg.message_data_mut().service_id_mut().uuid_mut() = service_uuid;
-        svc_msg.message_data_mut().service_id_mut().descriptive_label_set(service_name.into());
+        svc_msg
+            .message_data_mut()
+            .service_id_mut()
+            .descriptive_label_set(service_name.into());
 
         Ok(Self {
             lifecycle: Box::new(svc),
@@ -229,8 +256,14 @@ async fn run_replay(
         error!(logger, "adsb_sim: no aircraft position entries available");
         return;
     }
-    info!(logger, "Found {} aircraft position entries.", snapshot.aircraft.len());
+    info!(
+        logger,
+        "Found {} aircraft position entries.",
+        snapshot.aircraft.len()
+    );
 
+    // ponytail: fixed 1s delay for ZMQ slow-joiner; configurable if needed
+    tokio::time::sleep(Duration::from_secs(1)).await;
     let wall_t0 = Utc::now();
     let data_t0 = snapshot.aircraft.peek().unwrap().seen_pos.unwrap();
     let data_last = snapshot.aircraft.iter().min().unwrap().seen_pos.unwrap();
@@ -267,11 +300,7 @@ async fn run_replay(
     }
 }
 
-fn populate_entity_msg(
-    msg: &mut Entity_,
-    aircraft: &Aircraft,
-    entity_uuid: UUID,
-) {
+fn populate_entity_msg(msg: &mut Entity_, aircraft: &Aircraft, entity_uuid: UUID) {
     msg.object_state_set(ObjectStateEnum::New);
 
     {
