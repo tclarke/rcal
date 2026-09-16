@@ -8,13 +8,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rcal::QName;
-use rcal::asb::zmq::ZmqAsb;
+use rcal::cal::{Cal, get_cal};
 use rcal::uci::CalMessage;
-use rcal::uci::base::{AbstractCalExt, AbstractServiceBus, TopicQos};
+use rcal::uci::base::TopicQos;
 
 // ── shared port allocator ─────────────────────────────────────────────────────
 
-static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(2000);
+static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(4000);
 
 fn next_port() -> u16 {
     NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
@@ -34,12 +34,9 @@ fn test_config(port: u16) -> Arc<rcal::calconfig::CalConfig> {
     Arc::new(calconfig::parse_config(&toml).unwrap())
 }
 
-async fn make_bus(label: &str, port: u16, logger: slog::Logger) -> ZmqAsb {
+async fn make_bus(label: &str, port: u16, logger: slog::Logger) -> Cal {
     let config = test_config(port);
-    let tconfig = config.get_transport("T").unwrap();
-    ZmqAsb::new(label, "T", logger, config.clone(), tconfig)
-        .await
-        .unwrap()
+    get_cal(label, Some("T"), config, logger).await.unwrap()
 }
 
 // ── message type ──────────────────────────────────────────────────────────────
@@ -71,15 +68,14 @@ async fn test_qos_time_based_filter() {
 
     let reader_qos = TopicQos {
         time_based_filter: Some(rcal::uci::base::TimeBasedFilter {
-            min_separation: Duration::from_millis(100),
+            min_separation: Duration::from_millis(200),
         }),
         ..TopicQos::default()
     };
-    let mut reader =
-        <ZmqAsb as AbstractCalExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos).unwrap();
-    let mut writer =
-        <ZmqAsb as AbstractCalExt<QosMsg>>::create_writer(&mut bus, "t", TopicQos::default())
-            .unwrap();
+    let mut reader = bus.create_reader::<QosMsg>("t", reader_qos).unwrap();
+    let mut writer = bus
+        .create_writer::<QosMsg>("t", TopicQos::default())
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Burst: only the first message should pass the filter
@@ -104,7 +100,7 @@ async fn test_qos_time_based_filter() {
     );
 
     // After min_separation, the filter should reset
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
     writer
         .write(&QosMsg {
             value: "after_reset".into(),
@@ -133,15 +129,14 @@ async fn test_qos_expiration() {
 
     let reader_qos = TopicQos {
         expiration: Some(rcal::uci::base::Expiration {
-            max_age: Duration::from_millis(50),
+            max_age: Duration::from_millis(100),
         }),
         ..TopicQos::default()
     };
-    let mut reader =
-        <ZmqAsb as AbstractCalExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos).unwrap();
-    let mut writer =
-        <ZmqAsb as AbstractCalExt<QosMsg>>::create_writer(&mut bus, "t", TopicQos::default())
-            .unwrap();
+    let mut reader = bus.create_reader::<QosMsg>("t", reader_qos).unwrap();
+    let mut writer = bus
+        .create_writer::<QosMsg>("t", TopicQos::default())
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Write 3 messages, wait for them to expire
@@ -152,7 +147,7 @@ async fn test_qos_expiration() {
             })
             .unwrap();
     }
-    tokio::time::sleep(Duration::from_millis(80)).await; // > max_age
+    tokio::time::sleep(Duration::from_millis(200)).await; // > max_age
 
     assert!(
         reader.read_no_wait().unwrap().is_none(),
@@ -170,7 +165,7 @@ async fn test_qos_expiration() {
             value: "fresh1".into(),
         })
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await; // < max_age
+    tokio::time::sleep(Duration::from_millis(50)).await; // < max_age
 
     let r0 = reader.read_no_wait().unwrap();
     let r1 = reader.read_no_wait().unwrap();
@@ -197,11 +192,10 @@ async fn test_qos_reader_buffer() {
         reader_buffer: Some(rcal::uci::base::MessageBuffer { max_messages: 3 }),
         ..TopicQos::default()
     };
-    let mut reader =
-        <ZmqAsb as AbstractCalExt<QosMsg>>::create_reader(&mut bus, "t", reader_qos).unwrap();
-    let mut writer =
-        <ZmqAsb as AbstractCalExt<QosMsg>>::create_writer(&mut bus, "t", TopicQos::default())
-            .unwrap();
+    let mut reader = bus.create_reader::<QosMsg>("t", reader_qos).unwrap();
+    let mut writer = bus
+        .create_writer::<QosMsg>("t", TopicQos::default())
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     for i in 0..5u32 {

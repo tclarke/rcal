@@ -1,6 +1,5 @@
 [system]
 id = "BasicExample"
-label = "rcal basic example"
 default_transport = "main-bus"
 
 [system.logging]

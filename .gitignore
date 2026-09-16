@@ -7,5 +7,6 @@ skills-lock.json
 .claude/skills
 rcal/.cargo/config.toml
 rcal/Cargo.lock
-rcal/target/
+rcal/*.log
+**/target/
 .direnv

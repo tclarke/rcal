@@ -7,6 +7,7 @@
 use crate::calconfig::CompressionType;
 use crate::calconfig::{CalConfig, ExternalizerConfig, SerializationFormat};
 use crate::uci::{CalError, CalErrorKind, CalMessage, CalResult};
+use serde_json;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 
@@ -187,8 +188,17 @@ where
     M: CalMessage + serde::de::DeserializeOwned,
 {
     let decoded = decode_chain(ext, bytes)?;
-    quick_xml::de::from_reader(decoded.as_slice())
-        .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))
+    let format = find_format(ext).unwrap_or_default();
+    match format {
+        SerializationFormat::Xml | SerializationFormat::PrettyXml => {
+            quick_xml::de::from_reader(decoded.as_slice())
+                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))
+        }
+        SerializationFormat::Pretty => Err(CalError::new(
+            CalErrorKind::SerializationError,
+            "PrettyExternalizer is write-only",
+        )),
+    }
 }
 
 /// Decode `s` through the full externalizer chain and deserialize to `M` (CXX-012115).
@@ -252,6 +262,11 @@ fn serialize_xml<M: serde::Serialize>(
                 .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
             Ok(buf.into_bytes())
         }
+        SerializationFormat::Pretty => {
+            let value = serde_json::to_value(msg)
+                .map_err(|e| CalError::new(CalErrorKind::SerializationError, e.to_string()))?;
+            Ok(render_tree(root, &value).into_bytes())
+        }
     }
 }
 
@@ -263,6 +278,8 @@ fn serialize_xml<M: serde::Serialize>(
 pub const XML_EXTERNALIZER_CAL_API_VERSION: &str = "2.5";
 /// Encoding identifier for the XML externalizer.
 pub const XML_EXTERNALIZER_ENCODING: &str = "xml";
+/// Encoding identifier for the pretty-tree externalizer.
+pub const PRETTY_EXTERNALIZER_ENCODING: &str = "pretty";
 /// Vendor name for this implementation.
 pub const XML_EXTERNALIZER_VENDOR: &str = "rcal";
 
@@ -549,6 +566,7 @@ impl ExternalizerBuilder {
         match next {
             None => match effective_kind.as_str() {
                 "xml" => Ok(Box::new(xml_from_options(&options))),
+                "pretty" => Ok(Box::new(PrettyExternalizer { next: None })),
                 other => Err(CalError::new(
                     CalErrorKind::SerializationError,
                     format!("unknown leaf externalizer type: '{other}'"),
@@ -614,6 +632,7 @@ fn build_from_config(
             };
             Ok(Box::new(XmlExternalizer { format, next: None }))
         }
+        ExternalizerConfig::Pretty => Ok(Box::new(PrettyExternalizer { next: None })),
         #[cfg(feature = "compression")]
         ExternalizerConfig::Compression {
             inner,
@@ -641,6 +660,7 @@ fn build_builtin(name: &str) -> CalResult<Box<dyn Externalizer>> {
             format: SerializationFormat::Xml,
             next: None,
         })),
+        "pretty" => Ok(Box::new(PrettyExternalizer { next: None })),
         #[cfg(feature = "compression")]
         "compression" | "gzip" => {
             let xml = build_builtin("xml")?;
@@ -685,6 +705,136 @@ impl ExternalizerLoader for XmlExternalizerLoader {
                 format!("unsupported externalizer encoding: '{other}'"),
             )),
         }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PrettyExternalizer
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Write-only [`Externalizer`] that renders message data as a cargo-tree style hierarchy.
+///
+/// Output uses `├──` / `└──` / `│` connectors to show nested structure.
+/// [`read_from_bytes`] returns an error — this externalizer is display-only.
+pub struct PrettyExternalizer {
+    /// Optional next byte-transform in the chain.
+    pub next: Option<Box<dyn Externalizer>>,
+}
+
+impl PrettyExternalizer {
+    /// Construct with no chained externalizer.
+    pub fn new() -> Self {
+        Self { next: None }
+    }
+}
+
+impl Default for PrettyExternalizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Externalizer for PrettyExternalizer {
+    fn next(&self) -> Option<&dyn Externalizer> {
+        self.next.as_deref()
+    }
+
+    fn serialization_format(&self) -> Option<SerializationFormat> {
+        Some(SerializationFormat::Pretty)
+    }
+
+    fn get_cal_api_version(&self) -> &str {
+        XML_EXTERNALIZER_CAL_API_VERSION
+    }
+
+    fn get_encoding(&self) -> &str {
+        PRETTY_EXTERNALIZER_ENCODING
+    }
+
+    fn message_write_only(&self) -> bool {
+        true
+    }
+
+    fn supports_object_read(&self) -> bool {
+        false
+    }
+}
+
+// ── Tree renderer ─────────────────────────────────────────────────────────────
+
+fn render_tree(root: &str, v: &serde_json::Value) -> String {
+    let mut out = String::new();
+    out.push_str(root);
+    out.push('\n');
+    render_tree_node(v, "", &mut out);
+    out
+}
+
+fn render_tree_node(v: &serde_json::Value, prefix: &str, out: &mut String) {
+    match v {
+        serde_json::Value::Object(t) => {
+            if let Some(text) = t.get("$text") {
+                let all_meta = t.keys().all(|k| k == "$text" || is_pretty_meta_key(k));
+                if all_meta {
+                    render_tree_node(text, prefix, out);
+                    return;
+                }
+            }
+            let entries: Vec<_> = t.iter().filter(|(k, _)| !is_pretty_meta_key(k)).collect();
+            let last = entries.len().saturating_sub(1);
+            for (i, (k, child)) in entries.iter().enumerate() {
+                let is_last = i == last;
+                let connector = if is_last { "└── " } else { "├── " };
+                let child_prefix = format!("{prefix}{}", if is_last { "    " } else { "│   " });
+                match child {
+                    serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                        out.push_str(&format!("{prefix}{connector}{k}\n"));
+                        render_tree_node(child, &child_prefix, out);
+                    }
+                    leaf => {
+                        out.push_str(&format!("{prefix}{connector}{k}: {}\n", pretty_leaf(leaf)));
+                    }
+                }
+            }
+        }
+        serde_json::Value::Array(a) => {
+            let last = a.len().saturating_sub(1);
+            for (i, item) in a.iter().enumerate() {
+                let is_last = i == last;
+                let connector = if is_last { "└── " } else { "├── " };
+                let child_prefix = format!("{prefix}{}", if is_last { "    " } else { "│   " });
+                match item {
+                    serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                        out.push_str(&format!("{prefix}{connector}[{i}]\n"));
+                        render_tree_node(item, &child_prefix, out);
+                    }
+                    leaf => {
+                        out.push_str(&format!(
+                            "{prefix}{connector}[{i}]: {}\n",
+                            pretty_leaf(leaf)
+                        ));
+                    }
+                }
+            }
+        }
+        leaf => {
+            out.push_str(&format!("{prefix}{}\n", pretty_leaf(leaf)));
+        }
+    }
+}
+
+fn is_pretty_meta_key(k: &str) -> bool {
+    k == "xmlns" || k.starts_with("xmlns:") || k.starts_with("@xmlns")
+}
+
+fn pretty_leaf(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Array(a) => format!("[{} items]", a.len()),
+        serde_json::Value::Object(t) => format!("{{{} fields}}", t.len()),
     }
 }
 

@@ -10,7 +10,7 @@
 //!
 //! ## Design notes
 //! * [`AbstractServiceBus`] is object-safe; generic factory methods live in
-//!   the non-object-safe extension trait [`AbstractCalExt`].
+//!   [`AbstractCal`] and are dispatched via the concrete [`crate::cal::Cal`] handle.
 //! * `Send + Sync` is required on all shared types (§5.1.1, CAL-016015).
 //! * `Box<Self>` receivers are used for consuming trait-object methods, which
 //!   is the Rust equivalent of C++ destructors and `shutdown()` calls.
@@ -29,9 +29,8 @@ use uuid::{Uuid, Variant as UuidVariant, Version as UuidVersion};
 pub use crate::asb::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
 /// Re-exports for uci::cal
 pub use crate::cal::{
-    AbstractCal, AbstractCalCreateMessage, AbstractCalExt, AbstractReader, AbstractWriter,
-    Expiration, MessageBuffer, MessageHeaderDefaults, MessageListener, Reliability,
-    TimeBasedFilter, TopicQos,
+    AbstractCal, AbstractCalCreateMessage, AbstractReader, AbstractWriter, Cal, Expiration,
+    MessageBuffer, MessageHeaderDefaults, MessageListener, Reliability, TimeBasedFilter, TopicQos,
 };
 pub use crate::calconfig::SerializationFormat;
 pub use crate::externalizer::{Externalizer, ExternalizerLoader};
