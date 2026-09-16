@@ -2,7 +2,7 @@
 members = ["rcal_macros", "xsd-subset", "examples/simple_two_service"]
 
 [workspace.package]
-version = "2.1.2"
+version = "3.0.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tclarke/rcal"
@@ -25,7 +25,7 @@ default = ["service", "zmq"]
 [dependencies]
 regex = "1"
 mac_address = { version = "1.1.8", features = ["serde"] }
-rcal_macros = { path = "./rcal_macros", version = "2.1.2" }
+rcal_macros = { path = "./rcal_macros", version = "3.0.0" }
 serde = { version = "1.0.229", features = ["derive"] }
 # max_level_trace / release_max_level_trace keep `trace!` from being compiled out
 # (slog defaults to a Debug static max in debug builds, Info in release), so the
