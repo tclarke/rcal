@@ -26,7 +26,7 @@ pub const ZMQ_ASB_ID: &str = "zmq";
 /// Validates that message type `M` matches the topic's registered type in
 /// the service config, if one is configured. No-op when the service or topic
 /// is not configured (CAL-005208).
-fn validate_topic_type<M: CalMessage>(
+pub(crate) fn validate_topic_type<M: CalMessage>(
     config: &crate::calconfig::CalConfig,
     service_id: &str,
     topic: &str,
@@ -60,7 +60,7 @@ fn validate_topic_type<M: CalMessage>(
 ///
 /// `writing` — `true` for publish/create_writer, `false` for subscribe/create_reader.
 /// No-op when the service or topic is not configured (direction defaults to `Both`).
-fn validate_topic_direction(
+pub(crate) fn validate_topic_direction(
     config: &CalConfig,
     service_id: &str,
     topic: &str,
@@ -85,7 +85,11 @@ fn validate_topic_direction(
 
 /// Returns the remapped CAL topic name for `topic` if the service config defines
 /// a mapping (CAL-005209), otherwise returns `topic` unchanged.
-fn resolve_topic<'a>(config: &'a CalConfig, service_id: &str, topic: &'a str) -> &'a str {
+pub(crate) fn resolve_topic<'a>(
+    config: &'a CalConfig,
+    service_id: &str,
+    topic: &'a str,
+) -> &'a str {
     config
         .get_service(service_id)
         .and_then(|s| s.topic.iter().find(|t| t.id == topic))
@@ -97,7 +101,7 @@ fn resolve_topic<'a>(config: &'a CalConfig, service_id: &str, topic: &'a str) ->
 ///
 /// For `Option` fields the caller's `Some` wins; the config fills `None`.
 /// For `reliability` the config fills in only when the caller left the default (`BestEffort`).
-fn apply_config_qos(
+pub(crate) fn apply_config_qos(
     config: &CalConfig,
     service_id: &str,
     topic: &str,
