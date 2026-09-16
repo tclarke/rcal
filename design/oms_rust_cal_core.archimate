@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <archimate:model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:archimate="http://www.archimatetool.com/archimate" name="OMS Rust CAL Core Interfaces" id="m-oms-rust-cal-001" version="5.0.0">
   <folder name="Strategy" id="id-fb479a9b615e4ac8bd2e55cbf723ef92" type="strategy"/>
   <folder name="Business" id="id-60eb801611b14da89d6346eb18c91146" type="business"/>
@@ -53,7 +53,7 @@
         <documentation>Trait implemented by CAL Clients to receive ASB connection status change notifications via callback. Method: on_status_change(status: AsbStatus). Called immediately upon registration (CAL-016366), then on every subsequent state change.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationInterface" name="AbstractServiceBus" id="e-asb">
-        <documentation>Pure transport-layer interface (object-safe). Covers identity (service_identifier, asb_identifier, UUID retrieval — CAL-005203), connection status polling and callback (CAL-016366), and lifecycle (close()). Has no knowledge of message types. CAL-layer concerns (message creation, writers, readers) are in AbstractCal. CERTs: CAL-005201, CAL-005202, CAL-005203, CAL-016366.</documentation>
+        <documentation>Pure transport-layer interface (object-safe). Covers identity (service_identifier, asb_identifier, UUID retrieval â€” CAL-005203), connection status polling and callback (CAL-016366), and lifecycle (close()). Has no knowledge of message types. CAL-layer concerns (message creation, writers, readers) are in AbstractCal. CERTs: CAL-005201, CAL-005202, CAL-005203, CAL-016366.</documentation>
       </element>
     </folder>
     <folder name="CAL Layer" id="f-cal">
@@ -61,7 +61,7 @@
         <documentation>Configuration parameters for initialising a CAL instance. Fields: service_identifier (String, CAL-005201), asb_identifier (String, CAL-005202), network_config_path (PathBuf, Section 4.7). CERTs: CAL-005201, CAL-005202.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationInterface" name="AbstractCal" id="e-abstractcal">
-        <documentation>CAL application-layer interface. Supertrait of AbstractServiceBus — every AbstractCal IS-A AbstractServiceBus. Adds message_header_defaults() which sources system/service config for pre-populating MessageHeader and SecurityInformation fields. Applications obtain an instance via get_cal() (CAL-005201, CAL-005202). CERTs: CAL-005201, CAL-005202, CAL-005203.</documentation>
+        <documentation>CAL application-layer interface. Supertrait of AbstractServiceBus â€” every AbstractCal IS-A AbstractServiceBus. Adds message_header_defaults() which sources system/service config for pre-populating MessageHeader and SecurityInformation fields. Applications obtain an instance via get_cal() (CAL-005201, CAL-005202). CERTs: CAL-005201, CAL-005202, CAL-005203.</documentation>
       </element>
       <element xsi:type="archimate:DataObject" name="MessageHeaderDefaults" id="e-msgheaderdefaults">
         <documentation>Struct carrying default values for MessageHeader and SecurityInformation fields, sourced from CAL configuration. Fields: system_id (UUID), service_id (Option(UUID)), mission_id (Option(UUID)), schema_version (String), mode (MessageModeEnum), classification (ClassificationEnum), owner_producer (Vec(OwnerProducerChoiceType_)).</documentation>
@@ -70,13 +70,13 @@
         <documentation>Non-object-safe extension trait of AbstractCal providing generic factory methods for typed Writers and Readers. Bounded by M: CalMessage + Serialize + DeserializeOwned at the impl site. Methods: create_writer(topic: &amp;str, qos: TopicQos) returning CalResult(Box(dyn AbstractWriter(M))), create_reader(topic: &amp;str, qos: TopicQos) returning CalResult(Box(dyn AbstractReader(M))). CERTs: CAL-005364, CAL-005374.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationInterface" name="AbstractWriter(M)" id="e-writer">
-        <documentation>Trait for a CAL Writer associated with exactly one Client Topic (CAL-005368). M is a CalMessage type. Methods: topic() returning &amp;str, write(message: &amp;M) returning CalResult(()) — errors on topic unavailable (CAL-005369) or resources unavailable (CAL-016043), close() consuming Box(Self). Accepts TopicQos at creation (CAL-005210). CERTs: CAL-005364, CAL-005368, CAL-005369, CAL-016043.</documentation>
+        <documentation>Trait for a CAL Writer associated with exactly one Client Topic (CAL-005368). M is a CalMessage type. Methods: topic() returning &amp;str, write(message: &amp;M) returning CalResult(()) â€” errors on topic unavailable (CAL-005369) or resources unavailable (CAL-016043), close() consuming Box(Self). Accepts TopicQos at creation (CAL-005210). CERTs: CAL-005364, CAL-005368, CAL-005369, CAL-016043.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationInterface" name="AbstractReader(M)" id="e-reader">
         <documentation>Trait for a CAL Reader associated with exactly one Client Topic (CAL-005378). M is a CalMessage type. Callback interface (CAL-005379): add_listener, remove_listener. Polling interface (CAL-005380): read(timeout) blocking (CAL-016049), read_no_wait() non-blocking. read() returns OperationNotPermitted when listeners are registered (CAL-016050). Messages removed from buffer on delivery (CAL-016052) or after listener dispatch (CAL-016045). Topic connection established at creation (CAL-005394); buffering begins per QoS (CAL-016044). CERTs: CAL-005374, CAL-005378, CAL-005379, CAL-005380, CAL-005391, CAL-005392, CAL-005394, CAL-016044, CAL-016045, CAL-016049, CAL-016050, CAL-016052.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationInterface" name="MessageListener(M)" id="e-msglistener">
-        <documentation>Callback trait registered with AbstractReader to receive incoming CAL Messages (CAL-005391). Method: on_message(msg: &amp;Arc(M)) — called once per received message with a shared reference (CAL-005392). The reference remains valid for the duration of the call (CAL-016046). CERTs: CAL-005391, CAL-005392, CAL-016046.</documentation>
+        <documentation>Callback trait registered with AbstractReader to receive incoming CAL Messages (CAL-005391). Method: on_message(msg: &amp;Arc(M)) â€” called once per received message with a shared reference (CAL-005392). The reference remains valid for the duration of the call (CAL-016046). CERTs: CAL-005391, CAL-005392, CAL-016046.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationFunction" name="CalFactory" id="e-calfactory">
         <documentation>Platform entry-point function get_cal() for obtaining a fully initialised AbstractCal instance. Caches instances per (service_identifier, asb_identifier) key pair. Returns Arc(Mutex(dyn AbstractCal)). CERTs: CAL-005201, CAL-005202.</documentation>
@@ -87,10 +87,10 @@
         <documentation>QoS configuration aggregate accepted by create_writer and create_reader (CAL-005210). Contains four independent axes: MessageBuffer, Expiration, Reliability, TimeBasedFilter. Default: no buffer limit, no expiration, best-effort, no filter. CERT: CAL-005210.</documentation>
       </element>
       <element xsi:type="archimate:DataObject" name="MessageBuffer" id="e-msgbuffer">
-        <documentation>Limits buffered message count. Writer (CAL-005445): drop oldest when writer buffer full. Reader (CAL-016079): drop oldest when reader buffer full. Field: max_count: Option(usize) — None means unlimited. CERTs: CAL-005444, CAL-005445, CAL-016079.</documentation>
+        <documentation>Limits buffered message count. Writer (CAL-005445): drop oldest when writer buffer full. Reader (CAL-016079): drop oldest when reader buffer full. Field: max_count: Option(usize) â€” None means unlimited. CERTs: CAL-005444, CAL-005445, CAL-016079.</documentation>
       </element>
       <element xsi:type="archimate:DataObject" name="Expiration" id="e-expiration">
-        <documentation>Time-to-live for Reader buffer messages. Expired messages are dropped before delivery (CAL-005437). Field: ttl: Option(Duration) — None means no expiration. CERT: CAL-005437.</documentation>
+        <documentation>Time-to-live for Reader buffer messages. Expired messages are dropped before delivery (CAL-005437). Field: ttl: Option(Duration) â€” None means no expiration. CERT: CAL-005437.</documentation>
       </element>
       <element xsi:type="archimate:DataObject" name="Reliability" id="e-reliability">
         <documentation>Delivery guarantee level. BestEffort: no retransmission. Reliable: resend undelivered messages while available (CAL-005434), preserving order (CAL-016076). CERTs: CAL-005434, CAL-016076.</documentation>
@@ -101,10 +101,10 @@
     </folder>
     <folder name="Externalizer" id="f-ext">
       <element xsi:type="archimate:ApplicationInterface" name="Externalizer(M)" id="e-externalizer">
-        <documentation>Abstract serialization/deserialization interface. Generic over M: CalMessage. Object-safe per concrete M — dyn Externalizer(M) is valid. I/O methods: read_from_reader(&amp;mut dyn io::Read), read_from_str(&amp;str), read_from_bytes(&amp;[u8]), write_to_writer(&amp;M, &amp;mut dyn io::Write), write_to_string(&amp;M), write_to_bytes(&amp;M). Identity methods: get_cal_api_version, get_encoding, get_schema_version, get_vendor_version, get_vendor. Capability methods: message_read_only, message_write_only, supports_object_read, supports_object_write. Rust equivalent of uci::base::Externalizer in OMSC-SPC-008 §9.13. CERTs: CXX-012071, CXX-012099, CXX-012115, CXX-012131, CXX-012146, CXX-012161, CXX-012176, CXX-012238, CXX-012252, CXX-012266, CXX-012280, CXX-012294, CXX-012688, CXX-012689, CXX-012690, CXX-012691.</documentation>
+        <documentation>Abstract serialization/deserialization interface. Generic over M: CalMessage. Object-safe per concrete M â€” dyn Externalizer(M) is valid. I/O methods: read_from_reader(&amp;mut dyn io::Read), read_from_str(&amp;str), read_from_bytes(&amp;[u8]), write_to_writer(&amp;M, &amp;mut dyn io::Write), write_to_string(&amp;M), write_to_bytes(&amp;M). Identity methods: get_cal_api_version, get_encoding, get_schema_version, get_vendor_version, get_vendor. Capability methods: message_read_only, message_write_only, supports_object_read, supports_object_write. Rust equivalent of uci::base::Externalizer in OMSC-SPC-008 Â§9.13. CERTs: CXX-012071, CXX-012099, CXX-012115, CXX-012131, CXX-012146, CXX-012161, CXX-012176, CXX-012238, CXX-012252, CXX-012266, CXX-012280, CXX-012294, CXX-012688, CXX-012689, CXX-012690, CXX-012691.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationInterface" name="ExternalizerLoader(M)" id="e-extloader">
-        <documentation>Factory trait for obtaining Externalizer instances by encoding string. Generic over M: CalMessage. Method: get_externalizer(encoding: &amp;str, schema_version: &amp;str, vendor_version: &amp;str) returning CalResult(Box(dyn Externalizer(M))). destroy_externalizer is a no-op in Rust (Box drop). Rust equivalent of uci::base::ExternalizerLoader in OMSC-SPC-008 §9.14. CERTs: CXX-012338, CXX-012367, CXX-012381.</documentation>
+        <documentation>Factory trait for obtaining Externalizer instances by encoding string. Generic over M: CalMessage. Method: get_externalizer(encoding: &amp;str, schema_version: &amp;str, vendor_version: &amp;str) returning CalResult(Box(dyn Externalizer(M))). destroy_externalizer is a no-op in Rust (Box drop). Rust equivalent of uci::base::ExternalizerLoader in OMSC-SPC-008 Â§9.14. CERTs: CXX-012338, CXX-012367, CXX-012381.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationComponent" name="XmlExternalizer" id="e-xmlext">
         <documentation>Concrete Externalizer using quick_xml for serialization. Blanket impl over M: CalMessage + Serialize + DeserializeOwned. Stores format: SerializationFormat and root: String (XML root element name, typically the topic name). Implements all Externalizer(M) methods. get_encoding() returns "xml". Moved from private functions in zmq.rs. Lives in rcal::externalizer module.</documentation>
@@ -118,13 +118,27 @@
         <documentation>omq-tokio RADIO/DISH-backed concrete implementation of AbstractServiceBus and AbstractServiceBusExt. Owns a RADIO socket via a background tokio task; ZmqWriters enqueue through a channel. Each ZmqReader owns an independent DISH socket in its own background task. Transport URI from CalConfig [[transport]]. For multi-process topologies, peer RADIO URIs are registered via add_receive_peer(); readers connect DISH to all peers. RADIO binds for TCP/inproc; RADIO connects for UDP (DISH binds for UDP). Creates XmlExternalizer (from transport SerializationFormat config) and passes it to ZmqWriter/ZmqReader.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationComponent" name="ZmqWriter(M)" id="e-zmqwriter">
-        <documentation>Concrete AbstractWriter for the ZMQ transport. Delegates serialization to Arc(dyn Externalizer(M)) (replacing hardcoded SerializationFormat). Assembles a two-part RADIO/DISH message [group=topic, payload=serialized bytes], and sends via the shared ZmqAsb write channel. Close is a no-op — channel is shared with ZmqAsb. CERTs realized: CAL-005368, CAL-005369, CAL-016043.</documentation>
+        <documentation>Concrete AbstractWriter for the ZMQ transport. Delegates serialization to Arc(dyn Externalizer(M)) (replacing hardcoded SerializationFormat). Assembles a two-part RADIO/DISH message [group=topic, payload=serialized bytes], and sends via the shared ZmqAsb write channel. Close is a no-op â€” channel is shared with ZmqAsb. CERTs realized: CAL-005368, CAL-005369, CAL-016043.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationComponent" name="ZmqReader(M)" id="e-zmqreader">
         <documentation>Concrete AbstractReader for the ZMQ transport. Delegates deserialization to Arc(dyn Externalizer(M)) (replacing hardcoded SerializationFormat). Owns a DISH socket in a background tokio task that connects to registered peer RADIO URIs and joins the topic group. Dispatches to registered MessageListeners (callback mode) or buffers in a std::sync::mpsc channel (polling mode). Callback and polling modes are mutually exclusive (CAL-016050). Close aborts the background task. CERTs realized: CAL-005378, CAL-005379, CAL-005380, CAL-005391, CAL-005392, CAL-005394, CAL-016044, CAL-016045, CAL-016049, CAL-016050, CAL-016052.</documentation>
       </element>
       <element xsi:type="archimate:DataObject" name="SerializationFormat" id="e-serformat">
         <documentation>Enum controlling XML serialization style. Variants: Xml (compact, no whitespace), PrettyXml (indented, human-readable). Configured per transport via the 'format' key in [[transport]] TOML. Default: Xml. Now stored in XmlExternalizer rather than directly in ZmqWriter/ZmqReader.</documentation>
+      </element>
+    </folder>
+    <folder name="DDS Implementation" id="f-dds">
+      <element xsi:type="archimate:ApplicationComponent" name="DdsAsb" id="e-ddsasb">
+        <documentation>dust_dds-backed concrete implementation of AbstractServiceBus and AbstractCal. Uses DDS DomainParticipant for peer discovery (SPDP/SPDP multicast). Domain ID sourced from Transport.uri (parsed as u32, default 0). Carries all UCI message payloads as opaque bytes (DdsBytePayload) serialized via the existing Externalizer chain; DDS topic name acts as the routing discriminator. Supports Reliability::Reliable (DDS RELIABLE QoS) unlike ZmqAsb. QoS mapping: Reliable/BestEffort -> ReliabilityQosPolicy; time_based_filter -> TimeBasedFilterQosPolicy; expiration -> LifespanQosPolicy; reader_buffer/writer_buffer -> HistoryQosPolicy (KEEP_LAST). Feature gate: cargo feature 'dds'. CERTs realized: CAL-005201, CAL-005202, CAL-005203, CAL-005434 (Reliable supported), CAL-016076, CAL-016366.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationComponent" name="DdsWriter(M)" id="e-ddswriter">
+        <documentation>Concrete AbstractWriter for the DDS transport. Serializes M via Arc(dyn Externalizer) to bytes, wraps in DdsBytePayload, and writes via dust_dds AsyncDataWriter on the topic's DDS Topic. Applies HistoryQosPolicy (KEEP_LAST) for writer_buffer, LifespanQosPolicy for expiration. CERTs realized: CAL-005368, CAL-005369, CAL-016043, CAL-005434 (Reliable), CAL-005437 (via DDS Lifespan QoS), CAL-005444, CAL-005445 (via DDS History QoS).</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationComponent" name="DdsReader(M)" id="e-ddsreader">
+        <documentation>Concrete AbstractReader for the DDS transport. Owns a dust_dds AsyncDataReader in a background tokio task. Receives DdsBytePayload, deserializes bytes via Arc(dyn Externalizer) to M. Callback/polling modes mutually exclusive (CAL-016050). Poll mode uses same Arc(Mutex(VecDeque), Condvar) pattern as ZmqReader. Applies TimeBasedFilterQosPolicy via DDS and HistoryQosPolicy (KEEP_LAST) for reader_buffer. CERTs realized: CAL-005378, CAL-005379, CAL-005380, CAL-005391, CAL-005392, CAL-005394, CAL-016044, CAL-016045, CAL-016049, CAL-016050, CAL-016052, CAL-005431 (via DDS TimeBasedFilter QoS), CAL-015746, CAL-016079 (via DDS History QoS).</documentation>
+      </element>
+      <element xsi:type="archimate:SystemSoftware" name="dust_dds" id="e-dustdds">
+        <documentation>Pure-Rust DDS (Data Distribution Service) middleware crate. Provides AsyncDomainParticipant, AsyncDataWriter, AsyncDataReader with RTPS wire protocol. Tokio-compatible async API. Supports RELIABLE and BEST_EFFORT QoS, TimeBasedFilter, Lifespan, History policies. Peer discovery via SPDP multicast (UDP). Cargo optional dependency, activated by feature 'dds'.</documentation>
       </element>
     </folder>
     <folder name="Configuration" id="f-config">
@@ -134,7 +148,7 @@
     </folder>
     <folder name="Service Layer" id="f-service">
       <element xsi:type="archimate:ApplicationInterface" name="AbstractService" id="e-abstractservice">
-        <documentation>High-level service interface above AbstractServiceBus (rcal::service). Manages service identity (system_id, service_id, subsystem_ids), lifecycle state (activate, deactivate, reset), and provides convenience passthroughs for typed message creation, readers (create_reader with callback), and writers (create_writer). Lives in rcal::service module. Ref: OMSC-SPC-008 §9 AbstractService.</documentation>
+        <documentation>High-level service interface above AbstractServiceBus (rcal::service). Manages service identity (system_id, service_id, subsystem_ids), lifecycle state (activate, deactivate, reset), and provides convenience passthroughs for typed message creation, readers (create_reader with callback), and writers (create_writer). Lives in rcal::service module. Ref: OMSC-SPC-008 Â§9 AbstractService.</documentation>
       </element>
       <element xsi:type="archimate:ApplicationComponent" name="AbstractServiceImpl(A)" id="e-abstractserviceimpl">
         <documentation>Generic concrete implementation of AbstractService, parameterized over A: AbstractCal. Holds the ASB by value, owns a Vec of boxed readers for lifetime management, and enforces single-activation semantics via a monitor Mutex. create_reader() wraps closures in CallbackListener to adapt F: Fn(&amp;Arc&lt;M&gt;, &amp;str) to the MessageListener trait. Lives in rcal::service module.</documentation>
@@ -243,6 +257,19 @@
     <element xsi:type="archimate:AssociationRelationship" id="r-zmqwriter-ext" source="e-zmqwriter" target="e-externalizer"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-zmqreader-ext" source="e-zmqreader" target="e-externalizer"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-zmqasb-xmlextloader" source="e-zmqasb" target="e-xmlextloader"/>
+    <!-- DDS implementation -->
+    <element xsi:type="archimate:RealizationRelationship" id="r-ddsasb-real-asb" source="e-ddsasb" target="e-asb"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-ddsasb-real-cal" source="e-ddsasb" target="e-abstractcal"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-ddsasb-real-asbext" source="e-ddsasb" target="e-asbext"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-ddswriter-real" source="e-ddswriter" target="e-writer"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-ddsreader-real" source="e-ddsreader" target="e-reader"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddsasb-writer" source="e-ddsasb" target="e-ddswriter"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddsasb-reader" source="e-ddsasb" target="e-ddsreader"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddswriter-ext" source="e-ddswriter" target="e-externalizer"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddsreader-ext" source="e-ddsreader" target="e-externalizer"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddsasb-xmlextloader" source="e-ddsasb" target="e-xmlextloader"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddsasb-dustdds" source="e-ddsasb" target="e-dustdds"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-calconfig-ddsasb" source="e-calconfig" target="e-ddsasb"/>
     <!-- CERT realizations: AbstractServiceBusExt -->
     <element xsi:type="archimate:RealizationRelationship" id="r-asbext-c005364" source="e-asbext" target="req-cal-005364"/>
     <element xsi:type="archimate:RealizationRelationship" id="r-asbext-c005374" source="e-asbext" target="req-cal-005374"/>
