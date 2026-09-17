@@ -127,6 +127,20 @@
         <documentation>Enum controlling XML serialization style. Variants: Xml (compact, no whitespace), PrettyXml (indented, human-readable). Configured per transport via the 'format' key in [[transport]] TOML. Default: Xml. Now stored in XmlExternalizer rather than directly in ZmqWriter/ZmqReader.</documentation>
       </element>
     </folder>
+    <folder name="DDS Implementation" id="f-dds">
+      <element xsi:type="archimate:ApplicationComponent" name="DdsAsb" id="e-ddsasb">
+        <documentation>dust_dds-backed concrete implementation of AbstractServiceBus and AbstractCal. Uses DDS DomainParticipant for peer discovery (SPDP/SPDP multicast). Domain ID sourced from Transport.uri (parsed as u32, default 0). Carries all UCI message payloads as opaque bytes (DdsBytePayload) serialized via the existing Externalizer chain; DDS topic name acts as the routing discriminator. Supports Reliability::Reliable (DDS RELIABLE QoS) unlike ZmqAsb. QoS mapping: Reliable/BestEffort -> ReliabilityQosPolicy; time_based_filter -> TimeBasedFilterQosPolicy; expiration -> LifespanQosPolicy; reader_buffer/writer_buffer -> HistoryQosPolicy (KEEP_LAST). Feature gate: cargo feature 'dds'. CERTs realized: CAL-005201, CAL-005202, CAL-005203, CAL-005434 (Reliable supported), CAL-016076, CAL-016366.</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationComponent" name="DdsWriter(M)" id="e-ddswriter">
+        <documentation>Concrete AbstractWriter for the DDS transport. Serializes M via Arc(dyn Externalizer) to bytes, wraps in DdsBytePayload, and writes via dust_dds AsyncDataWriter on the topic's DDS Topic. Applies HistoryQosPolicy (KEEP_LAST) for writer_buffer, LifespanQosPolicy for expiration. CERTs realized: CAL-005368, CAL-005369, CAL-016043, CAL-005434 (Reliable), CAL-005437 (via DDS Lifespan QoS), CAL-005444, CAL-005445 (via DDS History QoS).</documentation>
+      </element>
+      <element xsi:type="archimate:ApplicationComponent" name="DdsReader(M)" id="e-ddsreader">
+        <documentation>Concrete AbstractReader for the DDS transport. Owns a dust_dds AsyncDataReader in a background tokio task. Receives DdsBytePayload, deserializes bytes via Arc(dyn Externalizer) to M. Callback/polling modes mutually exclusive (CAL-016050). Poll mode uses same Arc(Mutex(VecDeque), Condvar) pattern as ZmqReader. Applies TimeBasedFilterQosPolicy via DDS and HistoryQosPolicy (KEEP_LAST) for reader_buffer. CERTs realized: CAL-005378, CAL-005379, CAL-005380, CAL-005391, CAL-005392, CAL-005394, CAL-016044, CAL-016045, CAL-016049, CAL-016050, CAL-016052, CAL-005431 (via DDS TimeBasedFilter QoS), CAL-015746, CAL-016079 (via DDS History QoS).</documentation>
+      </element>
+      <element xsi:type="archimate:SystemSoftware" name="dust_dds" id="e-dustdds">
+        <documentation>Pure-Rust DDS (Data Distribution Service) middleware crate. Provides AsyncDomainParticipant, AsyncDataWriter, AsyncDataReader with RTPS wire protocol. Tokio-compatible async API. Supports RELIABLE and BEST_EFFORT QoS, TimeBasedFilter, Lifespan, History policies. Peer discovery via SPDP multicast (UDP). Cargo optional dependency, activated by feature 'dds'.</documentation>
+      </element>
+    </folder>
     <folder name="Configuration" id="f-config">
       <element xsi:type="archimate:DataObject" name="CalConfig" id="e-calconfig">
         <documentation>Top-level TOML configuration struct (rcal::calconfig). Deserialized at startup. Sections: System (OMS system metadata), UUIDFactory (UUID generation strategy), Vec of Transport (network transport parameters including URI, format, topic whitelist), Vec of Service (per-service transport binding), HashMap of ExternalizerConfig (named serialization overrides). Consumed by get_cal() and ASB implementations. Lives in rcal::calconfig module.</documentation>
@@ -243,6 +257,19 @@
     <element xsi:type="archimate:AssociationRelationship" id="r-zmqwriter-ext" source="e-zmqwriter" target="e-externalizer"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-zmqreader-ext" source="e-zmqreader" target="e-externalizer"/>
     <element xsi:type="archimate:AssociationRelationship" id="r-zmqasb-xmlextloader" source="e-zmqasb" target="e-xmlextloader"/>
+    <!-- DDS implementation -->
+    <element xsi:type="archimate:RealizationRelationship" id="r-ddsasb-real-asb" source="e-ddsasb" target="e-asb"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-ddsasb-real-cal" source="e-ddsasb" target="e-abstractcal"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-ddsasb-real-asbext" source="e-ddsasb" target="e-asbext"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-ddswriter-real" source="e-ddswriter" target="e-writer"/>
+    <element xsi:type="archimate:RealizationRelationship" id="r-ddsreader-real" source="e-ddsreader" target="e-reader"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddsasb-writer" source="e-ddsasb" target="e-ddswriter"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddsasb-reader" source="e-ddsasb" target="e-ddsreader"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddswriter-ext" source="e-ddswriter" target="e-externalizer"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddsreader-ext" source="e-ddsreader" target="e-externalizer"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddsasb-xmlextloader" source="e-ddsasb" target="e-xmlextloader"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-ddsasb-dustdds" source="e-ddsasb" target="e-dustdds"/>
+    <element xsi:type="archimate:AssociationRelationship" id="r-calconfig-ddsasb" source="e-calconfig" target="e-ddsasb"/>
     <!-- CERT realizations: AbstractServiceBusExt -->
     <element xsi:type="archimate:RealizationRelationship" id="r-asbext-c005364" source="e-asbext" target="req-cal-005364"/>
     <element xsi:type="archimate:RealizationRelationship" id="r-asbext-c005374" source="e-asbext" target="req-cal-005374"/>
