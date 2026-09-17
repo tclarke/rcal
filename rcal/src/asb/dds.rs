@@ -86,7 +86,7 @@ pub struct DdsAsb {
 impl DdsAsb {
     /// Constructs a new `DdsAsb` in the `Normal` state.
     ///
-    /// `tconfig.uri` is parsed as a `u32` DDS domain ID (e.g. `"0"`).
+    /// `tconfig.uri` is parsed as an `i32` DDS domain ID (e.g. `"0"`).
     /// Defaults to domain 0 on parse failure.
     pub async fn new(
         service_name: impl Into<String>,
@@ -137,7 +137,6 @@ impl DdsAsb {
             status: AsbStatus::new(AsbConnectionState::Normal, "DDS ASB connected"),
             logger,
             config,
-            domain_id,
             externalizer_name: tconfig
                 .externalizer
                 .clone()
@@ -375,12 +374,9 @@ impl AbstractCal for DdsAsb {
             Reliability::Reliable => ReliabilityQosPolicyKind::Reliable,
             Reliability::BestEffort => ReliabilityQosPolicyKind::BestEffort,
         };
-        let (writer_history, writer_max) = match qos.writer_buffer {
-            Some(ref b) => (
-                HistoryQosPolicyKind::KeepLast(b.max_messages as u32),
-                Some(b.max_messages),
-            ),
-            None => (HistoryQosPolicyKind::KeepAll, None),
+        let writer_history = match qos.writer_buffer {
+            Some(ref b) => HistoryQosPolicyKind::KeepLast(b.max_messages as u32),
+            None => HistoryQosPolicyKind::KeepAll,
         };
         let mut writer_qos = DataWriterQos {
             reliability: ReliabilityQosPolicy {
@@ -447,7 +443,6 @@ impl AbstractCal for DdsAsb {
             .entry(topic_name.clone())
             .or_insert(dds_topic);
 
-        // writer_max extracted above alongside writer_depth
         let (write_tx, mut write_rx) = tokio::sync::mpsc::unbounded_channel::<DdsBytePayload>();
         tokio::spawn(async move {
             while let Some(payload) = write_rx.recv().await {
@@ -463,8 +458,6 @@ impl AbstractCal for DdsAsb {
             logger: self.logger.new(slog::o!("topic" => cal_topic.to_string())),
             externalizer,
             write_tx,
-            writer_buf: None,
-            writer_max,
             _phantom: PhantomData,
         }))
     }
@@ -560,8 +553,6 @@ impl AbstractCal for DdsAsb {
 
         let time_filter = qos.time_based_filter;
         let expiration_dur = qos.expiration.map(|e| e.max_age);
-        // reader_max extracted above alongside reader_depth
-
         let poll_state: PollState<M> = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
         let task_alive = Arc::new(AtomicBool::new(true));
         let listeners: Arc<Mutex<Vec<Arc<dyn MessageListener<M>>>>> =
@@ -685,9 +676,6 @@ pub struct DdsWriter<M: CalMessage> {
     logger: Logger,
     externalizer: Arc<dyn Externalizer>,
     write_tx: tokio::sync::mpsc::UnboundedSender<DdsBytePayload>,
-    /// Optional bounded buffer; when Some, overflow drops oldest (CAL-005445).
-    writer_buf: Option<Arc<Mutex<VecDeque<DdsBytePayload>>>>,
-    writer_max: Option<usize>,
     _phantom: PhantomData<M>,
 }
 
@@ -708,19 +696,9 @@ impl<M: CalMessage + serde::Serialize> AbstractWriter<M> for DdsWriter<M> {
         let bytes = write_to_bytes(self.externalizer.as_ref(), message, &self.topic)?;
         let payload = DdsBytePayload { data: bytes };
 
-        if let Some(buf) = &self.writer_buf {
-            let max = self.writer_max.unwrap();
-            let mut q = buf.lock().unwrap();
-            while q.len() >= max {
-                q.pop_front();
-            }
-            q.push_back(payload);
-            Ok(())
-        } else {
-            self.write_tx
-                .send(payload)
-                .map_err(|_| CalError::new(CalErrorKind::AsbFailed, "DDS write channel closed"))
-        }
+        self.write_tx
+            .send(payload)
+            .map_err(|_| CalError::new(CalErrorKind::AsbFailed, "DDS write channel closed"))
     }
 
     fn close(self: Box<Self>) -> CalResult<()> {
@@ -848,7 +826,6 @@ impl<M: CalMessage + serde::de::DeserializeOwned> AbstractReader<M> for DdsReade
 pub(crate) fn test_config_domain(domain_id: u32) -> Arc<CalConfig> {
     use crate::calconfig;
     use crate::uci::base::UUID;
-    const BASE_UUID: &str = "7fa89e92-9b8a-5861-ad7b-f6f60b41g92c";
     let ns = UUID::parse_str("6ef79d81-8a79-4750-9c6a-e5e50a30f81b").unwrap();
     let sys_uuid = UUID::generate_v3(&ns, domain_id.to_string().as_bytes());
     let toml = format!(
