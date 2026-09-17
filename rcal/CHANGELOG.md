@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [3.0.0] - 2026-09-16
+### Bug Fixes
+
+- Various correctness fixes across adsb_sim and rcal([`1b22457`](https://github.com/tclarke/rcal/commit/1b2245716ae52c1d1f82a3ceb5a231a19f7374e9))
+- **asb_view**: Restore asb_dump topics and fix ZMQ slow-joiner in adsb_sim([`f371ee8`](https://github.com/tclarke/rcal/commit/f371ee8b6686ed1aca6b0098b4d4da8cb28fcad6))
+### Features
+
+- **calconfig**: Add extensions field for service-specific config([`2eb3442`](https://github.com/tclarke/rcal/commit/2eb3442879d2fbad184a5f9a788c92555467e1e2))
+- **externalizer**: Add TomlExternalizer and asb_dump binary([`a26f211`](https://github.com/tclarke/rcal/commit/a26f2118acbf1de571de42937f4941609c98b11d))
+- **asb**: Add peers config for cross-process DISH connections([`cf3a549`](https://github.com/tclarke/rcal/commit/cf3a549085263afffb52f4c4f46aef18ed59cd75))
+- Asb viewer added and some fixes to adsb_sim([`060f034`](https://github.com/tclarke/rcal/commit/060f0341bcf657bbfde0a691c4f99cb8032e4e87))
+- **trace**: Port rcal_trace macro from 86-create-a-cal-bridge([`72616c4`](https://github.com/tclarke/rcal/commit/72616c4981ca8662671a47e186c903ec786857d1))
+- **uci**: Add security_banner() and logfmt timestamp/level improvements([`a00f1af`](https://github.com/tclarke/rcal/commit/a00f1af698536fd8f69a49e373c178d8c3e05366))
+### Refactoring
+
+- **cal**: Remove AbstractCalExt, add Cal concrete struct with generic create_reader/create_writer([`ec2dbca`](https://github.com/tclarke/rcal/commit/ec2dbcafc02625bb625ae89a5be94c452257be88))
+
+
 ## [2.1.2] - 2026-09-02
 ### Bug Fixes
 
