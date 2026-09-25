@@ -361,9 +361,7 @@ impl AbstractCal for DdsAsb {
         topic: &str,
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractWriter<M>>> {
-        use super::zmq::{
-            apply_config_qos, resolve_topic, validate_topic_direction, validate_topic_type,
-        };
+        use super::{apply_config_qos, resolve_topic, validate_topic_direction, validate_topic_type};
 
         validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
         validate_topic_direction(&self.config, &self.service_name, topic, true)?;
@@ -467,9 +465,7 @@ impl AbstractCal for DdsAsb {
         topic: &str,
         qos: TopicQos,
     ) -> CalResult<Box<dyn AbstractReader<M>>> {
-        use super::zmq::{
-            apply_config_qos, resolve_topic, validate_topic_direction, validate_topic_type,
-        };
+        use super::{apply_config_qos, resolve_topic, validate_topic_direction, validate_topic_type};
 
         validate_topic_type::<M>(&self.config, &self.service_name, topic)?;
         validate_topic_direction(&self.config, &self.service_name, topic, false)?;

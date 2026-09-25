@@ -9,12 +9,15 @@ use std::time::{Duration, Instant};
 
 use omq_tokio::{Endpoint, Message, Options, Socket, SocketType};
 
-use super::{AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener};
-use crate::cal::{
-    AbstractCal, AbstractReader, AbstractWriter, Expiration, MessageBuffer, MessageHeaderDefaults,
-    MessageListener, Reliability, TimeBasedFilter, TopicQos,
+use super::{
+    AbstractServiceBus, AsbConnectionState, AsbStatus, AsbStatusListener, apply_config_qos,
+    resolve_topic, validate_topic_direction, validate_topic_type,
 };
-use crate::calconfig::{CalConfig, ReliabilityConfig, TopicDirection, Transport};
+use crate::cal::{
+    AbstractCal, AbstractReader, AbstractWriter, MessageHeaderDefaults, MessageListener,
+    Reliability, TopicQos,
+};
+use crate::calconfig::{CalConfig, Transport};
 use crate::externalizer::{Externalizer, build_externalizer, read_from_bytes, write_to_bytes};
 use crate::uci::{CalError, CalErrorKind, CalImplementationErrorKind, CalMessage, CalResult};
 use serde::Deserialize as _;
@@ -22,125 +25,6 @@ use serde::de::IntoDeserializer;
 
 /// ASB identifier string for the ZeroMQ-compatible transport.
 pub const ZMQ_ASB_ID: &str = "zmq";
-
-/// Validates that message type `M` matches the topic's registered type in
-/// the service config, if one is configured. No-op when the service or topic
-/// is not configured (CAL-005208).
-pub(crate) fn validate_topic_type<M: CalMessage>(
-    config: &crate::calconfig::CalConfig,
-    service_id: &str,
-    topic: &str,
-) -> CalResult<()> {
-    let Some(service) = config.get_service(service_id) else {
-        return Ok(());
-    };
-    let Some(topic_cfg) = service.topic.iter().find(|t| t.id == topic) else {
-        return Ok(());
-    };
-    let Some(registered_type) = &topic_cfg.type_ else {
-        return Ok(());
-    };
-    // Config type= must match QName::display: bare local name for the default UCI
-    // namespace (e.g. "SystemStatusType"), prefix:local for mapped namespaces.
-    if M::message_type_name() != registered_type.as_str() {
-        return Err(CalError::new(
-            CalErrorKind::TopicUnavailable,
-            format!(
-                "Topic '{}' is registered for type '{}' but got '{}' (CAL-005208)",
-                topic,
-                registered_type,
-                M::message_type_name()
-            ),
-        ));
-    }
-    Ok(())
-}
-
-/// Validates that the requested operation direction is permitted by the topic config.
-///
-/// `writing` — `true` for publish/create_writer, `false` for subscribe/create_reader.
-/// No-op when the service or topic is not configured (direction defaults to `Both`).
-pub(crate) fn validate_topic_direction(
-    config: &CalConfig,
-    service_id: &str,
-    topic: &str,
-    writing: bool,
-) -> CalResult<()> {
-    let direction = config
-        .get_service(service_id)
-        .map(|s| s.topic_direction(topic))
-        .unwrap_or_default();
-    match (direction, writing) {
-        (TopicDirection::In, true) => Err(CalError::new(
-            CalErrorKind::OperationNotPermitted,
-            format!("Topic '{topic}' is configured In-only; publish/write not permitted"),
-        )),
-        (TopicDirection::Out, false) => Err(CalError::new(
-            CalErrorKind::OperationNotPermitted,
-            format!("Topic '{topic}' is configured Out-only; subscribe/read not permitted"),
-        )),
-        _ => Ok(()),
-    }
-}
-
-/// Returns the remapped CAL topic name for `topic` if the service config defines
-/// a mapping (CAL-005209), otherwise returns `topic` unchanged.
-pub(crate) fn resolve_topic<'a>(
-    config: &'a CalConfig,
-    service_id: &str,
-    topic: &'a str,
-) -> &'a str {
-    config
-        .get_service(service_id)
-        .and_then(|s| s.topic.iter().find(|t| t.id == topic))
-        .and_then(|t| t.topic.as_deref())
-        .unwrap_or(topic)
-}
-
-/// Merges per-topic QoS config defaults into caller-supplied `qos` (CAL-005210).
-///
-/// For `Option` fields the caller's `Some` wins; the config fills `None`.
-/// For `reliability` the config fills in only when the caller left the default (`BestEffort`).
-pub(crate) fn apply_config_qos(
-    config: &CalConfig,
-    service_id: &str,
-    topic: &str,
-    mut qos: TopicQos,
-) -> TopicQos {
-    let Some(cfg) = config
-        .get_service(service_id)
-        .and_then(|s| s.topic.iter().find(|t| t.id == topic))
-        .and_then(|t| t.qos.as_ref())
-    else {
-        return qos;
-    };
-
-    if qos.reliability == Reliability::default()
-        && let Some(r) = cfg.reliability
-    {
-        qos.reliability = match r {
-            ReliabilityConfig::BestEffort => Reliability::BestEffort,
-            ReliabilityConfig::Reliable => Reliability::Reliable,
-        };
-    }
-    qos.time_based_filter = qos.time_based_filter.or_else(|| {
-        cfg.time_based_filter_ms.map(|ms| TimeBasedFilter {
-            min_separation: Duration::from_millis(ms),
-        })
-    });
-    qos.expiration = qos.expiration.or_else(|| {
-        cfg.expiration_ms.map(|ms| Expiration {
-            max_age: Duration::from_millis(ms),
-        })
-    });
-    qos.writer_buffer = qos
-        .writer_buffer
-        .or_else(|| cfg.writer_buffer.map(|n| MessageBuffer { max_messages: n }));
-    qos.reader_buffer = qos
-        .reader_buffer
-        .or_else(|| cfg.reader_buffer.map(|n| MessageBuffer { max_messages: n }));
-    qos
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 // ZmqAsb
