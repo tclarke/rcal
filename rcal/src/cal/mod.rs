@@ -887,6 +887,7 @@ pub async fn get_cal(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "zmq")]
     use super::*;
     #[cfg(feature = "zmq")]
     use crate::asb::NEXT_TEST_PORT;
