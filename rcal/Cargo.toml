@@ -2,7 +2,7 @@
 members = ["rcal_macros", "xsd-subset", "examples/simple_two_service"]
 
 [workspace.package]
-version = "3.0.0"
+version = "3.0.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tclarke/rcal"
@@ -21,7 +21,7 @@ zmq = ["dep:omq-tokio"]
 dds = ["dep:dust_dds"]
 compression = ["dep:flate2"]
 tui = ["dep:ratatui"]
-default = ["service", "zmq"]
+default = ["service", "dds"]
 
 [dependencies]
 regex = "1"

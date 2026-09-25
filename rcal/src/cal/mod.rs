@@ -887,10 +887,15 @@ pub async fn get_cal(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "zmq")]
     use super::*;
+    #[cfg(feature = "zmq")]
     use crate::asb::NEXT_TEST_PORT;
+    #[cfg(feature = "zmq")]
     use crate::asb::zmq::test_config_on_ports;
+    #[cfg(feature = "zmq")]
     use rcal_macros::init_test_logger;
+    #[cfg(feature = "zmq")]
     use std::sync::atomic::Ordering;
 
     #[cfg(feature = "zmq")]

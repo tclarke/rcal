@@ -117,8 +117,8 @@ async fn main() {
     *(*msg).message_data_mut().system_id_mut() = sysid;
     *(*msg).message_data_mut().system_state_mut() = SystemStateEnum::Operational;
     *(*msg).message_data_mut().source_mut() = SystemSourceEnum::Actual;
-    // Allow DISH socket to connect and complete ZMTP handshake before sending
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Allow DDS discovery to complete before sending.
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     for i in 0..ITERATIONS {
         *msg.message_data_mut().system_state_mut() = if i % 2 == 0 {
