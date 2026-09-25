@@ -12,8 +12,8 @@ level = "info"
 
 [[transport]]
 id = "main-bus"
-type = "zmq"
-uri = "tcp://127.0.0.1:2100"
+type = "dds"
+uri = "0"
 externalizer = "pretty_xml"
 
 [externalizer.pretty_xml]
