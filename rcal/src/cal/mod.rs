@@ -22,6 +22,9 @@ use std::time::Duration;
 #[cfg(feature = "zmq")]
 use crate::asb::zmq::{ZMQ_ASB_ID, ZmqAsb};
 
+#[cfg(feature = "dds")]
+use crate::asb::dds::{DDS_ASB_ID, DdsAsb};
+
 // ════════════════════════════════════════════════════════════════════════════
 // MessageHeaderDefaults
 // ════════════════════════════════════════════════════════════════════════════
@@ -343,6 +346,8 @@ impl<T: AbstractCal> AbstractCalCreateMessage for T {
 enum CalBackend {
     #[cfg(feature = "zmq")]
     Zmq(ZmqAsb),
+    #[cfg(feature = "dds")]
+    Dds(DdsAsb),
 }
 
 /// Concrete CAL handle returned by [`get_cal`].
@@ -391,6 +396,15 @@ impl Cal {
                 z.get_oms_api_version().to_owned(),
                 z.connection_status().clone(),
             ),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => (
+                d.oms_schema_version().to_owned(),
+                d.oms_schema_compiler_version().to_owned(),
+                d.get_system_label().map(str::to_owned),
+                d.get_asb_connection_version().to_owned(),
+                d.get_oms_api_version().to_owned(),
+                d.connection_status().clone(),
+            ),
         };
         Self {
             inner: Arc::new(Mutex::new(backend)),
@@ -421,6 +435,8 @@ impl Cal {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.message_header_defaults(),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.message_header_defaults(),
         }
     }
 
@@ -459,6 +475,8 @@ impl Cal {
         match &mut *self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.create_writer::<M>(topic, qos),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.create_writer::<M>(topic, qos),
         }
     }
 
@@ -471,6 +489,8 @@ impl Cal {
         match &mut *self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.create_reader::<M>(topic, qos),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.create_reader::<M>(topic, qos),
         }
     }
 
@@ -479,6 +499,8 @@ impl Cal {
         match &mut *self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.close(),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.close(),
         }
     }
 
@@ -487,6 +509,8 @@ impl Cal {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.connection_status().clone(),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.connection_status().clone(),
         }
     }
 
@@ -498,6 +522,8 @@ impl Cal {
         match &mut *self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.register_status_listener(listener),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.register_status_listener(listener),
         }
     }
 
@@ -509,6 +535,8 @@ impl Cal {
         match &mut *self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.unregister_status_listener(listener),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.unregister_status_listener(listener),
         }
     }
 
@@ -517,6 +545,8 @@ impl Cal {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.get_system_uuid(),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.get_system_uuid(),
         }
     }
 
@@ -525,6 +555,8 @@ impl Cal {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.get_service_uuid(),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.get_service_uuid(),
         }
     }
 
@@ -533,6 +565,8 @@ impl Cal {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.get_subsystem_uuid(),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.get_subsystem_uuid(),
         }
     }
 
@@ -541,6 +575,8 @@ impl Cal {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.get_component_uuid(name),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.get_component_uuid(name),
         }
     }
 
@@ -549,6 +585,8 @@ impl Cal {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.get_capability_uuid(name),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.get_capability_uuid(name),
         }
     }
 
@@ -557,10 +595,12 @@ impl Cal {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.get_system_label().map(str::to_owned),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.get_system_label().map(str::to_owned),
         }
     }
 
-    /// Registers a remote RADIO URI for multi-process topologies.
+    /// Registers a remote RADIO URI for multi-process topologies (ZMQ only).
     ///
     /// Call before the first `create_reader`; peers added after reader
     /// creation are not picked up by existing readers.
@@ -568,6 +608,11 @@ impl Cal {
         match &mut *self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.add_receive_peer(uri),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(_) => {
+                let _ = uri;
+                // DDS discovery is automatic; no explicit peer registration needed.
+            }
         }
     }
 
@@ -597,30 +642,40 @@ impl AbstractServiceBus for Cal {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.get_system_uuid(),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.get_system_uuid(),
         }
     }
     fn get_service_uuid(&self) -> Option<UUID> {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.get_service_uuid(),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.get_service_uuid(),
         }
     }
     fn get_subsystem_uuid(&self) -> Option<UUID> {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.get_subsystem_uuid(),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.get_subsystem_uuid(),
         }
     }
     fn get_component_uuid(&self, name: &str) -> Option<UUID> {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.get_component_uuid(name),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.get_component_uuid(name),
         }
     }
     fn get_capability_uuid(&self, name: &str) -> Option<UUID> {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.get_capability_uuid(name),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.get_capability_uuid(name),
         }
     }
     fn oms_schema_version(&self) -> &str {
@@ -646,6 +701,8 @@ impl AbstractServiceBus for Cal {
         match &mut *self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.register_status_listener(listener),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.register_status_listener(listener),
         }
     }
     fn unregister_status_listener(
@@ -655,12 +712,16 @@ impl AbstractServiceBus for Cal {
         match &mut *self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.unregister_status_listener(listener),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.unregister_status_listener(listener),
         }
     }
     fn close(&mut self) -> CalResult<()> {
         match &mut *self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.close(),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.close(),
         }
     }
 }
@@ -671,6 +732,8 @@ impl AbstractCal for Cal {
         match &*self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.message_header_defaults(),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.message_header_defaults(),
         }
     }
     fn create_writer<M: CalMessage>(
@@ -681,6 +744,8 @@ impl AbstractCal for Cal {
         match &mut *self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.create_writer::<M>(topic, qos),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.create_writer::<M>(topic, qos),
         }
     }
     fn create_reader<M: CalMessage>(
@@ -691,6 +756,8 @@ impl AbstractCal for Cal {
         match &mut *self.inner.lock().unwrap() {
             #[cfg(feature = "zmq")]
             CalBackend::Zmq(z) => z.create_reader::<M>(topic, qos),
+            #[cfg(feature = "dds")]
+            CalBackend::Dds(d) => d.create_reader::<M>(topic, qos),
         }
     }
 }
@@ -777,6 +844,17 @@ pub async fn get_cal(
         #[cfg(feature = "zmq")]
         ZMQ_ASB_ID => CalBackend::Zmq(
             ZmqAsb::new(
+                key.service_identifier.clone(),
+                key.asb_identifier.clone(),
+                logger.clone(),
+                Arc::clone(&config),
+                transport,
+            )
+            .await?,
+        ),
+        #[cfg(feature = "dds")]
+        DDS_ASB_ID => CalBackend::Dds(
+            DdsAsb::new(
                 key.service_identifier.clone(),
                 key.asb_identifier.clone(),
                 logger.clone(),
