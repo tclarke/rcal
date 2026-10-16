@@ -241,6 +241,11 @@ pub enum ExternalizerConfig {
     },
     /// Cargo-tree style hierarchy display (write-only).
     Pretty,
+    /// EXI (Efficient XML Interchange) binary encoding.
+    ///
+    /// Requires the `exi` feature. Uses schema-less, byte-aligned EXI 1.0.
+    #[cfg(feature = "exi")]
+    Exi,
     /// Byte-level compression chain wrapping an inner externalizer.
     ///
     /// Requires the `compression` feature.

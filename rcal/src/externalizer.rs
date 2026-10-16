@@ -278,6 +278,9 @@ fn serialize_xml<M: serde::Serialize>(
 pub const XML_EXTERNALIZER_CAL_API_VERSION: &str = "2.5";
 /// Encoding identifier for the XML externalizer.
 pub const XML_EXTERNALIZER_ENCODING: &str = "xml";
+/// Encoding identifier for the EXI externalizer.
+#[cfg(feature = "exi")]
+pub const EXI_EXTERNALIZER_ENCODING: &str = "exi";
 /// Encoding identifier for the pretty-tree externalizer.
 pub const PRETTY_EXTERNALIZER_ENCODING: &str = "pretty";
 /// Vendor name for this implementation.
@@ -486,6 +489,66 @@ pub fn new_gzip_externalizer(next: Box<dyn Externalizer>) -> CompressionExternal
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// ExiExternalizer (feature = "exi")
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Byte-transform [`Externalizer`] that encodes/decodes using W3C EXI 1.0.
+///
+/// Requires the `exi` feature. Construct with [`new_exi_externalizer`] or via
+/// [`ExternalizerBuilder`]:
+/// ```text
+/// builder("exi").kind("exi").build()
+/// ```
+/// The `next` field holds the inner XML externalizer. Encoding proceeds as:
+/// XML bytes (from the XML externalizer chain) → EXI binary.
+///
+/// Uses schema-less, byte-aligned EXI (§8.5.4 of W3C EXI 1.0 Second Edition).
+#[cfg(feature = "exi")]
+pub struct ExiExternalizer {
+    /// Optional next externalizer in the chain (typically [`XmlExternalizer`]).
+    pub next: Option<Box<dyn Externalizer>>,
+}
+
+#[cfg(feature = "exi")]
+impl ExiExternalizer {
+    /// Construct with `next` as the inner externalizer.
+    pub fn new(next: Option<Box<dyn Externalizer>>) -> Self {
+        Self { next }
+    }
+}
+
+#[cfg(feature = "exi")]
+impl Externalizer for ExiExternalizer {
+    fn encode(&self, bytes: &[u8]) -> CalResult<Vec<u8>> {
+        crate::exi::encode(bytes)
+    }
+
+    fn decode(&self, bytes: &[u8]) -> CalResult<Vec<u8>> {
+        crate::exi::decode(bytes)
+    }
+
+    fn next(&self) -> Option<&dyn Externalizer> {
+        self.next.as_deref()
+    }
+
+    fn get_cal_api_version(&self) -> &str {
+        XML_EXTERNALIZER_CAL_API_VERSION
+    }
+
+    fn get_encoding(&self) -> &str {
+        EXI_EXTERNALIZER_ENCODING
+    }
+}
+
+/// Wrap `next` in an [`ExiExternalizer`].
+///
+/// Requires the `exi` feature. `next` is typically an [`XmlExternalizer`].
+#[cfg(feature = "exi")]
+pub fn new_exi_externalizer(next: Box<dyn Externalizer>) -> ExiExternalizer {
+    ExiExternalizer::new(Some(next))
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // ExternalizerBuilder
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -567,6 +630,14 @@ impl ExternalizerBuilder {
             None => match effective_kind.as_str() {
                 "xml" => Ok(Box::new(xml_from_options(&options))),
                 "pretty" => Ok(Box::new(PrettyExternalizer { next: None })),
+                #[cfg(feature = "exi")]
+                "exi" => {
+                    let xml = Box::new(XmlExternalizer {
+                        format: SerializationFormat::Xml,
+                        next: None,
+                    });
+                    Ok(Box::new(ExiExternalizer::new(Some(xml))))
+                }
                 other => Err(CalError::new(
                     CalErrorKind::SerializationError,
                     format!("unknown leaf externalizer type: '{other}'"),
@@ -580,6 +651,11 @@ impl ExternalizerBuilder {
                         &options,
                         Some(inner_ext),
                     )));
+                }
+                #[cfg(feature = "exi")]
+                if effective_kind == "exi" {
+                    let inner_ext = inner_b.build()?;
+                    return Ok(Box::new(ExiExternalizer::new(Some(inner_ext))));
                 }
                 drop(inner_b);
                 Err(CalError::new(
@@ -633,6 +709,14 @@ fn build_from_config(
             Ok(Box::new(XmlExternalizer { format, next: None }))
         }
         ExternalizerConfig::Pretty => Ok(Box::new(PrettyExternalizer { next: None })),
+        #[cfg(feature = "exi")]
+        ExternalizerConfig::Exi => {
+            let xml = Box::new(XmlExternalizer {
+                format: SerializationFormat::Xml,
+                next: None,
+            });
+            Ok(Box::new(ExiExternalizer::new(Some(xml))))
+        }
         #[cfg(feature = "compression")]
         ExternalizerConfig::Compression {
             inner,
@@ -669,6 +753,14 @@ fn build_builtin(name: &str) -> CalResult<Box<dyn Externalizer>> {
                 level: flate2::Compression::default(),
                 next: Some(xml),
             }))
+        }
+        #[cfg(feature = "exi")]
+        "exi" => {
+            let xml = Box::new(XmlExternalizer {
+                format: SerializationFormat::Xml,
+                next: None,
+            });
+            Ok(Box::new(ExiExternalizer::new(Some(xml))))
         }
         other => Err(CalError::new(
             CalErrorKind::SerializationError,
@@ -944,5 +1036,41 @@ mod tests {
         let decoded: TestMsg = read_from_bytes(ext.as_ref(), &compressed).unwrap();
         assert_eq!(decoded, msg);
         assert_eq!(ext.get_encoding(), "gzip");
+    }
+
+    #[cfg(feature = "exi")]
+    #[test]
+    fn exi_round_trip_bytes() {
+        let xml = Box::new(XmlExternalizer::new(SerializationFormat::Xml));
+        let ext = ExiExternalizer::new(Some(xml));
+        let msg = TestMsg { value: 77 };
+        let encoded = write_to_bytes(&ext, &msg, ROOT).unwrap();
+        let decoded: TestMsg = read_from_bytes(&ext, &encoded).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    #[cfg(feature = "exi")]
+    #[test]
+    fn exi_externalizer_identity() {
+        let xml = Box::new(XmlExternalizer::new(SerializationFormat::Xml));
+        let ext: Box<dyn Externalizer> = Box::new(ExiExternalizer::new(Some(xml)));
+        assert_eq!(ext.get_encoding(), "exi");
+        assert_eq!(ext.get_cal_api_version(), "2.5");
+        assert_eq!(ext.get_vendor(), "rcal");
+        assert!(!ext.message_read_only());
+        assert!(!ext.message_write_only());
+        assert!(ext.supports_object_read());
+        assert!(ext.supports_object_write());
+    }
+
+    #[cfg(feature = "exi")]
+    #[test]
+    fn exi_builder() {
+        let ext = builder("exi").kind("exi").build().unwrap();
+        let msg = TestMsg { value: 13 };
+        let encoded = write_to_bytes(ext.as_ref(), &msg, ROOT).unwrap();
+        let decoded: TestMsg = read_from_bytes(ext.as_ref(), &encoded).unwrap();
+        assert_eq!(decoded, msg);
+        assert_eq!(ext.get_encoding(), "exi");
     }
 }

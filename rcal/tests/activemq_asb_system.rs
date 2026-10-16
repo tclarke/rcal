@@ -15,6 +15,16 @@ use rcal::uci::base::{MessageListener, TopicQos};
 const BROKER_HOST: &str = "localhost";
 const BROKER_PORT: u16 = 61613;
 
+fn require_broker() {
+    std::net::TcpStream::connect((BROKER_HOST, BROKER_PORT)).unwrap_or_else(|_| {
+        panic!(
+            "ActiveMQ broker not reachable at {BROKER_HOST}:{BROKER_PORT}. \
+             Start a broker (e.g. `docker run -p 61613:61613 apache/activemq-classic`) \
+             before running these tests."
+        )
+    });
+}
+
 fn make_config() -> std::sync::Arc<rcal::calconfig::CalConfig> {
     use rcal::calconfig;
     use rcal::uci::base::UUID;
@@ -62,6 +72,7 @@ impl MessageListener<IntMsg> for CollectListener {
 #[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_basic_pub_sub() {
+    require_broker();
     let mut bus = make_bus("BasicPubSub", logger).await;
 
     let mut writer = bus
@@ -86,6 +97,7 @@ async fn test_basic_pub_sub() {
 #[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_ordered_poll() {
+    require_broker();
     let mut bus = make_bus("OrderedPoll", logger).await;
 
     let mut writer = bus
@@ -116,6 +128,7 @@ async fn test_ordered_poll() {
 #[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_callback_mode() {
+    require_broker();
     let mut bus = make_bus("CallbackMode", logger).await;
 
     let mut writer = bus
@@ -146,6 +159,7 @@ async fn test_callback_mode() {
 #[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_reliable_delivery() {
+    require_broker();
     use rcal::cal::{Reliability, TopicQos};
     let mut bus = make_bus("ReliableTest", logger).await;
 
@@ -173,6 +187,7 @@ async fn test_reliable_delivery() {
 #[rcal_macros::init_test_logger]
 #[tokio::test]
 async fn test_status_listener_immediate_call() {
+    require_broker();
     use rcal::asb::{AsbStatus, AsbStatusListener};
     use std::sync::atomic::{AtomicU32, Ordering};
 
