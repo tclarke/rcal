@@ -841,53 +841,38 @@ pub(crate) struct AsbKey {
 
 type CalFactoryMap = HashMap<AsbKey, Cal>;
 
-static CAL_FACTORY: LazyLock<tokio::sync::Mutex<CalFactoryMap>> =
-    LazyLock::new(|| tokio::sync::Mutex::new(CalFactoryMap::new()));
+static CAL_FACTORY: LazyLock<std::sync::Mutex<CalFactoryMap>> =
+    LazyLock::new(|| std::sync::Mutex::new(CalFactoryMap::new()));
 
-/// Returns the [`Cal`] instance for `(service_identifier, asb_identifier)`,
-/// creating it if it does not yet exist.
-///
-/// Satisfies CERT CAL-005201 (mechanism to obtain a fully initialised CAL
-/// instance) and CERT CAL-005202 (one instance per unique key pair).
-///
-/// Returns `Err(InitializationFailure)` when no matching (or default)
-/// transport is configured, or when the underlying constructor fails.
-pub async fn get_cal(
-    service_identifier: impl Into<String>,
-    asb_identifier: Option<impl Into<String>>,
-    config: Arc<CalConfig>,
-    logger: slog::Logger,
-) -> CalResult<Cal> {
-    let service_identifier = service_identifier.into();
-    let key = if let Some(asbid) = asb_identifier {
-        AsbKey {
+fn resolve_key(
+    service_identifier: String,
+    asb_identifier: Option<String>,
+    config: &CalConfig,
+) -> CalResult<AsbKey> {
+    if let Some(asbid) = asb_identifier {
+        Ok(AsbKey {
             service_identifier,
-            asb_identifier: asbid.into(),
-        }
+            asb_identifier: asbid,
+        })
     } else {
-        AsbKey {
-            service_identifier: service_identifier.clone(),
-            asb_identifier: config
-                .get_transport_for_service(service_identifier.clone().as_str())
-                .ok_or_else(|| {
-                    CalError::new_impl(
-                        crate::uci::CalImplementationErrorKind::ConfigError,
-                        "Service does not have a valid transport.",
-                    )
-                })?
-                .id
-                .clone(),
-        }
-    };
-
-    // Hold the factory lock for the entire construction to prevent concurrent
-    // callers from constructing duplicate instances that bind the same socket.
-    let mut map = CAL_FACTORY.lock().await;
-
-    if let Some(existing) = map.get(&key) {
-        return Ok(existing.clone());
+        let asb_id = config
+            .get_transport_for_service(&service_identifier)
+            .ok_or_else(|| {
+                CalError::new_impl(
+                    crate::uci::CalImplementationErrorKind::ConfigError,
+                    "Service does not have a valid transport.",
+                )
+            })?
+            .id
+            .clone();
+        Ok(AsbKey {
+            service_identifier,
+            asb_identifier: asb_id,
+        })
     }
+}
 
+async fn build_cal(key: AsbKey, config: &Arc<CalConfig>, logger: slog::Logger) -> CalResult<Cal> {
     let transport = config
         .get_transport(&key.asb_identifier)
         .or_else(|| {
@@ -905,7 +890,8 @@ pub async fn get_cal(
                     key.asb_identifier
                 ),
             )
-        })?;
+        })?
+        .clone();
 
     let backend = match transport.type_.as_str() {
         #[cfg(feature = "zmq")]
@@ -914,8 +900,8 @@ pub async fn get_cal(
                 key.service_identifier.clone(),
                 key.asb_identifier.clone(),
                 logger.clone(),
-                Arc::clone(&config),
-                transport,
+                Arc::clone(config),
+                &transport,
             )
             .await?,
         ),
@@ -925,8 +911,8 @@ pub async fn get_cal(
                 key.service_identifier.clone(),
                 key.asb_identifier.clone(),
                 logger.clone(),
-                Arc::clone(&config),
-                transport,
+                Arc::clone(config),
+                &transport,
             )
             .await?,
         ),
@@ -936,8 +922,8 @@ pub async fn get_cal(
                 key.service_identifier.clone(),
                 key.asb_identifier.clone(),
                 logger.clone(),
-                Arc::clone(&config),
-                transport,
+                Arc::clone(config),
+                &transport,
             )
             .await?,
         ),
@@ -949,14 +935,71 @@ pub async fn get_cal(
         }
     };
 
-    let instance = Cal::new(
+    Ok(Cal::new(
         backend,
-        key.service_identifier.clone(),
-        key.asb_identifier.clone(),
+        key.service_identifier,
+        key.asb_identifier,
         logger,
-    );
+    ))
+}
+
+/// Returns the [`Cal`] instance for `(service_identifier, asb_identifier)`,
+/// creating it if it does not yet exist.
+///
+/// Satisfies CERT CAL-005201 (mechanism to obtain a fully initialised CAL
+/// instance) and CERT CAL-005202 (one instance per unique key pair).
+///
+/// Returns `Err(InitializationFailure)` when no matching (or default)
+/// transport is configured, or when the underlying constructor fails.
+pub async fn get_cal(
+    service_identifier: impl Into<String>,
+    asb_identifier: Option<impl Into<String>>,
+    config: Arc<CalConfig>,
+    logger: slog::Logger,
+) -> CalResult<Cal> {
+    let key = resolve_key(
+        service_identifier.into(),
+        asb_identifier.map(Into::into),
+        &config,
+    )?;
+
+    // Fast path: return an existing instance without blocking.
+    {
+        let map = CAL_FACTORY.lock().unwrap();
+        if let Some(existing) = map.get(&key) {
+            return Ok(existing.clone());
+        }
+    }
+
+    let instance = build_cal(key.clone(), &config, logger).await?;
+
+    // Double-check: another caller may have inserted while we were constructing.
+    let mut map = CAL_FACTORY.lock().unwrap();
+    if let Some(existing) = map.get(&key) {
+        return Ok(existing.clone());
+    }
     map.insert(key, instance.clone());
     Ok(instance)
+}
+
+/// Creates a new [`Cal`] instance **without** caching it in the global factory.
+///
+/// Unlike [`get_cal`], each call creates an independent connection that is
+/// fully owned by the caller. When all handles to the returned `Cal` are
+/// dropped, background tasks are signalled to stop and resources are released.
+/// Use this for short-lived or test contexts that need isolation.
+pub async fn create_cal(
+    service_identifier: impl Into<String>,
+    asb_identifier: Option<impl Into<String>>,
+    config: Arc<CalConfig>,
+    logger: slog::Logger,
+) -> CalResult<Cal> {
+    let key = resolve_key(
+        service_identifier.into(),
+        asb_identifier.map(Into::into),
+        &config,
+    )?;
+    build_cal(key, &config, logger).await
 }
 
 // ════════════════════════════════════════════════════════════════════════════

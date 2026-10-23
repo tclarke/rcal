@@ -59,10 +59,9 @@ impl CalConfig {
     }
 
     pub fn get_transport_for_service(&self, name: &str) -> Option<&Transport> {
-        let service_conf = self.get_service(name)?;
-        let transport_name = service_conf
-            .transport
-            .as_ref()
+        let transport_name = self
+            .get_service(name)
+            .and_then(|s| s.transport.as_ref())
             .or(self.system.default_transport.as_ref())?;
         self.get_transport(transport_name)
     }
@@ -241,6 +240,11 @@ pub enum ExternalizerConfig {
     },
     /// Cargo-tree style hierarchy display (write-only).
     Pretty,
+    /// EXI (Efficient XML Interchange) binary encoding.
+    ///
+    /// Requires the `exi` feature. Uses schema-less, byte-aligned EXI 1.0.
+    #[cfg(feature = "exi")]
+    Exi,
     /// Byte-level compression chain wrapping an inner externalizer.
     ///
     /// Requires the `compression` feature.

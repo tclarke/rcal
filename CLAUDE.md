@@ -47,7 +47,7 @@ Always mention the issue number in a PR so that they are linked in github.
 
 # Coding review and checks
  - After implementing a new feature and before creating a PR, run the following tools.
-   - `cargo check --worspace --all-targets`
+   - `cargo check --workspace --all-targets`
    - `cargo clippy --no-deps`
    - `cargo fmt --all`
    - `cargo test --workspace --all-targets`

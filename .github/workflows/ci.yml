@@ -47,6 +47,16 @@ jobs:
   test:
     name: Run all unit and integration tests
     runs-on: ubuntu-latest
+    services:
+      activemq:
+        image: apache/activemq-classic:latest
+        ports:
+          - 61613:61613
+        options: >-
+          --health-cmd "nc -z localhost 61613"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,7 +65,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rcal
-      - run: cargo test
+      - run: cargo test --features activemq
         working-directory: rcal
         env:
           RCAL_XSD_PATH: examples/UCI_SystemStatusOnly_v2_5_0.xsd

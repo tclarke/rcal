@@ -7,6 +7,8 @@
 pub mod asb;
 pub mod cal;
 pub mod calconfig;
+#[cfg(feature = "exi")]
+pub mod exi;
 pub mod externalizer;
 pub mod logging;
 pub mod qname;
